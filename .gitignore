@@ -1,0 +1,45 @@
+# Runtime state — file-backed DBs, logs, queues
+state/*.duckdb
+state/*.duckdb.wal
+state/factory.log.jsonl
+
+# Per-project runtime state and live workspaces
+projects/*/state/*.duckdb
+projects/*/state/*.duckdb.wal
+projects/*/.secrets/
+projects/*/.secrets/*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node (in case opencode pulls anything in)
+node_modules/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# uv
+.uv-cache/
+
+# opencode local state if any
+.opencode/state/
+.opencode/cache/
