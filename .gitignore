@@ -3,11 +3,27 @@ state/*.duckdb
 state/*.duckdb.wal
 state/factory.log.jsonl
 
+# SQLite runtime state (factory + sample-project data DBs are regenerated, never committed)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
 # Per-project runtime state and live workspaces
 projects/*/state/*.duckdb
 projects/*/state/*.duckdb.wal
 projects/*/.secrets/
 projects/*/.secrets/*
+
+# Generated sample-project working trees (factory OUTPUT, each its own git repo —
+# regenerable, not part of the factory). Project metadata (PROJECT_RULES.md,
+# project-spec.json) outside repo/ is kept.
+projects/*/repo/
+mvp/projects/*/repo/
+# Default/scratch working tree the factory materializes into when no project is set.
+mvp/repo/
+repo/
 
 # Python
 __pycache__/

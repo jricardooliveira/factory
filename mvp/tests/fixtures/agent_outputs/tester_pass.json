@@ -1,0 +1,12 @@
+{
+  "overall": "pass",
+  "qa_verdict": "pass",
+  "ac_coverage": ["ac one", "ac two"],
+  "missing_coverage": [],
+  "security_verdict": "pass",
+  "highest_severity": "none",
+  "security_findings": [],
+  "performance_verdict": "pass",
+  "performance_findings": [],
+  "summary": "Acceptance criteria covered; no security or performance concerns."
+}

@@ -1,0 +1,23 @@
+{
+  "story_id": "US-0001",
+  "title": "Celsius to Fahrenheit converter",
+  "type": "feature",
+  "problem": "Users need to convert temperatures between Celsius and Fahrenheit.",
+  "why": "Temperature conversion is a common utility request.",
+  "acceptance_criteria": [
+    "Converts 0C to 32F",
+    "Converts 100C to 212F"
+  ],
+  "non_goals": ["No Kelvin support"],
+  "tasks": [
+    {
+      "id": "T-0001",
+      "title": "Implement celsius_to_fahrenheit",
+      "purpose": "Core conversion function",
+      "scope": ["convert.py"],
+      "completion_evidence": "Unit tests pass"
+    }
+  ],
+  "verdict": "pass",
+  "questions": []
+}

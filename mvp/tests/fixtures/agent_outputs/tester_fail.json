@@ -1,0 +1,12 @@
+{
+  "overall": "fail",
+  "qa_verdict": "fail",
+  "ac_coverage": [],
+  "missing_coverage": ["search returns matching items"],
+  "security_verdict": "warn",
+  "highest_severity": "low",
+  "security_findings": ["no rate limiting"],
+  "performance_verdict": "pass",
+  "performance_findings": [],
+  "summary": "Search acceptance criterion has no test."
+}

@@ -1,0 +1,8 @@
+{
+  "verdict": "complete",
+  "files_created": ["calc/__init__.py", "calc/models.py"],
+  "code_blocks": [
+    {"path": "calc/__init__.py", "action": "create", "content": ""},
+    {"path": "calc/models.py", "action": "create", "content": "def add(a, b):\n    return a + b\n"}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "verdict": "pass",
+  "architecture_notes": "Single pure function in convert.py; no I/O, no state.",
+  "modules_affected": ["convert.py"],
+  "data_model": "none",
+  "api_design": "none",
+  "implementation_constraints": ["Pure function", "No external deps"],
+  "risks": [],
+  "db_impact": "no",
+  "api_impact": "no",
+  "migration_needed": "no",
+  "breaking_changes": [],
+  "external_dependencies": [],
+  "sensitivity": []
+}

@@ -1,0 +1,20 @@
+{
+  "story_id": "US-0001",
+  "title": "Add authentication",
+  "type": "feature",
+  "problem": "Request is ambiguous about scope of authentication.",
+  "why": "Security matters but requirements are unclear.",
+  "acceptance_criteria": [
+    "Users can log in",
+    "Sessions expire"
+  ],
+  "non_goals": [],
+  "tasks": [
+    {"id": "T-0001", "title": "Auth", "purpose": "?", "scope": [], "completion_evidence": ""}
+  ],
+  "verdict": "pass",
+  "questions": [
+    "Which auth method (OAuth, password, SSO)?",
+    "Which user roles exist?"
+  ]
+}

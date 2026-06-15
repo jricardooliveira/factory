@@ -1,0 +1,7 @@
+{
+  "verdict": "complete",
+  "files_created": ["calc/cli.py"],
+  "code_blocks": [
+    {"path": "calc/cli.py", "action": "create", "content": "from calc.models import add\n\ndef main():\n    print(add(2, 3))\n"}
+  ]
+}

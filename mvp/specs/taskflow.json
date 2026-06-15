@@ -1,0 +1,61 @@
+{
+  "name": "TaskFlow",
+  "description": "A task management web application with REST API backend",
+
+  "language": "Python 3.12",
+  "framework": "FastAPI",
+  "database": "PostgreSQL 16",
+  "orm": "SQLAlchemy 2.x with Alembic migrations",
+  "additional_tech": ["Redis for caching", "Celery for background jobs"],
+
+  "architecture_style": "layered (routes → services → repositories → models)",
+  "api_style": "REST with OpenAPI",
+  "conventions": [
+    "All endpoints return JSON with consistent error format: {detail, code}",
+    "Use dependency injection for database sessions",
+    "Business logic lives in services, not routes",
+    "One migration file per schema change, never modify existing migrations",
+    "All list endpoints must be paginated with limit/offset"
+  ],
+
+  "deployment": "Docker Compose (dev), Kubernetes (prod)",
+  "repo_structure": "monorepo",
+  "infra_constraints": [
+    "No new databases without team approval",
+    "No managed cloud services — self-hosted only",
+    "All background jobs must be idempotent"
+  ],
+
+  "existing_modules": [
+    "auth (JWT-based, in src/auth/)",
+    "users (CRUD, in src/users/)",
+    "tasks (task board CRUD, in src/tasks/)"
+  ],
+  "existing_apis": [
+    "POST /auth/login",
+    "GET /users/me",
+    "GET /tasks (paginated, filterable)",
+    "POST /tasks",
+    "PATCH /tasks/{id}",
+    "DELETE /tasks/{id}"
+  ],
+  "existing_data_models": [
+    "users (id, email, name, role, created_at)",
+    "tasks (id, title, description, status, priority, assigned_to, created_at)"
+  ],
+
+  "auth_model": "JWT with RBAC (roles: admin, member)",
+  "multi_tenancy": "none",
+  "nfrs": [
+    "All endpoints must require authentication except /health and /auth/login",
+    "Response time < 200ms for API calls under normal load",
+    "Must handle 10,000 concurrent users"
+  ],
+
+  "forbidden": [
+    "No WebSockets — use REST polling only",
+    "No GraphQL",
+    "No new ORMs or query builders",
+    "No frontend code — API only"
+  ]
+}

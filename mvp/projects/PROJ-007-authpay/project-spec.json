@@ -1,0 +1,38 @@
+{
+  "additional_tech": [],
+  "api_style": "REST with OpenAPI",
+  "architecture_style": "layered (routes -> services -> repositories -> models)",
+  "auth_model": "none for initial scaffold unless explicitly requested",
+  "conventions": [
+    "All endpoints return JSON with consistent error format: {detail, code}",
+    "Use dependency injection for database sessions",
+    "Business logic lives in services, not routes",
+    "All list endpoints should be paginated when returning collections",
+    "Tests use FastAPI TestClient and isolated temporary databases"
+  ],
+  "database": "SQLite for local development",
+  "deployment": "local development first",
+  "description": "Authpay application",
+  "existing_apis": [],
+  "existing_data_models": [],
+  "existing_modules": [],
+  "forbidden": [
+    "No GraphQL",
+    "No WebSockets unless explicitly requested later",
+    "No managed cloud services in the initial scaffold"
+  ],
+  "framework": "FastAPI",
+  "infra_constraints": [
+    "No external services required for the initial app",
+    "Prefer standard library and declared project dependencies"
+  ],
+  "language": "Python 3.12",
+  "multi_tenancy": "none",
+  "name": "Authpay",
+  "nfrs": [
+    "Expose GET /health for smoke testing",
+    "Keep generated app runnable from a clean checkout"
+  ],
+  "orm": "SQLAlchemy 2.x",
+  "repo_structure": "single application repository"
+}

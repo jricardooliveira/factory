@@ -1,0 +1,55 @@
+{
+  "name": "Tic Tac Toe",
+  "description": "A polished browser-based Tic Tac Toe game for two local players, focused on clear gameplay, responsive layout, and deterministic game-state logic.",
+  "language": "TypeScript",
+  "framework": "React with Vite",
+  "database": "none - client-side only",
+  "orm": "none",
+  "additional_tech": [
+    "Vitest for game logic tests",
+    "Testing Library for component interaction tests",
+    "CSS modules or plain CSS for styling"
+  ],
+  "architecture_style": "client-side single page app with separated game logic and UI components",
+  "api_style": "none - no backend API",
+  "conventions": [
+    "Keep winner/draw/turn calculation in pure TypeScript functions, not inside React render code",
+    "Represent the board as a fixed 9-cell array with values X, O, or null",
+    "Use accessible buttons for board cells with clear aria labels",
+    "Prevent moves after a win or draw until the player starts a new game",
+    "Keep visual state derived from game state instead of duplicating status flags",
+    "Use deterministic tests for win detection, draw detection, turn switching, invalid moves, and reset behavior",
+    "Use responsive CSS so the board works cleanly on mobile and desktop"
+  ],
+  "deployment": "static web app deployable from the Vite production build",
+  "repo_structure": "single frontend application repository",
+  "infra_constraints": [
+    "No server process is required",
+    "No database, persistence layer, authentication, or external game service",
+    "The app must run locally with npm-compatible package scripts",
+    "The production build must emit static assets only"
+  ],
+  "existing_modules": [],
+  "existing_apis": [],
+  "existing_data_models": [],
+  "auth_model": "none",
+  "multi_tenancy": "none",
+  "nfrs": [
+    "Initial screen shows an empty 3x3 board, current player, and reset/new game control",
+    "Players alternate X then O by clicking empty cells",
+    "The game detects all row, column, and diagonal wins immediately after a move",
+    "The game detects a draw when the board is full and no player has won",
+    "Winning cells are visually highlighted",
+    "The UI remains usable at common mobile widths without text overlap",
+    "Game state resets without requiring a page reload",
+    "No network access is needed at runtime"
+  ],
+  "forbidden": [
+    "No backend API",
+    "No database or browser storage for the initial version",
+    "No online multiplayer",
+    "No user accounts or authentication",
+    "No AI opponent unless explicitly requested in a later story",
+    "No canvas-only implementation - use semantic HTML controls for the board"
+  ]
+}

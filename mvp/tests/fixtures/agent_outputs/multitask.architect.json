@@ -1,0 +1,10 @@
+{
+  "verdict": "pass",
+  "architecture_notes": "Two-module package: models.add, cli wraps it.",
+  "modules_affected": ["calc/models.py", "calc/cli.py"],
+  "implementation_constraints": ["pure stdlib"],
+  "risks": [],
+  "breaking_changes": [],
+  "external_dependencies": [],
+  "sensitivity": []
+}

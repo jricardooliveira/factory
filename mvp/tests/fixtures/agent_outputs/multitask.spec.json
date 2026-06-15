@@ -1,0 +1,15 @@
+{
+  "story_id": "US-0001",
+  "title": "Two-step calculator package",
+  "type": "feature",
+  "problem": "Need a small calculator package built in two dependent steps.",
+  "why": "Demonstrates per-task execution with dependencies.",
+  "acceptance_criteria": ["add(a,b) returns the sum", "the CLI prints the result"],
+  "non_goals": ["no GUI"],
+  "tasks": [
+    {"id": "T-0002", "title": "CLI entrypoint", "purpose": "Expose add via CLI", "scope": ["calc/cli.py"], "completion_evidence": "cli imports models", "depends_on": ["T-0001"]},
+    {"id": "T-0001", "title": "Core model", "purpose": "Implement add()", "scope": ["calc/models.py"], "completion_evidence": "add works", "depends_on": []}
+  ],
+  "verdict": "pass",
+  "questions": []
+}
