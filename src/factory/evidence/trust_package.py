@@ -83,16 +83,28 @@ def _test_execution(gates: list[dict]) -> tuple[bool, bool, str]:
     failure that a retry fixed sink the claim forever; a later frontend-only task
     must not erase the backend's real result either, hence per toolchain.
     """
-    latest: dict[str, bool] = {}  # marker -> passed, from the newest build that ran it
+    # marker -> its newest status: "pass" | "fail" | anything else (skip / warn /
+    # unknown), which proves nothing. The summary lists EVERY check, skipped ones
+    # included — a default run records `go_test:skip` — so only an explicit
+    # `:pass` or `:fail` is a test body that ran.
+    latest: dict[str, str] = {}
     for gate in gates:
         if gate["gate_name"] != "gate-build":
             continue
         reason = gate["reason"] or ""
         for marker in _TEST_RUN_MARKERS:
-            if f"{marker}:" in reason:
-                latest[marker] = f"{marker}:fail" not in reason
-    commands = [_TEST_RUN_COMMANDS[m] for m in _TEST_RUN_MARKERS if m in latest]
-    return bool(latest), bool(latest) and all(latest.values()), " && ".join(commands)
+            if f"{marker}:" not in reason:
+                continue
+            if f"{marker}:fail" in reason:
+                latest[marker] = "fail"
+            elif f"{marker}:pass" in reason:
+                latest[marker] = "pass"
+            else:
+                latest[marker] = "unproven"
+    ran = [m for m in _TEST_RUN_MARKERS if latest.get(m) in ("pass", "fail")]
+    executed = bool(ran)
+    passed = executed and all(status == "pass" for status in latest.values())
+    return executed, passed, " && ".join(_TEST_RUN_COMMANDS[m] for m in ran)
 
 
 def _ac_traceability(

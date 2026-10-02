@@ -206,6 +206,30 @@ class TestsClaimTests(unittest.TestCase):
         self.assertTrue(pkg["tests"]["executed"])
         self.assertTrue(pkg["tests"]["passed"])
 
+    def _assert_proves_nothing(self, reason: str) -> None:
+        pkg = tp.assemble(self.db_path, self._run(reason))
+        self.assertFalse(pkg["tests"]["executed"])
+        self.assertFalse(pkg["tests"]["passed"])
+        self.assertEqual(pkg["tests"]["command"], "")
+
+    def test_a_skipped_go_test_run_proves_nothing(self) -> None:
+        """Every check is listed in the gate summary, skipped ones too. A default
+        run (tests off) records `go_test:skip`; reading "marker present, no :fail"
+        as a pass made such a package claim tested-and-passed (review task T02)."""
+        self._assert_proves_nothing("[T-1] go_build:pass, go_vet:pass, go_test:skip")
+
+    def test_a_skipped_pytest_run_proves_nothing(self) -> None:
+        self._assert_proves_nothing("[T-1] py_compile:pass, pytest_collect:pass, pytest_run:skip")
+
+    def test_a_warning_is_not_a_pass(self) -> None:
+        pkg = tp.assemble(self.db_path, self._run("[T-1] pytest_run:warn"))
+        self.assertFalse(pkg["tests"]["passed"])
+
+    def test_a_pass_followed_by_a_skip_is_not_proof_for_the_final_candidate(self) -> None:
+        pkg = tp.assemble(self.db_path, self._builds("[T-1] pytest_run:pass",
+                                                     "[T-2] pytest_run:skip"))
+        self.assertFalse(pkg["tests"]["passed"])
+
     def test_untested_package_is_not_release_ready(self) -> None:
         pkg = tp.assemble(self.db_path, self._run("[T-1] py_compile:pass"))
         self.assertEqual(pkg["next_authorization"], "operator-review")

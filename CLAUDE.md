@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `679 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `679 passed` (~90s, offline, zero tokens) |
+| `make check` | `683 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `683 passed` (~90s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 56/56 agent-configuration checks; exits non-zero below 100% |
