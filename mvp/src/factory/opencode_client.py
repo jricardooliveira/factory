@@ -146,6 +146,11 @@ def run_agent(
             text=True,
             timeout=_default_timeout(),
             cwd=cwd,
+            # `opencode run` READS STDIN when it is not a terminal and waits for
+            # EOF before starting. Inherited from a background job, cron, CI or the
+            # board's TUI worker, that pipe never closes and every call hangs until
+            # the agent timeout. The orchestrator never talks to a child on stdin.
+            stdin=subprocess.DEVNULL,
         )
         duration = time.monotonic() - start
         output = _extract_text_from_json_stream(result.stdout)

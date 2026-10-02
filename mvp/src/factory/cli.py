@@ -28,6 +28,7 @@ from factory.state.db import (
     get_pending_human_gate,
     get_run_cost,
     get_run_gates,
+    get_agent_log,
     get_run_logs,
     get_runs_by_status,
     init_db,
@@ -59,8 +60,12 @@ def print_usage(exit_code: int = 1) -> None:
     console.print("  factory [bold cyan]dismiss <run_id>[/bold cyan]              Archive a run off the board")
     console.print("  factory [bold cyan]reconcile [--older-than S][/bold cyan]     Fail runs stuck 'running' (dead process)")
     console.print("  factory [bold cyan]simulate [--report path][/bold cyan]        Offline scenario matrix (no tokens)")
+    console.print("  factory [bold cyan]evals [--report path][/bold cyan]           Regression-test the agent configuration (no tokens)")
+    console.print("  factory [bold cyan]evals capture <run_id> <name>[/bold cyan]   Freeze a real run as a permanent eval case")
+    console.print("  factory [bold cyan]metrics [--report path][/bold cyan]         SDLC indicators over the factory's own history")
     console.print("  factory [bold cyan]approve <run_id>[/bold cyan]              Approve paused run")
     console.print("  factory [bold cyan]reject <run_id> [reason][/bold cyan]      Reject paused run")
+    console.print("  factory [bold cyan]retry <run_id>[/bold cyan]                Re-drive a run that died after you answered")
     console.print("  factory [bold cyan]tiers[/bold cyan]                          Show per-agent model tiers (leverage allocation)")
     sys.exit(exit_code)
 
@@ -290,7 +295,15 @@ def run_pipeline(
             n = row["c"] + 1
             story_id = f"US-{n:04d}"
             create_story(conn, story_id, "Pending", request, project_id=project_id)
-        run_id = start_run(conn, story_id, project_id=project_id)
+        # Pin the target repo's HEAD as THIS run's baseline, so the trust package
+        # can measure this run's change set from git rather than lumping in every
+        # factory commit ever made to the repo.
+        from factory.verify import git_head
+
+        base_commit = git_head(Path(opencode_cwd or Path.cwd()))
+        run_id = start_run(
+            conn, story_id, project_id=project_id, base_commit=base_commit
+        )
 
     console.print(f"  📦 Run [bold]#{run_id}[/bold] | Story [bold]{story_id}[/bold]\n")
 
@@ -325,6 +338,9 @@ def run_pipeline(
                     v = spec.get("verdict", "unknown")
                     print_agent_done("spec-agent", v, 0)
                     print_spec_summary(spec)
+                    for label, key in (("INTENT", "intent_path"), ("SPEC", "spec_path")):
+                        if node_output.get(key):
+                            console.print(f"    [dim]📝 {label}: {node_output[key]}[/dim]")
 
             elif node_name == "gate-1":
                 g = node_output.get("gate_1", {})
@@ -340,6 +356,8 @@ def run_pipeline(
                     print_architect_summary(arch)
                     if node_output.get("adr_path"):
                         console.print(f"    [dim]📝 ADR: {node_output['adr_path']}[/dim]")
+                    if node_output.get("plan_path"):
+                        console.print(f"    [dim]📝 PLAN: {node_output['plan_path']}[/dim]")
 
             elif node_name == "gate-2":
                 g = node_output.get("gate_2", {})
@@ -479,6 +497,70 @@ def _review_coder_output(parsed: dict) -> None:
 def _parse_agent_output(raw: str) -> dict | None:
     """Extract JSON from agent output text (shared parser)."""
     return parse_agent_json(raw)
+
+
+def decision_from_response(response: str) -> tuple[str, str]:
+    """Recover (action, feedback) from a stored `human_response`.
+
+    `respond_to_gate` records the operator's decision as "APPROVED: ..." /
+    "REJECTED: ...". Anything unrecognised is treated as an APPROVAL note —
+    never guess a rejection, which would silently redo work the operator may
+    have accepted.
+    """
+    text = (response or "").strip()
+    for prefix, action in (("REJECTED:", "reject"), ("APPROVED:", "approve")):
+        if text.upper().startswith(prefix):
+            return action, text[len(prefix):].strip()
+    return "approve", text
+
+
+def build_resume_context(conn, run_id: int) -> tuple[dict | None, dict | None]:
+    """The (spec, architecture) a parked run must resume from — the LATEST of each.
+
+    This used to scan `get_run_logs` (ORDER BY id ASC) with `next(...)`, taking the
+    OLDEST log. After a reject → re-architect → park-again cycle that meant
+    `factory review` showed the operator the revised design while the coder was
+    handed the original, rejected one: the human approves one artifact and a
+    different one proceeds. `get_agent_log` is already ORDER BY id DESC LIMIT 1;
+    it just wasn't the function being called.
+
+    Returns (None, None) for a stage that never ran — a Checkpoint-1 park has no
+    architecture yet.
+    """
+    return _last_usable(conn, run_id, "spec-agent"), _last_usable(
+        conn, run_id, "architect-agent"
+    )
+
+
+def _last_usable(conn, run_id: int, agent: str) -> dict | None:
+    """The newest output of `agent` that actually parses.
+
+    "Newest row" is not "newest artifact": a provider error is stored as a log
+    too. Taking the newest row blindly made a transient 500 erase a perfectly
+    good story and abort the resume with "missing spec log", stranding the
+    operator's answer. Walk back to the last real one.
+    """
+    from factory.state.db import get_agent_logs_for
+
+    for log in get_agent_logs_for(conn, run_id, agent):  # newest first
+        parsed = _parse_agent_output(log["output_text"] or "")
+        if parsed:
+            return parsed
+    return None
+
+
+def park_unresumable(conn, run_id: int, reason: str) -> None:
+    """Record that a resume could not proceed, instead of leaving it 'running'.
+
+    `resume_run` flips the run to 'running' before rebuilding context; an early
+    return then left it stuck there — invisible to `factory queue`, and later
+    mislabelled by `reconcile` as a dead process. Same orphan class already fixed
+    at gate-1 and the architect.
+    """
+    from factory.state.db import finish_run
+
+    finish_run(conn, run_id, "blocked", error=f"Cannot resume: {reason}")
+    conn.commit()
 
 
 def replay_run(run_id: int, db_path: Path = DB_PATH) -> None:
@@ -1114,15 +1196,15 @@ def resume_run(run_id: int, action: str, reason: str | None = None) -> None:
         conn.execute("UPDATE pipeline_runs SET status = 'running' WHERE id = ?", (run_id,))
         conn.commit()
 
-    # Reconstruct context from the run's logs.
+    # Reconstruct context from the LATEST output of each stage — see
+    # build_resume_context for why "latest" is load-bearing.
     with get_db(DB_PATH) as conn:
-        logs = get_run_logs(conn, run_id)
-    spec_log = next((l for l in logs if l["agent"] == "spec-agent"), None)
-    arch_log = next((l for l in logs if l["agent"] == "architect-agent"), None)
-    if not spec_log:
+        spec_parsed, arch_parsed = build_resume_context(conn, run_id)
+    if spec_parsed is None:
         console.print("[red]Cannot resume: missing spec log[/red]")
+        with get_db(DB_PATH) as conn:
+            park_unresumable(conn, run_id, "missing spec log")
         return
-    spec_parsed = _parse_agent_output(spec_log["output_text"]) or {}
 
     opencode_cwd = str(Path.cwd())
     project_spec_text = None
@@ -1147,33 +1229,54 @@ def resume_run(run_id: int, action: str, reason: str | None = None) -> None:
     if project_dir:
         base_state["project_dir"] = project_dir
 
-    if action == "reject":
-        # Rejection is NOT a dead end: re-enter architecture with the feedback.
+    # Which stage to re-enter depends on WHICH checkpoint parked the run — a
+    # Checkpoint-1 park has no architecture yet, so the old always-resume-at-
+    # architecture/coder logic had no way back into the line for it.
+    from factory.pipeline import (
+        compile_architect_resume_pipeline,
+        compile_coder_only_pipeline,
+        compile_spec_resume_pipeline,
+        resume_entry_for,
+    )
+
+    entry = resume_entry_for(pending.get("gate_name"), action)
+    state: dict[str, Any] = dict(base_state)
+
+    if entry == "spec":
         console.print(Panel(
-            f"Run #{run_id} [bold yellow]REJECTED[/bold yellow] — re-running architecture "
-            f"with your feedback...\n\n{decision}",
+            f"Run #{run_id} [bold yellow]REJECTED at Checkpoint 1[/bold yellow] — "
+            f"re-specifying the story with your answers...\n\n{decision}",
             border_style="yellow",
         ))
-        from factory.pipeline import compile_architect_resume_pipeline
-
+        pipeline = compile_spec_resume_pipeline()
+        state.update({"prior_findings": [decision], "triggered_by": "spec-rejected"})
+    elif entry == "architect":
+        verb = "APPROVED" if action == "approve" else "REJECTED"
+        colour = "green" if action == "approve" else "yellow"
+        console.print(Panel(
+            f"Run #{run_id} [bold {colour}]{verb}[/bold {colour}] — "
+            f"{'designing the approved story' if action == 'approve' else 'redesigning with your feedback'}"
+            f"...\n\n{decision}",
+            border_style=colour,
+        ))
         pipeline = compile_architect_resume_pipeline()
-        state: dict[str, Any] = {
-            **base_state,
-            "prior_findings": [decision],
-            "triggered_by": "architecture-rejected",
-        }
+        if action == "reject":
+            state.update({
+                "prior_findings": [decision],
+                "triggered_by": "architecture-rejected",
+            })
     else:
-        if not arch_log:
+        if arch_parsed is None:
             console.print("[red]Cannot resume: missing architect log[/red]")
+            with get_db(DB_PATH) as conn:
+                park_unresumable(conn, run_id, "missing architect log")
             return
         console.print(Panel(
             f"Run #{run_id} [bold green]APPROVED[/bold green] — continuing to coder-agent...",
             border_style="green",
         ))
-        from factory.pipeline import compile_coder_only_pipeline
-
         pipeline = compile_coder_only_pipeline()
-        state = {**base_state, "architect": _parse_agent_output(arch_log["output_text"]) or {}}
+        state["architect"] = arch_parsed
 
     final_state = state
     for event in pipeline.stream(state, stream_mode="updates"):
@@ -1206,12 +1309,58 @@ def resume_run(run_id: int, action: str, reason: str | None = None) -> None:
     print_review_table(run_id, DB_PATH)
     _notify_if_parked(run_id, run["story_id"], status, final_state.get("current_stage"))
 
-    status = final_state.get("status", "unknown")
-    print_final_status(status, final_state.get("error"))
-    print_review_table(run_id, DB_PATH)
-
 
 # ── Entry point ───────────────────────────────────────────────────
+
+def retry_run(run_id: int) -> None:
+    """Re-drive a run that died after the operator answered a checkpoint.
+
+    A transient provider error between `factory reject` and the re-run left the
+    decision stranded: the run was no longer `waiting_human`, so approve/reject
+    refused it, and the recorded answer had no reader. This puts the run back
+    where it was and replays the SAME decision — no re-interruption.
+    """
+    from factory.state.db import get_answered_human_gate
+
+    init_db(DB_PATH)
+    with get_db(DB_PATH) as conn:
+        run = conn.execute(
+            "SELECT status FROM pipeline_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if not run:
+            console.print(f"[red]No run found with id #{run_id}[/red]")
+            sys.exit(1)
+        if run["status"] not in ("blocked", "failed"):
+            console.print(
+                f"[red]Run #{run_id} is '{run['status']}', not blocked/failed. "
+                f"Use `factory approve/reject` for a run awaiting review.[/red]"
+            )
+            sys.exit(1)
+        gate = get_answered_human_gate(conn, run_id)
+        if not gate:
+            console.print(
+                f"[red]Run #{run_id} has no answered checkpoint to retry from. "
+                f"Start a fresh run instead.[/red]"
+            )
+            sys.exit(1)
+        action, feedback = decision_from_response(gate["human_response"])
+        # Re-open the decision so resume_run can consume it exactly as before.
+        conn.execute(
+            "UPDATE gate_results SET human_response = NULL WHERE id = ?", (gate["id"],)
+        )
+        conn.execute(
+            "UPDATE pipeline_runs SET status = 'waiting_human', error = NULL WHERE id = ?",
+            (run_id,),
+        )
+        conn.commit()
+
+    console.print(Panel(
+        f"Retrying run #{run_id} from your recorded decision at "
+        f"[bold]{gate['gate_name']}[/bold]:\n\n[bold]{action.upper()}[/bold]: {feedback}",
+        title="↻ Retry", border_style="cyan",
+    ))
+    resume_run(run_id, action, reason=feedback or None)
+
 
 def _run_id_arg(usage: str) -> int:
     """Parse sys.argv[2] as a run id, exiting with a friendly error if invalid."""
@@ -1264,6 +1413,139 @@ def simulate_command(args: list[str]) -> None:
         idx = args.index("--report")
         path = Path(args[idx + 1]) if idx + 1 < len(args) else Path("simulation-report.md")
         path.write_text(render_markdown(results), encoding="utf-8")
+        console.print(f"  [dim]Report written to {path}[/dim]")
+
+
+def evals_command(args: list[str]) -> None:
+    """Regression-test the AGENT CONFIGURATION (offline, no tokens).
+
+    The playbook's Stage-4 continuous-evals play: the factory IS an agent
+    configuration, so a change to an agent definition, the gate policy or the
+    tier policy is a behaviour change and needs a regression net. Exits non-zero
+    below the pass threshold so `make evals` / CI can gate a merge on it.
+    """
+    from factory import evals as ev
+
+    if args and args[0] == "capture":
+        if len(args) < 3:
+            console.print('[red]Usage: factory evals capture <run_id> <name> ["description"][/red]')
+            sys.exit(1)
+        try:
+            run_id = int(args[1])
+        except ValueError:
+            console.print(f"[red]Run id must be a number, got '{args[1]}'[/red]")
+            sys.exit(1)
+        name = args[2]
+        description = " ".join(args[3:]).strip()
+        try:
+            path = ev.capture_case(DB_PATH, run_id, name, description=description)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            sys.exit(1)
+        console.print(f"[green]Captured run #{run_id} as a permanent eval case:[/green] {path}")
+        # Prove the new case actually replays — a captured case that doesn't
+        # reproduce is worse than no case at all.
+        result = ev.run_case(next(c for c in ev.load_cases() if c.name == name))
+        icon = "[green]✅[/green]" if result.passed else "[red]❌[/red]"
+        console.print(f"  {icon} replays to '{result.actual}' (expected '{result.expected}')")
+        if not result.passed:
+            console.print(f"  [red]{result.detail}[/red]")
+            sys.exit(1)
+        return
+
+    report = ev.run_all()
+    table = Table(
+        title="🔬 Agent-Configuration Evals (offline, no tokens)", border_style="cyan"
+    )
+    table.add_column("Check", style="bold", overflow="fold")
+    table.add_column("Kind")
+    table.add_column("OK", justify="center")
+    table.add_column("Detail", style="dim", overflow="fold")
+    for r in report.results:
+        icon = "[green]✅[/green]" if r.passed else "[red]❌[/red]"
+        table.add_row(r.name, r.kind, icon, (r.detail or "")[:90])
+    console.print(table)
+
+    passed = len(report.results) - len(report.failures)
+    style = "green" if report.passed else "red"
+    console.print(
+        f"  [{style}]{passed}/{len(report.results)} checks green "
+        f"({round(report.pass_rate * 100)}%) — threshold "
+        f"{round(ev.PASS_THRESHOLD * 100)}%[/{style}]"
+    )
+
+    if "--report" in args:
+        idx = args.index("--report")
+        path = Path(args[idx + 1]) if idx + 1 < len(args) else Path("eval-report.md")
+        path.write_text(ev.render_markdown(report), encoding="utf-8")
+        console.print(f"  [dim]Report written to {path}[/dim]")
+
+    if not report.passed:
+        sys.exit(1)
+
+
+def metrics_command(args: list[str]) -> None:
+    """The playbook's SDLC indicators over this factory's own history.
+
+    Deliberately reports what it CANNOT measure as prominently as what it can —
+    a cost of $0.00 read off 47 NULL rows would present a broken instrument as a
+    healthy reading.
+    """
+    from factory import metrics as mx
+
+    init_db(DB_PATH)
+    m = mx.compute(DB_PATH)
+
+    console.print()
+    console.print(Rule(f"[bold blue]Factory Metrics[/bold blue]  [dim]{DB_PATH}[/dim]",
+                       style="blue"))
+
+    throughput = Table(title="Throughput", border_style="cyan")
+    throughput.add_column("Status", style="bold")
+    throughput.add_column("Runs", justify="right")
+    for status, n in sorted(m.by_status.items(), key=lambda kv: -kv[1]):
+        throughput.add_row(status, str(n))
+    throughput.add_row("[bold]total[/bold]", f"[bold]{m.total_runs}[/bold]")
+    console.print(throughput)
+    console.print(f"  Completion rate: [bold]{round(m.completion_rate * 100)}%[/bold]\n")
+
+    quality = Table(title="First-pass quality", border_style="cyan")
+    quality.add_column("Gate", style="bold")
+    quality.add_column("Runs", justify="right")
+    quality.add_column("Pass rate", justify="right")
+    for gate in sorted(m.gate_pass_rate):
+        rate = m.gate_pass_rate[gate]
+        colour = "green" if rate >= 0.8 else ("yellow" if rate >= 0.5 else "red")
+        quality.add_row(gate, str(m.gate_counts.get(gate, 0)),
+                        f"[{colour}]{round(rate * 100)}%[/{colour}]")
+    console.print(quality)
+    console.print(
+        f"  First-pass rate (no coder retry): [bold]{round(m.first_pass_rate * 100)}%[/bold]"
+        f"   ·   coder retries: [bold]{m.total_coder_retries}[/bold]\n"
+    )
+
+    console.print(
+        f"  [bold]Trust per interruption[/bold]: {m.checkpoints_reached} checkpoint(s) "
+        f"({m.checkpoints_answered} answered, {m.checkpoints_pending} pending) "
+        f"— {m.runs_per_checkpoint:.1f} runs per interruption\n"
+    )
+
+    if m.cost_measurable:
+        console.print(
+            f"  [bold]Cost[/bold]: ${m.total_cost_usd:.4f} "
+            f"({m.total_tokens_in:,} in / {m.total_tokens_out:,} out tokens, "
+            f"{round(m.cost_coverage * 100)}% of calls instrumented)\n"
+        )
+
+    console.print(Panel(
+        "\n".join(f"• {n}" for n in m.not_measurable),
+        title="⚠️  NOT MEASURABLE", border_style="yellow",
+    ))
+
+    if "--report" in args:
+        idx = args.index("--report")
+        path = Path(args[idx + 1]) if idx + 1 < len(args) else Path("metrics.md")
+        path.write_text(mx.render_markdown(m), encoding="utf-8")
         console.print(f"  [dim]Report written to {path}[/dim]")
 
 
@@ -1332,10 +1614,16 @@ def main() -> None:
         replay_run(_run_id_arg("Usage: factory replay <run_id>"))
     elif cmd == "dismiss":
         dismiss_run(_run_id_arg("Usage: factory dismiss <run_id>"))
+    elif cmd == "retry":
+        retry_run(_run_id_arg("Usage: factory retry <run_id>"))
     elif cmd == "reconcile":
         reconcile_command(sys.argv[2:])
     elif cmd == "simulate":
         simulate_command(sys.argv[2:])
+    elif cmd == "evals":
+        evals_command(sys.argv[2:])
+    elif cmd == "metrics":
+        metrics_command(sys.argv[2:])
     elif cmd == "visualize":
         visualize_command(sys.argv[2:])
     elif cmd == "approve":

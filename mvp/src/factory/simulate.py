@@ -156,8 +156,17 @@ CATALOG: list[Scenario] = [
         setup=git_init,
     ),
     Scenario(
-        "vague_request", "Spec has open questions -> blocked at gate-1",
+        "vague_request", "Spec has open questions -> parks at Checkpoint 1 for the operator",
         {"spec-agent": _spec("Vague", [_task("T-1")], questions=["which auth?"])},
+        "waiting_human",
+    ),
+    Scenario(
+        "malformed_spec", "Story with too few acceptance criteria -> rejected at gate-1",
+        {"spec-agent": json.dumps({
+            "title": "Thin", "problem": "p", "why": "w",
+            "acceptance_criteria": ["only one"], "tasks": [_task("T-1")],
+            "verdict": "pass", "questions": [],
+        })},
         "failed",
     ),
     Scenario(

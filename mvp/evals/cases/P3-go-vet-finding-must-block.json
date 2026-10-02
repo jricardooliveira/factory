@@ -1,0 +1,82 @@
+{
+  "name": "P3-go-vet-finding-must-block",
+  "description": "Compiles fine, but `fmt.Sprintf(\"%s\", int)` is a vet finding. The challenge lists `go vet` as a quality gate.",
+  "git": true,
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Ticket description helper",
+      "type": "feature",
+      "problem": "the support workflow is unconstrained",
+      "why": "agents must not move tickets into meaningless states",
+      "acceptance_criteria": [
+        "valid transitions succeed",
+        "invalid transitions return HTTP 409",
+        "unknown tickets return HTTP 404",
+        "workflow rules live in the domain or service layer, not only in HTTP handlers",
+        "every valid and invalid transition is tested"
+      ],
+      "non_goals": [
+        "no authentication"
+      ],
+      "tasks": [
+        {
+          "id": "T-0001",
+          "title": "describe helper",
+          "purpose": "describe helper",
+          "scope": [
+            "backend/internal/domain/"
+          ],
+          "completion_evidence": "go test ./... passes",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "workflow map in domain; service wraps it in a tx",
+      "modules_affected": [
+        "backend/internal/domain/describe.go"
+      ],
+      "implementation_constraints": [
+        "rules in domain, never in the handler"
+      ],
+      "risks": [
+        "a transition added later must update the map, not the handler"
+      ],
+      "db_impact": "yes",
+      "api_impact": "yes",
+      "migration_needed": "yes"
+    },
+    "coder-agent": {
+      "T-0001": {
+        "verdict": "complete",
+        "files_created": [
+          "backend/go.mod",
+          "backend/internal/domain/describe.go"
+        ],
+        "tests_added": [],
+        "implementation_summary": "workflow rules + tests",
+        "code_blocks": [
+          {
+            "path": "backend/go.mod",
+            "content": "module supportflow\n\ngo 1.26\n",
+            "action": "create"
+          },
+          {
+            "path": "backend/internal/domain/describe.go",
+            "content": "package domain\n\nimport \"fmt\"\n\n// Describe logs a ticket count.\nfunc Describe(n int) string {\n\treturn fmt.Sprintf(\"%s tickets\", n)\n}\n",
+            "action": "create"
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "gates": {
+      "gate-build": false
+    }
+  }
+}

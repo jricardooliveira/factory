@@ -1,0 +1,50 @@
+{
+  "name": "coder-design-feedback-rearchitects-then-stops",
+  "description": "A coder reporting the design is infeasible must route back to the architect once (MAX_REARCHITECT_LOOPS) and then park rather than ship code that works around a design known to be wrong.",
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Persist the thing",
+      "problem": "the problem",
+      "why": "it matters",
+      "acceptance_criteria": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "non_goals": [],
+      "tasks": [
+        {
+          "id": "T-1",
+          "title": "T-1",
+          "purpose": "do T-1",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "layered; one module per task",
+      "modules_affected": [
+        "store.py"
+      ],
+      "risks": []
+    },
+    "coder-agent": {
+      "T-1": {
+        "verdict": "blocked",
+        "code_blocks": [],
+        "implementation_summary": "cannot implement as designed",
+        "design_feedback": "The design requires a repository layer the project spec forbids; a decision is missing."
+      }
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "gates": {
+      "gate-2-architect": true
+    }
+  }
+}

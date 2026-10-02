@@ -1,0 +1,71 @@
+{
+  "name": "story10-real-agent-ambiguity-contract-parks",
+  "description": "Verbatim spec-agent output from a LIVE run of the SupportFlow challenge's Story 10 (an overdue rule with no definition). The agent honours its own documented ambiguity contract \u2014 verdict 'fail' PLUS a questions array \u2014 and refuses to invent a business rule. gate-1 must route this to Checkpoint 1, not discard it as a malformed story. The hand-authored version of this case used verdict 'pass' and therefore never exercised the real path.",
+  "agent_outputs": {
+    "spec-agent": {
+      "story_id": "US-0001",
+      "title": "Highlight overdue high-priority tickets",
+      "type": "feature",
+      "problem": "Support managers currently have no explicit way to identify high-priority tickets that are overdue.",
+      "why": "Important cases are forgotten when nothing distinguishes them in the list.",
+      "acceptance_criteria": [
+        "The system identifies high-priority tickets as overdue according to a clearly defined overdue rule.",
+        "Overdue high-priority tickets are highlighted in the support agent ticket list."
+      ],
+      "non_goals": [
+        "Authentication or user management",
+        "External search infrastructure",
+        "Separate analytics infrastructure"
+      ],
+      "tasks": [
+        {
+          "id": "T-0001",
+          "title": "Define overdue rule and API contract",
+          "purpose": "settle the rule before building on it",
+          "scope": [
+            "docs/"
+          ],
+          "completion_evidence": "the rule is written down and approved",
+          "depends_on": []
+        },
+        {
+          "id": "T-0002",
+          "title": "Expose overdue flag in ticket listing",
+          "purpose": "backend must supply the signal",
+          "scope": [
+            "backend/internal/service/"
+          ],
+          "completion_evidence": "go test ./... passes",
+          "depends_on": [
+            "T-0001"
+          ]
+        },
+        {
+          "id": "T-0003",
+          "title": "Render overdue highlight in frontend ticket list",
+          "purpose": "the manager must see it",
+          "scope": [
+            "frontend/pages/"
+          ],
+          "completion_evidence": "component test asserts the highlight",
+          "depends_on": [
+            "T-0002"
+          ]
+        }
+      ],
+      "verdict": "fail",
+      "questions": [
+        "What exact rule defines an overdue ticket: age since creation, time since last update, due date field, SLA by priority, or something else?",
+        "Where must the highlighting appear: ticket list only, dashboard, ticket detail page, or multiple places?",
+        "What visual treatment counts as highlighted, and are there accessibility requirements such as text labels or ARIA attributes?",
+        "Should overdue status be filterable or searchable, or only visually highlighted?"
+      ]
+    }
+  },
+  "expect": {
+    "status": "waiting_human",
+    "gates": {
+      "gate-1-spec": true
+    }
+  }
+}

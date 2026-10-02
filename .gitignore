@@ -16,11 +16,13 @@ projects/*/state/*.duckdb.wal
 projects/*/.secrets/
 projects/*/.secrets/*
 
-# Generated sample-project working trees (factory OUTPUT, each its own git repo —
-# regenerable, not part of the factory). Project metadata (PROJECT_RULES.md,
-# project-spec.json) outside repo/ is kept.
-projects/*/repo/
-mvp/projects/*/repo/
+# Factory-generated PROJECTS are the factory's OUTPUT, not part of the factory.
+# Each product owns its own lifecycle and must carry its whole artifact chain
+# (INTENT/SPEC/PLAN, ADRs, PROJECT_RULES, project-spec) together WITH its code —
+# tracking the docs here and the code in repo/ split every product's audit trail
+# across two repositories. Nothing under a projects/ folder is versioned here.
+projects/
+mvp/projects/
 # Default/scratch working tree the factory materializes into when no project is set.
 mvp/repo/
 repo/

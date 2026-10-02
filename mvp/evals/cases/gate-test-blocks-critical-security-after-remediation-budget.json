@@ -1,0 +1,91 @@
+{
+  "name": "gate-test-blocks-critical-security-after-remediation-budget",
+  "description": "A critical security finding must fail gate-test, route ONE bounded remediation pass back to the coder, and then stop for the operator instead of looping \u2014 the MAX_TESTER_REMEDIATIONS budget.",
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Store the token",
+      "problem": "the problem",
+      "why": "it matters",
+      "acceptance_criteria": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "non_goals": [],
+      "tasks": [
+        {
+          "id": "T-1",
+          "title": "T-1",
+          "purpose": "do T-1",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "layered; one module per task",
+      "modules_affected": [
+        "auth.py"
+      ],
+      "risks": []
+    },
+    "coder-agent": {
+      "T-1": {
+        "verdict": "complete",
+        "files_created": [
+          "auth.py"
+        ],
+        "tests_added": [],
+        "implementation_summary": "wrote auth.py",
+        "code_blocks": [
+          {
+            "path": "auth.py",
+            "content": "API_KEY = 'sk-hardcoded'\n\n\ndef login():\n    return API_KEY\n",
+            "action": "create"
+          }
+        ]
+      },
+      "remediation": {
+        "verdict": "complete",
+        "files_created": [
+          "auth.py"
+        ],
+        "tests_added": [],
+        "implementation_summary": "wrote auth.py",
+        "code_blocks": [
+          {
+            "path": "auth.py",
+            "content": "import os\n\n\ndef login():\n    return os.environ['API_KEY']\n",
+            "action": "create"
+          }
+        ]
+      }
+    },
+    "tester-agent": {
+      "overall": "fail",
+      "qa_verdict": "pass",
+      "ac_coverage": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "missing_coverage": [],
+      "security_verdict": "fail",
+      "highest_severity": "critical",
+      "security_findings": [
+        "hard-coded API key committed to source"
+      ],
+      "performance_verdict": "pass",
+      "summary": "credential in source"
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "gates": {
+      "gate-build": true,
+      "gate-test": false
+    }
+  }
+}

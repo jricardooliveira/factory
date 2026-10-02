@@ -1,0 +1,57 @@
+# The eval pass-rate as a merge check (AI-Native SDLC playbook, Stage 4:
+# "a pass-rate threshold gated as a merge check").
+#
+# NOTE: this repo currently has no git remote, so this workflow is inert until one
+# exists. It is committed anyway because the gate it encodes is the point: a change
+# to the AGENT CONFIGURATION (.opencode/agents/*.md, gates.py, model_tiers.py,
+# context_pack.py, pipeline.py, docs/factory/REVIEW.md) must not land without the
+# eval suite passing at 100%.
+#
+# Everything below is offline and costs zero tokens — no opencode call, no API key.
+name: check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    # The playbook asks for the eval suite to run on a schedule as well as on
+    # config changes, so model drift surfaces without a code change to trigger it.
+    - cron: "0 6 * * 1"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mvp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # verify.collect_repo_diff / _factory_baseline walk history; a shallow
+          # clone would silently change what the diff-measurement tests see.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --all-extras --dev
+
+      - name: Unit + orchestration tests
+        run: uv run python -m pytest -q
+
+      - name: Scenario matrix (offline, no tokens)
+        run: uv run factory simulate
+
+      - name: Agent-configuration evals (gates the merge at 100%)
+        run: uv run factory evals --report eval-report.md
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: mvp/eval-report.md
+          if-no-files-found: ignore

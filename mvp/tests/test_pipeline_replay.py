@@ -127,15 +127,19 @@ class CleanPassTests(ReplayHarness):
 
 
 class SpecGateFailTests(ReplayHarness):
-    def test_open_questions_fail_gate_1_and_stop(self) -> None:
+    def test_open_questions_park_at_checkpoint_1_and_stop(self) -> None:
         orig = self._seed_original(
             {"spec-agent": _load("spec_open_questions.spec.json")}
         )
         final, gates = self._replay(orig)
 
-        self.assertEqual(final.get("status"), "failed")
-        gate_map = {g["gate_name"]: bool(g["passed"]) for g in gates}
-        self.assertFalse(gate_map.get("gate-1-spec"))
+        # The gate PASSES structurally and parks for the operator's answer; the
+        # line still stops. (It used to kill the run and never persist why.)
+        self.assertEqual(final.get("status"), "waiting_human")
+        gate1 = next(g for g in gates if g["gate_name"] == "gate-1-spec")
+        self.assertTrue(bool(gate1["passed"]))
+        self.assertTrue(bool(gate1["needs_human"]))
+        self.assertTrue(gate1["human_questions"])
         # Architect must never have run
         self.assertNotIn("architect", final)
 

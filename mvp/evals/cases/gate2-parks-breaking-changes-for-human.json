@@ -1,0 +1,45 @@
+{
+  "name": "gate2-parks-breaking-changes-for-human",
+  "description": "A breaking API change PASSES gate-2 but must park for the operator \u2014 the checkpoint-2 human-needs path. Passing a gate is not crossing a checkpoint.",
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Rename status enum",
+      "problem": "the problem",
+      "why": "it matters",
+      "acceptance_criteria": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "non_goals": [],
+      "tasks": [
+        {
+          "id": "T-1",
+          "title": "T-1",
+          "purpose": "do T-1",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "layered; one module per task",
+      "modules_affected": [
+        "api.py"
+      ],
+      "risks": [],
+      "breaking_changes": [
+        "renames the status enum value 'active' to 'enabled'"
+      ]
+    }
+  },
+  "expect": {
+    "status": "waiting_human",
+    "gates": {
+      "gate-2-architect": true
+    }
+  }
+}

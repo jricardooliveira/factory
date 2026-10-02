@@ -20,116 +20,282 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "work_id": { "type": "string", "description": "Task id, e.g. T-0003" },
-    "parent_story": { "type": "string", "description": "Story id, e.g. US-0001" },
-    "project_id": { "type": "string", "description": "Project id, e.g. PROJ-001" },
-    "stage": { "const": "release" },
-    "verdict": { "enum": ["pass", "warn", "fail", "blocked"] },
-    "attempt_number": { "type": "integer", "minimum": 1 },
-
+    "work_id": {
+      "type": "string",
+      "description": "Task id, e.g. T-0003"
+    },
+    "parent_story": {
+      "type": "string",
+      "description": "Story id, e.g. US-0001"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Project id, e.g. PROJ-001"
+    },
+    "stage": {
+      "const": "release"
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "warn",
+        "fail",
+        "blocked"
+      ]
+    },
+    "attempt_number": {
+      "type": "integer",
+      "minimum": 1
+    },
     "tests": {
       "type": "object",
       "description": "Evidence 1: passing tests with acceptance-criteria coverage.",
-      "required": ["passed", "ac_coverage"],
+      "required": [
+        "passed",
+        "executed",
+        "ac_coverage"
+      ],
       "additionalProperties": false,
       "properties": {
-        "passed": { "type": "boolean", "description": "All tests actually ran and passed (requires sandbox to run bodies)." },
-        "command": { "type": "string", "description": "Exact command run, e.g. 'pytest -q'." },
+        "passed": {
+          "type": "boolean",
+          "description": "Test BODIES actually ran and passed AND gate-test passed. Never derived from gate booleans alone \u2014 gate-build passes on WARN and on a compile-only run."
+        },
+        "command": {
+          "type": "string",
+          "description": "Exact command run, e.g. 'pytest -q'. Empty when executed is false \u2014 the package must not name a command that never ran."
+        },
         "ac_coverage": {
           "type": "array",
           "description": "One entry per acceptance criterion.",
           "items": {
             "type": "object",
-            "required": ["criterion", "covered_by"],
+            "required": [
+              "criterion",
+              "covered_by"
+            ],
             "properties": {
-              "criterion": { "type": "string" },
-              "covered_by": { "type": "array", "items": { "type": "string" }, "description": "Test ids/names exercising this criterion." },
-              "status": { "enum": ["covered", "flagged_missing", "unassessed"], "description": "Deterministic cross-check of the spec's real criterion vs the tester's claims." }
+              "criterion": {
+                "type": "string"
+              },
+              "covered_by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Test ids/names exercising this criterion."
+              },
+              "status": {
+                "enum": [
+                  "covered",
+                  "flagged_missing",
+                  "unassessed"
+                ],
+                "description": "Deterministic cross-check of the spec's real criterion vs the tester's claims."
+              }
             }
           }
+        },
+        "executed": {
+          "type": "boolean",
+          "description": "Whether any test body was executed at all (gate-build recorded pytest_run:*). False on the default configuration, where FACTORY_RUN_TESTS is off and the build gate only compiles/collects."
         }
       }
     },
-
     "ac_traceability": {
       "type": "object",
       "description": "Deterministic acceptance-criteria traceability: the spec's real criteria cross-checked against the tester's claims. `unassessed` are criteria the tester never mentioned (silent drops).",
       "additionalProperties": false,
       "properties": {
-        "total": { "type": "integer" },
-        "covered": { "type": "integer" },
-        "flagged_missing": { "type": "array", "items": { "type": "string" } },
-        "unassessed": { "type": "array", "items": { "type": "string" } }
+        "total": {
+          "type": "integer"
+        },
+        "covered": {
+          "type": "integer"
+        },
+        "flagged_missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unassessed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
-
     "diff": {
       "type": "object",
       "description": "Evidence 2: the REAL change set, measured from git (not self-reported).",
-      "required": ["source", "files"],
+      "required": [
+        "source",
+        "files",
+        "scope_violations"
+      ],
       "additionalProperties": false,
       "properties": {
-        "source": { "const": "git", "description": "Must be git-measured to be trusted." },
+        "source": {
+          "enum": [
+            "git",
+            "unavailable"
+          ],
+          "description": "Must be 'git' to be trusted. 'unavailable' means the change set could NOT be measured from git (the target is not a git repo), so the file list is the agent's self-report; such a package fails validate() and must not be signed off."
+        },
         "files": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["path", "change"],
+            "required": [
+              "path",
+              "change"
+            ],
             "properties": {
-              "path": { "type": "string" },
-              "change": { "enum": ["added", "modified", "deleted", "renamed"] },
-              "additions": { "type": "integer" },
-              "deletions": { "type": "integer" }
+              "path": {
+                "type": "string"
+              },
+              "change": {
+                "enum": [
+                  "added",
+                  "modified",
+                  "deleted",
+                  "renamed"
+                ]
+              },
+              "additions": {
+                "type": "integer"
+              },
+              "deletions": {
+                "type": "integer"
+              }
             }
           }
         },
         "scope_violations": {
           "type": "array",
-          "description": "Files changed outside the context pack's allowed scope.",
-          "items": { "type": "string" }
+          "description": "Files changed outside the union of the tasks' declared allowed scope (EFFECTIVENESS.md \u00a76), measured from the git diff. Empty when every task declared no scope (nothing declared forbids nothing).",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
-
     "adr": {
       "type": "object",
       "description": "Evidence 3: design rationale, persisted to docs/architecture/adr/.",
-      "required": ["path", "summary"],
+      "required": [
+        "path",
+        "summary"
+      ],
       "additionalProperties": false,
       "properties": {
-        "path": { "type": "string" },
-        "summary": { "type": "string", "description": "One-paragraph decision + why." }
+        "path": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string",
+          "description": "One-paragraph decision + why."
+        }
       }
     },
-
     "security_boundary": {
       "type": "object",
       "description": "Evidence 4: explicit security/boundary verdict with sub-verdicts.",
-      "required": ["overall", "findings"],
+      "required": [
+        "overall",
+        "findings"
+      ],
       "additionalProperties": false,
       "properties": {
-        "overall": { "enum": ["pass", "warn", "fail", "not_applicable"] },
-        "tenant_isolation": { "enum": ["pass", "warn", "fail", "not_applicable"] },
-        "authorization": { "enum": ["pass", "warn", "fail", "not_applicable"] },
-        "secrets_not_logged": { "enum": ["pass", "warn", "fail", "not_applicable"] },
-        "breaking_changes": { "type": "array", "items": { "type": "string" } },
-        "highest_severity": { "enum": ["none", "low", "medium", "high", "critical"] },
-        "findings": { "type": "array", "items": { "type": "string" } }
+        "overall": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "not_applicable"
+          ]
+        },
+        "tenant_isolation": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "not_applicable"
+          ]
+        },
+        "authorization": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "not_applicable"
+          ]
+        },
+        "secrets_not_logged": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "not_applicable"
+          ]
+        },
+        "breaking_changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "highest_severity": {
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
-
     "cost": {
       "type": "object",
       "description": "Accumulated spend for the task, enforcing the remediation budget.",
-      "required": ["usd", "tokens_in", "tokens_out"],
+      "required": [
+        "usd",
+        "tokens_in",
+        "tokens_out"
+      ],
       "properties": {
-        "usd": { "type": "number" },
-        "tokens_in": { "type": "integer" },
-        "tokens_out": { "type": "integer" }
+        "usd": {
+          "type": "number"
+        },
+        "tokens_in": {
+          "type": "integer"
+        },
+        "tokens_out": {
+          "type": "integer"
+        }
       }
     },
-
-    "blockers": { "type": "array", "items": { "type": "string" } },
-    "next_authorization": { "enum": ["release", "operator-review", "none"] }
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_authorization": {
+      "enum": [
+        "release",
+        "operator-review",
+        "none"
+      ]
+    }
   }
 }

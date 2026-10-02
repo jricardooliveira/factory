@@ -39,13 +39,26 @@ class TrustPackageTests(unittest.TestCase):
 
     def test_assemble_has_all_required_fields(self) -> None:
         pkg = tp.assemble(self.db_path, self._completed_run())
-        self.assertEqual(tp.validate(pkg), [])  # matches schema's required keys
+        for key in ("work_id", "parent_story", "project_id", "stage", "verdict", "tests",
+                    "diff", "adr", "security_boundary", "cost", "blockers",
+                    "next_authorization"):
+            self.assertIn(key, pkg)
         self.assertEqual(pkg["verdict"], "pass")
-        self.assertTrue(pkg["tests"]["passed"])
         self.assertEqual(len(pkg["tests"]["ac_coverage"]), 2)
         self.assertEqual([f["path"] for f in pkg["diff"]["files"]], ["c.py"])
-        self.assertEqual(pkg["next_authorization"], "release")
         self.assertAlmostEqual(pkg["cost"]["usd"], 0.03)
+        # This run has no project repo, so the change set cannot be git-measured
+        # and no test body ran. Both bars are unmet, so the package must say so
+        # and must NOT offer release sign-off (see test_trust_truthfulness.py).
+        self.assertEqual(pkg["diff"]["source"], "unavailable")
+        self.assertFalse(pkg["tests"]["executed"])
+        self.assertFalse(pkg["tests"]["passed"])
+        self.assertEqual(pkg["next_authorization"], "operator-review")
+        self.assertEqual(
+            tp.validate(pkg),
+            ["diff.source is 'unavailable': the change set was not measured from git, "
+             "so §5.2 (real git diff, not the agent's self-report) is unmet"],
+        )
 
     def test_failed_run_is_not_release_ready(self) -> None:
         with db.get_db(self.db_path) as conn:
@@ -84,7 +97,6 @@ class TrustPackageTests(unittest.TestCase):
             db.finish_run(conn, rid, "completed")
 
         pkg = tp.assemble(self.db_path, rid)
-        self.assertEqual(tp.validate(pkg), [])
         trace = pkg["ac_traceability"]
         self.assertEqual(trace["total"], 2)
         self.assertEqual(trace["covered"], 1)
@@ -93,6 +105,10 @@ class TrustPackageTests(unittest.TestCase):
         statuses = {e["criterion"]: e["status"] for e in pkg["tests"]["ac_coverage"]}
         self.assertEqual(statuses["search returns matching items"], "covered")
         self.assertEqual(statuses["results are paginated"], "unassessed")
+        # A silently-dropped acceptance criterion is an unmet evidence bar, so it
+        # must be named as a blocker rather than buried in the traceability block.
+        self.assertTrue(any("never" in b and "assessed" in b for b in pkg["blockers"]),
+                        pkg["blockers"])
 
     def test_assemble_unknown_run_is_empty(self) -> None:
         self.assertEqual(tp.assemble(self.db_path, 999), {})

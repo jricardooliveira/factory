@@ -16,10 +16,12 @@ from factory.gates import (
     MAX_TASK_COST_USD,
     MAX_TESTER_REMEDIATIONS,
     GateResult,
+    defined_threshold_terms,
     gate_after_architect,
     gate_after_spec,
     gate_after_tester,
 )
+from factory import artifacts, review_policy
 from factory.context_pack import build_remediation_pack, build_task_pack, order_tasks
 from factory.materialize import materialize_code_blocks, normalize_block_path
 from factory.memory import load_project_memory, write_adr
@@ -69,7 +71,10 @@ class PipelineState(TypedDict, total=False):
     gate_build: dict[str, Any]
     gate_test: dict[str, Any]
 
-    # Decision memory
+    # Committed artifact chain (INTENT -> SPEC -> PLAN -> ADR)
+    intent_path: str
+    spec_path: str
+    plan_path: str
     adr_path: str
 
     # Remediation loop
@@ -292,20 +297,89 @@ def _get_db_conn(state: PipelineState) -> sqlite3.Connection:
 
 # ── Node: spec-agent ──────────────────────────────────────────────
 
+def build_spec_prompt(state: PipelineState) -> str:
+    """Assemble the spec-agent's prompt.
+
+    It used to be the bare request string, which meant the story was written blind
+    to the project's own hard constraints — the `forbidden` list, the NFRs, the
+    existing modules, PROJECT_RULES. The same constraint block was already injected
+    for the architect, the coder and the tester, so a criterion that contradicted a
+    hard constraint got written at stage 2 and could only be silently dropped at
+    stage 3. Constraints belong at the moment the work is DEFINED, which is the
+    playbook's Stage-2 "skills applied as constraints" play.
+
+    Also carries the operator's answers back in when a rejected spec is re-run, so
+    a Checkpoint-1 rejection is a conversation rather than a dead end.
+    """
+    parts: list[str] = []
+    if state.get("project_spec"):
+        parts.append(f"{state['project_spec']}\n")
+    memory = _project_memory_block(state)
+    if memory:
+        parts.append(memory)
+
+    findings = state.get("prior_findings") or []
+    if state.get("triggered_by") == "spec-rejected" and findings:
+        parts.append(
+            "## Operator feedback on your previous story (it was REJECTED)\n\n"
+            "Re-specify the work taking these answers as settled. Do not re-ask "
+            "them, and do not simply re-propose the same story:\n"
+            + "\n".join(f"- {f}" for f in findings)
+            + "\n"
+        )
+
+    parts.append(f"## Request\n\n{state['request']}")
+    if len(parts) > 1:
+        parts.append(
+            "\nDefine the story WITHIN the constraints above. If a constraint makes "
+            "the request impossible as stated, say so in `questions` rather than "
+            "writing an acceptance criterion that violates it."
+        )
+    return "\n".join(parts)
+
+
+def _write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | None:
+    """Write one link of the committed artifact chain (best-effort).
+
+    Evidence must never be able to fail a run — but a silent `except: pass` is how
+    the trust-package writer stayed invisible across 16 runs, so the failure is
+    returned for the caller to record rather than swallowed.
+    """
+    project_dir = state.get("project_dir")
+    if not project_dir:
+        return None
+    try:
+        writer = {
+            "intent": artifacts.write_intent,
+            "spec": artifacts.write_spec,
+            "plan": artifacts.write_plan,
+        }[kind]
+        path = writer(Path(project_dir), state["story_id"], *args)
+        return str(path) if path else None
+    except (OSError, KeyError, ValueError):
+        return None
+
+
 def node_spec_agent(state: PipelineState) -> dict[str, Any]:
     conn = _get_db_conn(state)
     try:
         update_run_stage(conn, state["run_id"], "spec-agent")
         conn.commit()
 
-        result, parsed = _run_agent_json(state, "spec-agent", state["request"])
+        # Link 1 of the chain: the operator's raw ask, on disk with an author and a
+        # date, BEFORE any agent interprets it — so a run that dies at the spec
+        # still leaves a record of what was asked.
+        intent_path = _write_chain_artifact(state, "intent", state.get("request", ""))
+
+        prompt = build_spec_prompt(state)
+        result, parsed = _run_agent_json(state, "spec-agent", prompt)
 
         # Handle synthetic blocked response from _extract_json
         if parsed.get("error") == "Agent did not return valid JSON":
             agent_said = parsed.get("agent_response", "unknown")
             error = f"spec-agent did not return JSON. Agent said: {agent_said}"
             log_agent(
-                conn, state["run_id"], "spec-agent", state["request"],
+                conn, state["run_id"], "spec-agent", prompt,
                 result.output, verdict="blocked", duration_secs=result.duration_secs,
                 **_usage_kwargs(result),
             )
@@ -321,7 +395,7 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
         spec = SpecOutput.model_validate(parsed)
 
         log_agent(
-            conn, state["run_id"], "spec-agent", state["request"],
+            conn, state["run_id"], "spec-agent", prompt,
             result.output, verdict=spec.verdict, duration_secs=result.duration_secs,
             **_usage_kwargs(result),
         )
@@ -332,12 +406,21 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
             update_story_title(conn, state["story_id"], spec.title)
         conn.commit()
 
-        return {
-            "spec_raw": result.output,
-            "spec": parsed,
-        }
+        # Link 2: the story the design must answer. The ADR recorded the decision
+        # but never the requirements it was a decision about.
+        spec_path = _write_chain_artifact(state, "spec", spec)
+
+        out: dict[str, Any] = {"spec_raw": result.output, "spec": parsed}
+        if intent_path:
+            out["intent_path"] = intent_path
+        if spec_path:
+            out["spec_path"] = spec_path
+        return out
     except Exception as e:
-        log_agent(conn, state["run_id"], "spec-agent", state["request"], str(e), verdict="error")
+        log_agent(
+            conn, state["run_id"], "spec-agent",
+            locals().get("prompt") or state.get("request", ""), str(e), verdict="error",
+        )
         finish_run(conn, state["run_id"], "failed", error=f"spec-agent failed: {e}")
         conn.commit()
         return {"status": "failed", "error": f"spec-agent failed: {e}"}
@@ -347,24 +430,122 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
 
 # ── Node: gate-1 ──────────────────────────────────────────────────
 
+def settled_threshold_terms(state: PipelineState) -> frozenset[str]:
+    """Threshold terms a HUMAN has actually settled for this project.
+
+    Deliberately NOT the whole project-memory block. ADRs are authored by the
+    architect-agent and `memory.render_adr` stamps every one
+    `Status: proposed (pending architecture sign-off)` — never approved. Reading
+    them here let an agent-invented number launder itself into a decision:
+    observed live, one run's architect chose "24 hours" and wrote an ADR, and the
+    NEXT run then passed the ambiguity gate on the strength of that ADR and chose
+    48 hours instead. Two runs, two contradictory undocumented business rules,
+    neither approved by anyone.
+
+    Sources that count:
+      - the project spec (operator-authored JSON),
+      - PROJECT_RULES.md (operator-authored),
+      - an ADR whose Status line records an actual approval.
+    """
+    parts: list[str] = [state.get("project_spec") or ""]
+
+    # The operator's OWN answers at this run's checkpoints. These are the most
+    # authoritative source there is — they were typed by the person the gate
+    # exists to protect. Omitting them made the gate un-dischargeable: the
+    # operator defined "overdue", the spec-agent used the definition correctly,
+    # and the gate asked the same question again. An interruption that cannot be
+    # answered spends the scarcest resource this factory has and buys nothing.
+    run_id, db_path = state.get("run_id"), state.get("db_path")
+    if run_id and db_path:
+        try:
+            conn = _get_db_conn(state)
+            try:
+                rows = conn.execute(
+                    "SELECT human_response FROM gate_results WHERE run_id = ? "
+                    "AND human_response IS NOT NULL",
+                    (run_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+            parts.extend(r["human_response"] or "" for r in rows)
+        except sqlite3.Error:
+            pass  # evidence is best-effort; never let it break the gate
+
+    project_dir = state.get("project_dir")
+    if project_dir:
+        root = Path(project_dir)
+        rules = root / "PROJECT_RULES.md"
+        if rules.is_file():
+            try:
+                parts.append(rules.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+        adr_dir = root / "docs" / "architecture" / "adr"
+        if adr_dir.is_dir():
+            for adr in sorted(adr_dir.glob("ADR-*.md")):
+                if f"ADR-{state.get('story_id')}-" in adr.name:
+                    continue  # never let this story's own ADR settle its own question
+                try:
+                    text = adr.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                status = next(
+                    (ln for ln in text.splitlines() if ln.lower().startswith("- status:")),
+                    "",
+                ).lower()
+                if "approved" in status and "pending" not in status:
+                    parts.append(text)
+    return defined_threshold_terms("\n".join(parts))
+
+
 def node_gate_1(state: PipelineState) -> dict[str, Any]:
     if state.get("status") in ("failed", "blocked"):
         return state
 
     spec = SpecOutput.model_validate(state["spec"])
-    result = gate_after_spec(spec)
+    result = gate_after_spec(
+        spec,
+        defined_terms=settled_threshold_terms(state),
+        # Keyed off the operator's own words: a term THEY used without a
+        # number needs sign-off however the agents resolve it.
+        request=state.get("request", ""),
+    )
 
+    error = f"Gate 1 failed: {result.reason}" if not result.passed else None
     conn = _get_db_conn(state)
     try:
-        log_gate(conn, state["run_id"], result.gate, result.passed, result.reason)
+        human_q_text = "\n\n".join(result.human_questions) if result.human_questions else None
+        log_gate(
+            conn, state["run_id"], result.gate, result.passed, result.reason,
+            needs_human=result.needs_human, human_questions=human_q_text,
+        )
+        # A rejection must be PERSISTED, not just returned in graph state. Without
+        # this the run stayed 'running' with a NULL error forever: invisible to
+        # `factory queue`, and eventually mopped up by `reconcile` as a dead
+        # process — misreporting a policy decision as a crash.
+        if not result.passed:
+            update_story_status(conn, state["story_id"], "failed")
+            finish_run(conn, state["run_id"], "failed", error=error)
+        elif result.needs_human:
+            finish_run(conn, state["run_id"], "waiting_human", error=None)
+            update_run_stage(conn, state["run_id"], "gate-1-human")
         conn.commit()
     finally:
         conn.close()
 
-    gate_dict = {"gate": result.gate, "passed": result.passed, "reason": result.reason}
+    gate_dict = {
+        "gate": result.gate,
+        "passed": result.passed,
+        "reason": result.reason,
+        "needs_human": result.needs_human,
+        "human_questions": result.human_questions,
+    }
 
     if not result.passed:
-        return {"gate_1": gate_dict, "status": "failed", "error": f"Gate 1 failed: {result.reason}"}
+        return {"gate_1": gate_dict, "status": "failed", "error": error}
+
+    if result.needs_human:
+        return {"gate_1": gate_dict, "status": "waiting_human"}
 
     return {"gate_1": gate_dict}
 
@@ -410,13 +591,19 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
                 result.output, verdict="blocked", duration_secs=result.duration_secs,
                 **_usage_kwargs(result),
             )
-            conn.commit()
             agent_said = parsed.get("agent_response", "unknown")
+            error = f"architect-agent did not return JSON. Agent said: {agent_said}"
+            # PERSIST it. Returning 'failed' in graph state only left the run as
+            # 'running' with a NULL error — invisible to `factory queue` and later
+            # mislabelled by `reconcile` as a dead process.
+            update_story_status(conn, state["story_id"], "failed")
+            finish_run(conn, state["run_id"], "failed", error=error)
+            conn.commit()
             return {
                 "architect_raw": result.output,
                 "architect": {"verdict": "fail", "architecture_notes": f"Agent went off-script: {agent_said}", "modules_affected": [], "risks": []},
                 "status": "failed",
-                "error": f"architect-agent did not return JSON. Agent said: {agent_said}",
+                "error": error,
             }
 
         arch = ArchitectOutput.model_validate(parsed)
@@ -444,11 +631,24 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
         out: dict[str, Any] = {"architect_raw": result.output, "architect": parsed}
         if adr_path:
             out["adr_path"] = adr_path
+        # Link 3: the plan. `order_tasks` already computes the dependency order on
+        # every coder call and threw it away; committing it makes the sequence a
+        # reviewer reads the sequence that ran, and its declared scope is what the
+        # trust package checks the real diff against.
+        if arch.verdict != "fail":
+            plan_path = _write_chain_artifact(
+                state, "plan", SpecOutput.model_validate(state["spec"]), arch
+            )
+            if plan_path:
+                out["plan_path"] = plan_path
         return out
     except Exception as e:
+        error = f"architect-agent failed: {e}"
         log_agent(conn, state["run_id"], "architect-agent", "", str(e), verdict="error")
+        update_story_status(conn, state["story_id"], "failed")
+        finish_run(conn, state["run_id"], "failed", error=error)
         conn.commit()
-        return {"status": "failed", "error": f"architect-agent failed: {e}"}
+        return {"status": "failed", "error": error}
     finally:
         conn.close()
 
@@ -788,6 +988,28 @@ def _changes_under_review_block(state: PipelineState) -> str:
     )
 
 
+def build_tester_prompt(state: PipelineState) -> str:
+    """Assemble the tester's prompt, including the VERSIONED review policy.
+
+    The review passes, the severity ladder and the skip list used to live as prose
+    in `.opencode/agents/tester-agent.md`, with the blocking threshold in
+    `gates.py` — one policy in two places. `docs/factory/REVIEW.md` is now the
+    single home; the agent definition keeps only the role and the JSON contract.
+    """
+    project_context = f"{state['project_spec']}\n\n" if state.get("project_spec") else ""
+    return (
+        f"{project_context}"
+        f"{_project_memory_block(state)}"
+        f"{review_policy.policy_block()}"
+        f"## Story\n\n```json\n{json.dumps(state.get('spec', {}), indent=2)}\n```\n\n"
+        f"## Architecture\n\n```json\n{json.dumps(state.get('architect', {}), indent=2)}\n```\n\n"
+        f"{_changes_under_review_block(state)}"
+        f"## Build gate result\n\n{json.dumps(state.get('gate_build', {}), indent=2)}\n\n"
+        "Review the implementation against the acceptance criteria and the review "
+        "policy above, and emit your QA / security / performance sub-verdicts as JSON."
+    )
+
+
 def node_tester_agent(state: PipelineState) -> dict[str, Any]:
     if state.get("status") in ("failed", "blocked"):
         return state
@@ -797,17 +1019,7 @@ def node_tester_agent(state: PipelineState) -> dict[str, Any]:
         update_run_stage(conn, state["run_id"], "tester-agent")
         conn.commit()
 
-        project_context = f"{state['project_spec']}\n\n" if state.get("project_spec") else ""
-        prompt = (
-            f"{project_context}"
-            f"{_project_memory_block(state)}"
-            f"## Story\n\n```json\n{json.dumps(state['spec'], indent=2)}\n```\n\n"
-            f"## Architecture\n\n```json\n{json.dumps(state['architect'], indent=2)}\n```\n\n"
-            f"{_changes_under_review_block(state)}"
-            f"## Build gate result\n\n{json.dumps(state.get('gate_build', {}), indent=2)}\n\n"
-            "Review the implementation against the acceptance criteria and emit your "
-            "QA / security / performance sub-verdicts as JSON."
-        )
+        prompt = build_tester_prompt(state)
 
         result, parsed = _run_agent_json(state, "tester-agent", prompt)
         if parsed.get("error") == "Agent did not return valid JSON":
@@ -935,7 +1147,8 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
 # ── Conditional edges ─────────────────────────────────────────────
 
 def should_continue_after_gate_1(state: PipelineState) -> str:
-    if state.get("status") == "failed":
+    # `waiting_human` is Checkpoint 1: the line stops until the operator answers.
+    if state.get("status") in ("failed", "blocked", "waiting_human"):
         return END
     return "architect-agent"
 
@@ -1025,6 +1238,47 @@ def build_coder_only_pipeline() -> StateGraph:
 
 def compile_coder_only_pipeline():
     return build_coder_only_pipeline().compile()
+
+
+def resume_entry_for(gate_name: str | None, action: str) -> str:
+    """Which stage a parked run re-enters, given the gate that parked it.
+
+    Keeps the routing decision out of the CLI's I/O so it is testable offline.
+
+    - Checkpoint 1 (gate-1-spec): approve accepts the story as written and moves
+      to design; reject means the operator ANSWERED the open questions, so the
+      story itself must be rewritten — re-enter at the spec-agent.
+    - Checkpoint 2 (gate-2-architect): approve continues to implementation;
+      reject re-runs the design with the feedback. (Pre-existing behaviour, and
+      the fallback for any gate we don't recognize.)
+    """
+    if gate_name == "gate-1-spec":
+        return "architect" if action == "approve" else "spec"
+    return "coder" if action == "approve" else "architect"
+
+
+def build_spec_resume_pipeline() -> StateGraph:
+    """Re-entry from the story itself: used when a human REJECTS Checkpoint 1.
+    Re-runs the spec-agent (carrying the operator's answers as `prior_findings`)
+    and then flows on through the normal line."""
+    graph = StateGraph(PipelineState)
+    graph.add_node("spec-agent", node_spec_agent)
+    graph.add_node("gate-1", node_gate_1)
+    graph.add_node("architect-agent", node_architect_agent)
+    graph.add_node("gate-2", node_gate_2)
+    graph.add_node("coder-agent", node_coder_agent)
+    graph.set_entry_point("spec-agent")
+    graph.add_conditional_edges("spec-agent", should_continue_after_spec)
+    graph.add_conditional_edges("gate-1", should_continue_after_gate_1)
+    graph.add_edge("architect-agent", "gate-2")
+    graph.add_conditional_edges("gate-2", should_continue_after_gate_2)
+    graph.add_conditional_edges("coder-agent", route_after_coder)
+    _wire_tester(graph)
+    return graph
+
+
+def compile_spec_resume_pipeline():
+    return build_spec_resume_pipeline().compile()
 
 
 def build_architect_resume_pipeline() -> StateGraph:

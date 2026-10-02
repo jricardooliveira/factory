@@ -65,3 +65,27 @@ You MUST respond with ONLY a JSON block (no markdown fences, no commentary befor
 - Tasks must have clear completion evidence.
 - Do NOT invent requirements not implied by the request.
 - Always use story ID `US-0001` and task IDs `T-0001`, `T-0002`, etc.
+
+## Never invent a threshold
+
+If the request uses a word that only means something once a NUMBER is attached —
+`overdue`, `stale`, `recent`, `expired`, `slow`, `large`, `active`, `frequently`,
+`nearby` and their kind — and the request does not supply that number, you MUST
+add a question asking for it. Do not choose a value, do not write "a sensible
+default", and do not defer it to an implementation task: a threshold picked by
+the coder becomes an undocumented business rule that nobody approved.
+
+Write the acceptance criteria as if the answer will arrive, then ask for it:
+
+- ✅ `"questions": ["'Overdue' is undefined. Measured from createdAt or from the
+  last status change, and at what threshold — 24h, one business day, or per
+  priority?"]`
+- ❌ an acceptance criterion reading "tickets older than 24 hours are overdue"
+  when the request never said 24 hours
+- ❌ an acceptance criterion reading "overdue is determined by a clearly defined
+  rule" — that defers the decision without asking anyone
+
+This applies even when you are confident about the conventional answer. The
+operator may disagree, and finding out after the code is written is expensive.
+A deterministic gate also checks for this, so inventing a value will not get the
+story through — it will only make the story disagree with the question.

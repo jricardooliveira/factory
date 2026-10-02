@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Bash(make check)",
+      "Bash(make test)",
+      "Bash(make lint)",
+      "Bash(make sim)",
+      "Bash(make evals)",
+      "Bash(make metrics)",
+      "Bash(.venv/bin/python -m pytest*)",
+      "Bash(.venv/bin/factory simulate*)",
+      "Bash(.venv/bin/factory evals*)",
+      "Bash(.venv/bin/factory metrics*)",
+      "Bash(.venv/bin/factory replay*)",
+      "Bash(.venv/bin/factory review*)",
+      "Bash(.venv/bin/factory list*)",
+      "Bash(.venv/bin/factory queue*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)"
+    ],
+    "deny": [
+      "Read(./mvp/projects/*/.secrets/**)",
+      "Read(./projects/*/.secrets/**)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/protect-paths.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking protected paths..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/verify-edit.sh\"",
+            "timeout": 30,
+            "statusMessage": "Verifying edit..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -107,6 +107,13 @@ def init_db(path: Path = DEFAULT_DB_PATH) -> None:
         _ensure_column(conn, "agent_logs", "model_name", "TEXT")
         _ensure_column(conn, "agent_logs", "prompt_hash", "TEXT")
         _ensure_column(conn, "agent_logs", "agent_prompt_hash", "TEXT")
+        # The commit the run started from: lets the trust package measure THIS
+        # run's change set from git instead of every factory commit ever made.
+        _ensure_column(conn, "pipeline_runs", "base_commit", "TEXT")
+        # When the operator answered a checkpoint. Without it the factory's own
+        # north-star metric ("trust per interruption") is not just uncomputed
+        # but unrecordable — there is no time to measure the interruption from.
+        _ensure_column(conn, "gate_results", "responded_at", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -132,11 +139,19 @@ def create_story(
     )
 
 
-def start_run(conn: sqlite3.Connection, story_id: str, project_id: str | None = None) -> int:
+def start_run(
+    conn: sqlite3.Connection,
+    story_id: str,
+    project_id: str | None = None,
+    base_commit: str | None = None,
+) -> int:
+    """Open a run. `base_commit` is the target repo's HEAD at start, so the run's
+    change set can later be measured from git against its own baseline."""
     now = _now()
     cursor = conn.execute(
-        "INSERT INTO pipeline_runs (story_id, project_id, status, current_stage, started_at) VALUES (?, ?, 'running', 'spec-agent', ?)",
-        (story_id, project_id, now),
+        "INSERT INTO pipeline_runs (story_id, project_id, status, current_stage, started_at, base_commit)"
+        " VALUES (?, ?, 'running', 'spec-agent', ?, ?)",
+        (story_id, project_id, now, base_commit),
     )
     return cursor.lastrowid  # type: ignore[return-value]
 
@@ -190,10 +205,29 @@ def log_gate(
 
 
 def respond_to_gate(conn: sqlite3.Connection, gate_id: int, response: str) -> None:
+    """Record the operator's checkpoint decision, stamped with when they answered."""
     conn.execute(
-        "UPDATE gate_results SET human_response = ? WHERE id = ?",
-        (response, gate_id),
+        "UPDATE gate_results SET human_response = ?, responded_at = ? WHERE id = ?",
+        (response, _now(), gate_id),
     )
+
+
+def get_answered_human_gate(conn: sqlite3.Connection, run_id: int) -> dict[str, Any] | None:
+    """The most recently ANSWERED checkpoint for a run.
+
+    Lets a run that died after the operator answered be picked back up. Without
+    it, a transient provider error between "reject" and the re-run left the
+    decision stranded: the run was no longer `waiting_human`, so approve/reject
+    refused it, and nothing else read `human_response`. An interruption is the
+    scarcest thing this factory spends; losing one to someone else's 500 is not
+    acceptable. Newest first, matching the resume rule everywhere else.
+    """
+    row = conn.execute(
+        "SELECT * FROM gate_results WHERE run_id = ? AND needs_human = 1 "
+        "AND human_response IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (run_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def get_pending_human_gate(conn: sqlite3.Connection, run_id: int) -> dict[str, Any] | None:
@@ -320,6 +354,21 @@ def get_agent_log_by_stage(
         (run_id, agent, stage_type),
     ).fetchone()
     return dict(row) if row else None
+
+
+def get_agent_logs_for(
+    conn: sqlite3.Connection, run_id: int, agent: str
+) -> list[dict[str, Any]]:
+    """All of one agent's logs for a run, NEWEST FIRST.
+
+    Lets a caller walk back to the last USABLE output. A failed call is also a
+    row, so "newest row" and "newest artifact" are not the same thing.
+    """
+    rows = conn.execute(
+        "SELECT * FROM agent_logs WHERE run_id = ? AND agent = ? ORDER BY id DESC",
+        (run_id, agent),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_run_logs(conn: sqlite3.Connection, run_id: int) -> list[dict[str, Any]]:

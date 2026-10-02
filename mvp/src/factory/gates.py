@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from factory.models import ArchitectOutput, CoderOutput, SpecOutput, TesterOutput
@@ -37,13 +38,156 @@ MAX_TESTER_REMEDIATIONS = 1
 MAX_REARCHITECT_LOOPS = 1
 
 
+# ── Deterministic ambiguity detection (Checkpoint 1) ──────────────
+# A live test of the SupportFlow challenge's Story 10 ran the SAME vague request
+# twice: once the spec-agent asked four precise product questions, once it
+# returned `verdict: pass` and went to build, deferring the definition to a coder
+# task. Story 10 exists precisely to check the pipeline does not silently invent a
+# business rule — and the factory was satisfying that criterion by luck. For a
+# system whose premise is "policy is deterministic Python, never delegated to an
+# LLM", this is the wrong thing to leave to the model.
+#
+# Terms that oblige the implementation to invent a NUMBER it was never given.
+# Deliberately NARROW: quality adjectives ("appropriate", "reasonable", "proper")
+# are EXCLUDED. The challenge uses "appropriate" in eight of fifteen stories, so
+# flagging those would park nearly every story and train the operator to click
+# through — the crying-wolf failure this check exists to avoid. Judging test
+# adequacy is the tester's job via REVIEW.md, not gate-1's.
+THRESHOLD_TERMS: frozenset[str] = frozenset({
+    # temporal cutoffs
+    "overdue", "stale", "expired", "recent", "recently", "soon", "late", "delayed",
+    "timely", "outdated", "aging", "aged", "lapsed",
+    # magnitude cutoffs
+    "large", "small", "long", "short", "slow", "fast", "quick", "heavy", "oversized",
+    "high-volume", "bulk", "busy",
+    # activity / popularity cutoffs
+    "active", "inactive", "idle", "popular", "trending", "top",
+    # cadence cutoffs
+    "frequent", "frequently", "periodic", "periodically", "regularly", "often",
+    # proximity cutoffs
+    "nearby", "close", "adjacent",
+})
+
+# Evidence that a criterion DOES carry its threshold.
+_NUMBER_WORDS = (
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "fifteen", "twenty", "thirty", "sixty", "hundred", "thousand",
+)
+# Matched as WHOLE WORDS. A substring test here was a real bug: "nu(mb)er" hit
+# the megabyte unit, and "ms" matches almost any -ms plural ("items", "terms",
+# "problems"), which silently disabled the whole check on ordinary criteria.
+_UNIT_WORDS = frozenset({
+    "second", "seconds", "minute", "minutes", "hour", "hours",
+    "day", "days", "week", "weeks", "month", "months", "year", "years",
+    "ms", "sec", "secs", "kb", "mb", "gb", "percent",
+})
+_WORD_RE = re.compile(r"[a-z0-9%\-]+")
+
+
+def _is_bound(criterion: str) -> bool:
+    """Whether a criterion supplies the number its qualifier needs."""
+    lowered = criterion.lower()
+    if any(ch.isdigit() for ch in lowered) or "%" in lowered:
+        return True
+    words = set(_WORD_RE.findall(lowered))
+    return bool(words & set(_NUMBER_WORDS)) or bool(words & _UNIT_WORDS)
+
+
+def defined_threshold_terms(project_context: str) -> frozenset[str]:
+    """Threshold terms already SETTLED in the project's committed context.
+
+    Once a prior ADR or PROJECT_RULES.md defines "overdue", a later story that
+    counts overdue tickets must not park again — the factory does not
+    re-litigate settled decisions (EFFECTIVENESS §7). Fed from the same
+    PROJECT_RULES + prior-ADR block the agents already receive, so the memory
+    that informs the agents is the memory that relaxes the gate.
+    """
+    if not project_context:
+        return frozenset()
+    words = set(_WORD_RE.findall(project_context.lower()))
+    return frozenset(t for t in THRESHOLD_TERMS if t in words)
+
+
+def unasked_request_terms(
+    request: str, defined_terms: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """Threshold terms the OPERATOR used without supplying a number.
+
+    These need sign-off however the agents resolve them. Keying only off the
+    acceptance criteria let an INVENTED number through: a criterion reading
+    "created_at is older than 48 hours" looks bound, but the request never said
+    48 hours, and an earlier run had picked 24. Writing the number down makes the
+    invention visible; it does not make it authorised.
+    """
+    if not request:
+        return frozenset()
+    if _is_bound(request):
+        # The operator supplied a number, so nothing was invented.
+        return frozenset()
+    words = set(_WORD_RE.findall(request.lower()))
+    return frozenset(t for t in THRESHOLD_TERMS if t in words and t not in defined_terms)
+
+
+def unbound_criteria(
+    acceptance_criteria: list[str],
+    *,
+    request: str = "",
+    defined_terms: frozenset[str] = frozenset(),
+) -> list[tuple[str, str]]:
+    """Criteria carrying a threshold nobody authorised.
+
+    Two ways in:
+      - the criterion uses a threshold term and supplies NO number, or
+      - the REQUEST used that term without a number, so any resolution of it —
+        including a number the agent chose — is unapproved.
+
+    Returns ``[(criterion, term)]``, at most one finding per criterion so a
+    sentence with two qualifiers does not double-report.
+    """
+    needs_approval = unasked_request_terms(request, defined_terms)
+    findings: list[tuple[str, str]] = []
+    for criterion in acceptance_criteria:
+        words = set(_WORD_RE.findall(criterion.lower()))
+        candidates = [
+            t for t in sorted(THRESHOLD_TERMS)
+            if t in words and t not in defined_terms
+        ]
+        if not candidates:
+            continue
+        # An unauthorised term from the request always needs approval; otherwise
+        # only an unquantified criterion does.
+        hit = next((t for t in candidates if t in needs_approval), None)
+        if hit is None and not _is_bound(criterion):
+            hit = candidates[0]
+        if hit:
+            findings.append((criterion, hit))
+    return findings
+
+
 # ── Gate 1: After spec-agent ──────────────────────────────────────
 
-def gate_after_spec(spec: SpecOutput) -> GateResult:
-    """Validates spec-agent output before architect-agent."""
+def gate_after_spec(
+    spec: SpecOutput,
+    defined_terms: frozenset[str] = frozenset(),
+    *,
+    request: str = "",
+) -> GateResult:
+    """Validates spec-agent output before architect-agent.
+
+    `defined_terms` are threshold words already settled in the project's
+    committed context, so a later story does not re-ask a question a prior ADR
+    already answered.
+    """
     failures: list[str] = []
 
-    if spec.verdict != "pass":
+    # `verdict != "pass"` is only a rejection when the agent has nothing to ASK.
+    # `spec-agent.md` tells the agent: "If the request is ambiguous, set
+    # verdict: 'fail' and put your questions in a questions array" — so a failing
+    # verdict WITH questions is the agent honouring its ambiguity contract, and
+    # must route to Checkpoint 1 rather than be discarded as a malformed story.
+    # Checking the verdict first is how a live Story-10 run threw away four
+    # correct product questions and reported "Spec verdict is 'fail'".
+    if spec.verdict != "pass" and not spec.questions:
         failures.append(f"Spec verdict is '{spec.verdict}', not 'pass'")
 
     if not spec.title:
@@ -57,9 +201,6 @@ def gate_after_spec(spec: SpecOutput) -> GateResult:
     if not spec.tasks:
         failures.append("No tasks defined")
 
-    if spec.questions:
-        failures.append(f"Open questions remain: {spec.questions}")
-
     # Budget check: too many tasks = scope explosion
     if len(spec.tasks) > MAX_TASKS_PER_STORY:
         failures.append(
@@ -67,6 +208,8 @@ def gate_after_spec(spec: SpecOutput) -> GateResult:
             "Split into multiple stories."
         )
 
+    # A STRUCTURAL problem is a rejection: there is nothing coherent for the
+    # operator to sign off on, so it must not be laundered into a checkpoint.
     if failures:
         return GateResult(
             gate="gate-1-spec",
@@ -74,11 +217,60 @@ def gate_after_spec(spec: SpecOutput) -> GateResult:
             reason="; ".join(failures),
         )
 
-    return GateResult(
-        gate="gate-1-spec",
-        passed=True,
-        reason=f"Story '{spec.title}' has {len(spec.acceptance_criteria)} AC and {len(spec.tasks)} tasks",
+    reason = (
+        f"Story '{spec.title}' has {len(spec.acceptance_criteria)} AC "
+        f"and {len(spec.tasks)} tasks"
     )
+
+    # ── Checkpoint 1 ──────────────────────────────────────────────────
+    # Two independent triggers, combined into one park so the operator answers
+    # everything in a single interruption:
+    #   (a) the agent's own questions — its documented ambiguity contract;
+    #   (b) a DETERMINISTIC check for a criterion that needs a number the story
+    #       never supplied. (b) exists because (a) proved to be a coin flip.
+    human_questions: list[str] = []
+
+    if spec.questions:
+        human_questions.append(
+            "❓ THE SPEC-AGENT NEEDS A DECISION before this story can be designed:\n"
+            + "\n".join(f"  • {q}" for q in spec.questions)
+            + "\n  → Approve to proceed with the story as written, or reject with "
+            "the answers and it will be re-specified."
+        )
+
+    unbound = unbound_criteria(
+        spec.acceptance_criteria, request=request, defined_terms=defined_terms
+    )
+    if unbound:
+        human_questions.append(
+            "📐 UNAUTHORISED THRESHOLD — your request used a term that only means "
+            "something once a number is attached, and never gave the number. These "
+            "criteria either leave it undefined or fill it in with a value you "
+            "never approved:\n"
+            + "\n".join(
+                f"  • '{term}' — {'the story INVENTED a value your request never supplied' if _is_bound(crit) else 'still undefined'}"
+                f" in: {crit}"
+                for crit, term in unbound
+            )
+            + "\n  → Reject with the definition (e.g. \"overdue = HIGH, not CLOSED, "
+            "created >24h ago\"), or approve to accept whatever the agents choose."
+        )
+
+    if human_questions:
+        parts = []
+        if spec.questions:
+            parts.append(f"{len(spec.questions)} open question(s)")
+        if unbound:
+            parts.append(f"{len(unbound)} undefined threshold(s)")
+        return GateResult(
+            gate="gate-1-spec",
+            passed=True,
+            reason=f"{reason}. ⏸️ NEEDS HUMAN APPROVAL ({', '.join(parts)})",
+            needs_human=True,
+            human_questions=human_questions,
+        )
+
+    return GateResult(gate="gate-1-spec", passed=True, reason=reason)
 
 
 # ── Gate 2: After architect-agent ─────────────────────────────────

@@ -1,0 +1,82 @@
+{
+  "name": "gate1-rejects-scope-explosion",
+  "description": "A story sliced into more than MAX_TASKS_PER_STORY tasks must be refused at gate-1, not built.",
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Sprawling story",
+      "problem": "the problem",
+      "why": "it matters",
+      "acceptance_criteria": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "non_goals": [],
+      "tasks": [
+        {
+          "id": "T-1",
+          "title": "T-1",
+          "purpose": "do T-1",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        },
+        {
+          "id": "T-2",
+          "title": "T-2",
+          "purpose": "do T-2",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        },
+        {
+          "id": "T-3",
+          "title": "T-3",
+          "purpose": "do T-3",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        },
+        {
+          "id": "T-4",
+          "title": "T-4",
+          "purpose": "do T-4",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        },
+        {
+          "id": "T-5",
+          "title": "T-5",
+          "purpose": "do T-5",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        },
+        {
+          "id": "T-6",
+          "title": "T-6",
+          "purpose": "do T-6",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        },
+        {
+          "id": "T-7",
+          "title": "T-7",
+          "purpose": "do T-7",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "gates": {
+      "gate-1-spec": false
+    }
+  }
+}

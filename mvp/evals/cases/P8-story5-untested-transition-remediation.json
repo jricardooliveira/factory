@@ -1,0 +1,117 @@
+{
+  "name": "P8-story5-untested-transition-remediation",
+  "description": "Story 5 AC 'every valid and invalid transition is tested' is NOT met. Does gate-test block, route one remediation pass, and then stop?",
+  "git": true,
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Ticket status workflow",
+      "type": "feature",
+      "problem": "the support workflow is unconstrained",
+      "why": "agents must not move tickets into meaningless states",
+      "acceptance_criteria": [
+        "valid transitions succeed",
+        "invalid transitions return HTTP 409",
+        "unknown tickets return HTTP 404",
+        "workflow rules live in the domain or service layer, not only in HTTP handlers",
+        "every valid and invalid transition is tested"
+      ],
+      "non_goals": [
+        "no authentication"
+      ],
+      "tasks": [
+        {
+          "id": "T-0001",
+          "title": "workflow rules",
+          "purpose": "workflow rules",
+          "scope": [
+            "backend/internal/domain/"
+          ],
+          "completion_evidence": "go test ./... passes",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "workflow map in domain; service wraps it in a tx",
+      "modules_affected": [
+        "backend/internal/domain/status.go"
+      ],
+      "implementation_constraints": [
+        "rules in domain, never in the handler"
+      ],
+      "risks": [
+        "a transition added later must update the map, not the handler"
+      ],
+      "db_impact": "yes",
+      "api_impact": "yes",
+      "migration_needed": "yes"
+    },
+    "coder-agent": {
+      "T-0001": {
+        "verdict": "complete",
+        "files_created": [
+          "backend/go.mod",
+          "backend/internal/domain/status.go"
+        ],
+        "tests_added": [],
+        "implementation_summary": "workflow rules + tests",
+        "code_blocks": [
+          {
+            "path": "backend/go.mod",
+            "content": "module supportflow\n\ngo 1.26\n",
+            "action": "create"
+          },
+          {
+            "path": "backend/internal/domain/status.go",
+            "content": "package domain\n\nimport \"fmt\"\n\n// Status is a ticket's position in the support workflow.\ntype Status string\n\nconst (\n\tStatusOpen       Status = \"OPEN\"\n\tStatusInProgress Status = \"IN_PROGRESS\"\n\tStatusClosed     Status = \"CLOSED\"\n)\n\n// ErrInvalidTransition reports a status change the workflow forbids.\ntype ErrInvalidTransition struct {\n\tFrom Status\n\tTo   Status\n}\n\nfunc (e ErrInvalidTransition) Error() string {\n\treturn fmt.Sprintf(\"invalid transition %s -> %s\", e.From, e.To)\n}\n\n// allowed encodes the workflow. CLOSED is terminal.\nvar allowed = map[Status][]Status{\n\tStatusOpen:       {StatusInProgress, StatusClosed},\n\tStatusInProgress: {StatusOpen, StatusClosed},\n\tStatusClosed:     {},\n}\n\n// CanTransition reports whether from -> to is permitted by the workflow.\nfunc CanTransition(from, to Status) bool {\n\tfor _, candidate := range allowed[from] {\n\t\tif candidate == to {\n\t\t\treturn true\n\t\t}\n\t}\n\treturn false\n}\n\n// Transition validates a status change, returning ErrInvalidTransition if the\n// workflow forbids it. Rules live here, not in the HTTP handler.\nfunc Transition(from, to Status) error {\n\tif !CanTransition(from, to) {\n\t\treturn ErrInvalidTransition{From: from, To: to}\n\t}\n\treturn nil\n}\n",
+            "action": "create"
+          }
+        ]
+      },
+      "remediation": {
+        "verdict": "complete",
+        "files_created": [
+          "backend/internal/domain/status_test.go"
+        ],
+        "tests_added": [
+          "backend/internal/domain/status_test.go"
+        ],
+        "implementation_summary": "workflow rules + tests",
+        "code_blocks": [
+          {
+            "path": "backend/internal/domain/status_test.go",
+            "content": "package domain\n\nimport \"testing\"\n\nfunc TestValidTransitions(t *testing.T) {\n\tfor _, tc := range []struct{ from, to Status }{\n\t\t{StatusOpen, StatusInProgress},\n\t\t{StatusOpen, StatusClosed},\n\t\t{StatusInProgress, StatusOpen},\n\t\t{StatusInProgress, StatusClosed},\n\t} {\n\t\tif err := Transition(tc.from, tc.to); err != nil {\n\t\t\tt.Errorf(\"%s -> %s should be allowed, got %v\", tc.from, tc.to, err)\n\t\t}\n\t}\n}\n\nfunc TestClosedIsTerminal(t *testing.T) {\n\tfor _, to := range []Status{StatusOpen, StatusInProgress, StatusClosed} {\n\t\tif err := Transition(StatusClosed, to); err == nil {\n\t\t\tt.Errorf(\"CLOSED -> %s must be rejected\", to)\n\t\t}\n\t}\n}\n",
+            "action": "create"
+          }
+        ]
+      }
+    },
+    "tester-agent": {
+      "overall": "fail",
+      "qa_verdict": "fail",
+      "ac_coverage": [
+        "valid transitions succeed",
+        "invalid transitions return HTTP 409",
+        "unknown tickets return HTTP 404",
+        "workflow rules live in the domain or service layer, not only in HTTP handlers"
+      ],
+      "missing_coverage": [
+        "every valid and invalid transition is tested"
+      ],
+      "security_verdict": "pass",
+      "highest_severity": "none",
+      "performance_verdict": "pass",
+      "summary": "no test exercises the CLOSED terminal state"
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "gates": {
+      "gate-build": true,
+      "gate-test": false
+    }
+  }
+}

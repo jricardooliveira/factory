@@ -30,9 +30,10 @@ Validated by Pydantic models in `src/factory/models.py`:
 - **`spec-agent` → `SpecOutput`**: `story_id, title, type, problem, why, acceptance_criteria[], non_goals[], tasks[TaskDef], verdict, questions[]`.
   - `TaskDef`: `id, title, purpose, scope[], completion_evidence, depends_on[]`. Tasks are now **executed individually** — `coder-agent` runs once per task (dependency-ordered via `context_pack.order_tasks`) against a scoped context pack (`context_pack.build_task_pack`), each task gated by `gate-build` with its own bounded retry.
 - **`architect-agent` → `ArchitectOutput`**: `verdict, architecture_notes, modules_affected[], data_model, api_design, implementation_constraints[], risks[], db_impact, api_impact, migration_needed, breaking_changes[], external_dependencies[], sensitivity[]`.
-- **`coder-agent` → `CoderOutput`**: `verdict, files_created[], files_modified[], tests_added[], implementation_summary, code_blocks[CodeBlock], test_coverage, assumptions[], follow_ups[]`.
+- **`coder-agent` → `CoderOutput`**: `verdict, files_created[], files_modified[], tests_added[], implementation_summary, code_blocks[CodeBlock], test_coverage, assumptions[], follow_ups[], design_feedback`.
+- **`tester-agent` → `TesterOutput`**: `overall, qa_verdict, ac_coverage[], missing_coverage[], security_verdict, highest_severity, security_findings[], performance_verdict, performance_findings[], summary`.
 
-To-build agents (`tester`, `boundary`, `release`) require new models with **separate sub-verdicts** (e.g. tester: QA / security / performance), per the original spec — a single `verdict` field is insufficient for trust.
+To-build agents (`boundary`, `release`) require new models with **separate sub-verdicts**, per the original spec — a single `verdict` field is insufficient for trust.
 
 ---
 
@@ -41,6 +42,12 @@ To-build agents (`tester`, `boundary`, `release`) require new models with **sepa
 Each stage produces a handoff that the next stage and the gates consume. Today this is the Pydantic output + `agent_logs` rows; the target machine contract is [`trust-package.schema.json`](./trust-package.schema.json). Required fields on any handoff: `work_id`, `parent_story`, `project_id`, `stage`, `verdict`, `input_artifacts`, `output_artifacts`, `blockers`, `next_authorization`. Allowed verdicts: `pass | warn | fail | blocked | complete | not_applicable`.
 
 **Replay:** because every agent's verbatim input/output is stored, any run can be re-driven through the orchestration with `factory replay <run_id>` at zero token cost — the basis for testing agent/gate interactions offline.
+
+**Evals:** the roster above IS configuration, so it is regression-tested. `factory evals` asserts, per agent: the definition exists; `write`/`edit`/`bash`/`patch` are all explicitly `false` (the governance invariant — an agent with tools bypasses `materialize` and the out-of-band-write check entirely); `model_tier` and `model` match `model_tiers`; the prompt demands JSON-only (the orchestrator parses it as JSON); and the JSON example in the definition validates against its Pydantic model with **no unknown keys** — a field in the prompt that the model lacks is silently discarded, so the agent obeys an instruction the code ignores. `make evals` gates at 100%, and an empty suite never passes.
+
+**Review policy:** the tester's passes, severity ladder, skip list and nit cap live in [REVIEW.md](./REVIEW.md) and are injected into its prompt by `review_policy.policy_block()`. `tester-agent.md` keeps only the role and the JSON contract, so review behaviour is tunable in one committed file instead of split between agent prose and `gates.py`.
+
+**Committed artifacts:** the spec-agent's story and the architect's plan are written to `docs/work/<story>/{INTENT,SPEC,PLAN}.md` (`artifacts.py`) alongside the ADR — so the requirements, the order of work and the declared scope are readable off disk without the (gitignored) database.
 
 ---
 

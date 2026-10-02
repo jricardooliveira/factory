@@ -43,9 +43,13 @@ class GateAfterSpecTests(unittest.TestCase):
     def test_too_few_acceptance_criteria_fails(self) -> None:
         self.assertFalse(gate_after_spec(_spec(acceptance_criteria=["only one"])).passed)
 
-    def test_open_questions_block(self) -> None:
+    def test_open_questions_park_for_the_operator(self) -> None:
+        # Checkpoint 1: the spec-agent asking for a decision is the Stage-1
+        # clarifying-question round-trip, not a malformed story. See
+        # tests/test_checkpoint_1.py for the full contract.
         r = gate_after_spec(_spec(questions=["which auth?"]))
-        self.assertFalse(r.passed)
+        self.assertTrue(r.passed)
+        self.assertTrue(r.needs_human)
         self.assertIn("question", r.reason.lower())
 
     def test_too_many_tasks_fails(self) -> None:

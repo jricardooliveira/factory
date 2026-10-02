@@ -1,0 +1,102 @@
+{
+  "name": "task-dependency-cycle-still-executes-every-task",
+  "description": "A spec whose task dependencies form a cycle must not silently drop tasks: order_tasks falls back to the declared order and every task is still built and gated.",
+  "git": true,
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Cyclic slice",
+      "problem": "the problem",
+      "why": "it matters",
+      "acceptance_criteria": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "non_goals": [],
+      "tasks": [
+        {
+          "id": "T-1",
+          "title": "T-1",
+          "purpose": "do T-1",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": [
+            "T-2"
+          ]
+        },
+        {
+          "id": "T-2",
+          "title": "T-2",
+          "purpose": "do T-2",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": [
+            "T-1"
+          ]
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "layered; one module per task",
+      "modules_affected": [
+        "a.py",
+        "b.py"
+      ],
+      "risks": []
+    },
+    "coder-agent": {
+      "T-1": {
+        "verdict": "complete",
+        "files_created": [
+          "a.py"
+        ],
+        "tests_added": [],
+        "implementation_summary": "wrote a.py",
+        "code_blocks": [
+          {
+            "path": "a.py",
+            "content": "def a():\n    return 1\n",
+            "action": "create"
+          }
+        ]
+      },
+      "T-2": {
+        "verdict": "complete",
+        "files_created": [
+          "b.py"
+        ],
+        "tests_added": [],
+        "implementation_summary": "wrote b.py",
+        "code_blocks": [
+          {
+            "path": "b.py",
+            "content": "def b():\n    return 2\n",
+            "action": "create"
+          }
+        ]
+      }
+    },
+    "tester-agent": {
+      "overall": "pass",
+      "qa_verdict": "pass",
+      "ac_coverage": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "missing_coverage": [],
+      "security_verdict": "pass",
+      "highest_severity": "none",
+      "performance_verdict": "pass",
+      "summary": "criteria covered"
+    }
+  },
+  "expect": {
+    "status": "completed",
+    "gates": {
+      "gate-build": true,
+      "gate-test": true
+    }
+  }
+}

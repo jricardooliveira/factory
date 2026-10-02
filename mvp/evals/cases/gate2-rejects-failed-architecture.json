@@ -1,0 +1,45 @@
+{
+  "name": "gate2-rejects-failed-architecture",
+  "description": "An architect verdict of 'fail' must stop the line before any code is written.",
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Impossible",
+      "problem": "the problem",
+      "why": "it matters",
+      "acceptance_criteria": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "non_goals": [],
+      "tasks": [
+        {
+          "id": "T-1",
+          "title": "T-1",
+          "purpose": "do T-1",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "fail",
+      "architecture_notes": "cannot be done within the spec",
+      "modules_affected": [
+        "c.py"
+      ],
+      "risks": [
+        "unbounded"
+      ]
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "gates": {
+      "gate-1-spec": true,
+      "gate-2-architect": false
+    }
+  }
+}

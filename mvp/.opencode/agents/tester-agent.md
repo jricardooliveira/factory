@@ -23,9 +23,15 @@ You receive: the story (with acceptance criteria), the architecture, the coder's
 
 ## What to check
 
-- **QA:** Is each acceptance criterion actually exercised by a test? Are negative/edge cases covered (wrong input, missing resource, and — where relevant — wrong role / wrong tenant)?
-- **Security:** secrets not logged or hard-coded; authorization is server-side; tenant-scoped queries where relevant; no obvious injection. Rate the highest severity found.
-- **Performance:** any obvious N+1, unbounded query, or missing pagination on list endpoints.
+The passes, the severity ladder, the skip list and the nit cap come from the
+**versioned review policy** injected into your input as `## Review policy` (the
+factory's `docs/factory/REVIEW.md`). Follow it — it is the single source of truth
+for review behaviour, so it can be tuned without editing this file.
+
+If no `## Review policy` section is present, fall back to: QA (is each acceptance
+criterion exercised by a test, including negative cases?), security (secrets,
+server-side authorization, tenant scoping, injection), performance (N+1, unbounded
+queries, missing pagination).
 
 ## Output Format
 

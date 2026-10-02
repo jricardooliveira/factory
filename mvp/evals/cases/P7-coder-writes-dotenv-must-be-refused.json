@@ -1,0 +1,82 @@
+{
+  "name": "P7-coder-writes-dotenv-must-be-refused",
+  "description": "The coder declares a .env with a live-looking key (Story 0 AC 11 / Story 9 AC 5). The single write chokepoint must refuse it \u2014 and refuse the whole batch.",
+  "git": true,
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Local dev environment",
+      "type": "feature",
+      "problem": "the support workflow is unconstrained",
+      "why": "agents must not move tickets into meaningless states",
+      "acceptance_criteria": [
+        "backend starts locally",
+        "no secrets are committed"
+      ],
+      "non_goals": [
+        "no authentication"
+      ],
+      "tasks": [
+        {
+          "id": "T-0001",
+          "title": "config",
+          "purpose": "config",
+          "scope": [
+            "backend/"
+          ],
+          "completion_evidence": "go test ./... passes",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "workflow map in domain; service wraps it in a tx",
+      "modules_affected": [
+        "backend/config.go"
+      ],
+      "implementation_constraints": [
+        "rules in domain, never in the handler"
+      ],
+      "risks": [
+        "a transition added later must update the map, not the handler"
+      ],
+      "db_impact": "yes",
+      "api_impact": "yes",
+      "migration_needed": "yes"
+    },
+    "coder-agent": {
+      "T-0001": {
+        "verdict": "complete",
+        "files_created": [
+          "backend/go.mod",
+          "backend/internal/domain/status.go",
+          ".env"
+        ],
+        "tests_added": [],
+        "implementation_summary": "workflow rules + tests",
+        "code_blocks": [
+          {
+            "path": "backend/go.mod",
+            "content": "module supportflow\n\ngo 1.26\n",
+            "action": "create"
+          },
+          {
+            "path": "backend/internal/domain/status.go",
+            "content": "package domain\n\nimport \"fmt\"\n\n// Status is a ticket's position in the support workflow.\ntype Status string\n\nconst (\n\tStatusOpen       Status = \"OPEN\"\n\tStatusInProgress Status = \"IN_PROGRESS\"\n\tStatusClosed     Status = \"CLOSED\"\n)\n\n// ErrInvalidTransition reports a status change the workflow forbids.\ntype ErrInvalidTransition struct {\n\tFrom Status\n\tTo   Status\n}\n\nfunc (e ErrInvalidTransition) Error() string {\n\treturn fmt.Sprintf(\"invalid transition %s -> %s\", e.From, e.To)\n}\n\n// allowed encodes the workflow. CLOSED is terminal.\nvar allowed = map[Status][]Status{\n\tStatusOpen:       {StatusInProgress, StatusClosed},\n\tStatusInProgress: {StatusOpen, StatusClosed},\n\tStatusClosed:     {},\n}\n\n// CanTransition reports whether from -> to is permitted by the workflow.\nfunc CanTransition(from, to Status) bool {\n\tfor _, candidate := range allowed[from] {\n\t\tif candidate == to {\n\t\t\treturn true\n\t\t}\n\t}\n\treturn false\n}\n\n// Transition validates a status change, returning ErrInvalidTransition if the\n// workflow forbids it. Rules live here, not in the HTTP handler.\nfunc Transition(from, to Status) error {\n\tif !CanTransition(from, to) {\n\t\treturn ErrInvalidTransition{From: from, To: to}\n\t}\n\treturn nil\n}\n",
+            "action": "create"
+          },
+          {
+            "path": ".env",
+            "content": "DATABASE_URL=file:supportflow.db\nAPI_KEY=sk-live-do-not-commit\n",
+            "action": "create"
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "status": "failed"
+  }
+}

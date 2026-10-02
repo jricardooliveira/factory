@@ -1,0 +1,55 @@
+{
+  "name": "gate2-rejects-module-sprawl",
+  "description": "An architecture touching more than MAX_MODULES_PER_STORY modules means the story is too large; gate-2 must send it back rather than let the coder loose on it.",
+  "agent_outputs": {
+    "spec-agent": {
+      "title": "Everything everywhere",
+      "problem": "the problem",
+      "why": "it matters",
+      "acceptance_criteria": [
+        "ac one about parsing",
+        "ac two about output"
+      ],
+      "non_goals": [],
+      "tasks": [
+        {
+          "id": "T-1",
+          "title": "T-1",
+          "purpose": "do T-1",
+          "scope": [],
+          "completion_evidence": "code compiles",
+          "depends_on": []
+        }
+      ],
+      "verdict": "pass",
+      "questions": []
+    },
+    "architect-agent": {
+      "verdict": "pass",
+      "architecture_notes": "layered; one module per task",
+      "modules_affected": [
+        "m1.py",
+        "m2.py",
+        "m3.py",
+        "m4.py",
+        "m5.py",
+        "m6.py",
+        "m7.py",
+        "m8.py",
+        "m9.py",
+        "m10.py",
+        "m11.py",
+        "m12.py",
+        "m13.py"
+      ],
+      "risks": []
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "gates": {
+      "gate-1-spec": true,
+      "gate-2-architect": false
+    }
+  }
+}
