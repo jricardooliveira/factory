@@ -1,0 +1,238 @@
+"""Git plumbing for a product workspace (best-effort, never raises).
+
+Split out of the old ``verify.py``: committing a task checkpoint, finding the
+pre-factory baseline and measuring the real change set are workspace concerns,
+not verification checks. The trust package and the pipeline both read from here.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+_TIMEOUT = 60
+
+
+def _run(
+    cmd: list[str], cwd: Path, timeout: int = _TIMEOUT
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+        # Never inherit stdin: a git hook or credential prompt reading it would
+        # block the pipeline. See adapters.opencode.run_agent.
+        stdin=subprocess.DEVNULL,
+    )
+
+
+def is_git_repo(root: Path) -> bool:
+    return (root / ".git").exists()
+
+
+def git_init(root: Path) -> None:
+    """Initialize a git repo at root if not already one (best-effort)."""
+    if is_git_repo(root) or shutil.which("git") is None:
+        return
+    try:
+        _run(["git", "init", "-q"], cwd=root)
+    except (subprocess.SubprocessError, OSError):
+        return
+    _exclude_factory_infra(root)
+
+
+# Factory plumbing that lives inside a product repo but is not part of the product.
+# `.opencode` is the symlink `projects._link_opencode_agents` creates so opencode can
+# resolve the agent definitions; it is an absolute path to the operator's machine.
+_INFRA_EXCLUDES = ("/.opencode",)
+
+
+def _exclude_factory_infra(root: Path) -> None:
+    """Keep factory plumbing out of the product's git history (idempotent).
+
+    Uses `.git/info/exclude`, not the product's `.gitignore`: the factory has no
+    business editing the product's own files to hide its own. Re-asserted on every
+    commit because `git_init` is a no-op on a repo that already exists.
+
+    Without it, `git add -A` committed the `.opencode` symlink into the generated
+    app; it then appeared in the diff the tester and remediation coder review, the
+    coder echoed it back as a code block, and the run failed.
+    """
+    exclude = root / ".git" / "info" / "exclude"
+    try:
+        existing = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        missing = [e for e in _INFRA_EXCLUDES if e not in existing.splitlines()]
+        if missing:
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            sep = "" if not existing or existing.endswith("\n") else "\n"
+            exclude.write_text(existing + sep + "\n".join(missing) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def git_commit_all(root: Path, message: str) -> bool:
+    """Commit all current changes in the repo (best-effort).
+
+    Used to checkpoint each completed task so the NEXT task's `git status` shows
+    only its own new files — otherwise the governance/scope check would see prior
+    tasks' files as undeclared out-of-band writes. Returns True if a commit was made.
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return False
+    _exclude_factory_infra(root)
+    try:
+        _run(["git", "add", "-A"], root)
+        proc = _run(
+            ["git", "-c", "user.name=factory", "-c", "user.email=factory@local",
+             "commit", "-m", message, "--no-gpg-sign"],
+            root,
+        )
+        return proc.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+# Git's well-known empty-tree object — a valid "diff from nothing" baseline.
+_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+_DIFF_MAX_CHARS = 16000
+
+
+def _git_resolve(root: Path, ref: str) -> str | None:
+    """Resolve a git ref to a sha, or None if it doesn't exist."""
+    try:
+        proc = _run(["git", "rev-parse", "--verify", "--quiet", ref], root)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    sha = proc.stdout.strip()
+    return sha if sha else None
+
+
+def _factory_baseline(root: Path) -> str:
+    """The pre-factory commit to diff against: the parent of the OLDEST commit the
+    factory authored (message prefix ``factory:``). Falls back to the empty tree
+    when there is no such parent (factory commit is the repo root) or no factory
+    commit at all."""
+    try:
+        proc = _run(["git", "log", "--reverse", "--format=%H%x1f%s"], root)
+    except (subprocess.SubprocessError, OSError):
+        return _EMPTY_TREE
+    if proc.returncode != 0:
+        return _EMPTY_TREE
+    for line in proc.stdout.splitlines():
+        sha, _, subject = line.partition("\x1f")
+        if subject.startswith("factory:"):
+            return _git_resolve(root, f"{sha}^") or _EMPTY_TREE
+    return _EMPTY_TREE
+
+
+def collect_repo_diff(root: Path, *, max_chars: int = _DIFF_MAX_CHARS) -> str | None:
+    """Real cumulative diff of the factory's changes, for the tester to review.
+
+    Returns the git diff from the pre-factory baseline to the current repo state
+    (committed + any working-tree changes), so the tester sees EVERY task's change
+    — not just the last one's self-report. None when not a git repo (caller then
+    falls back to the agent's self-reported implementation); ``""`` when the repo
+    is clean. Truncated to ``max_chars`` to bound prompt cost.
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return None
+    if _git_resolve(root, "HEAD") is None:
+        return None  # no commits yet — nothing to diff
+    base = _factory_baseline(root)
+    try:
+        committed = _run(["git", "diff", base, "HEAD"], root)
+        working = _run(["git", "diff"], root)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    parts = [p.stdout for p in (committed, working) if p.returncode == 0 and p.stdout.strip()]
+    diff = "\n".join(parts).strip()
+    if len(diff) > max_chars:
+        diff = diff[:max_chars] + f"\n... [diff truncated at {max_chars} chars]"
+    return diff
+
+
+def git_head(root: Path) -> str | None:
+    """The repo's current commit sha, or None if not a git repo / no commits.
+
+    Captured at run start as the run's own baseline, so the trust package can
+    measure THIS run's change set instead of every factory commit ever made.
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return None
+    return _git_resolve(root, "HEAD")
+
+
+# git --name-status letters → the schema's change vocabulary.
+_STATUS_MAP = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "added"}
+
+
+def git_changed_files(root: Path, base: str | None) -> list[dict[str, str]] | None:
+    """Real per-file change set from `base` to the current state, or None if it
+    cannot be measured from git.
+
+    Returns ``[{"path": ..., "change": "added|modified|deleted|renamed"}]``. This
+    is the trust package's Evidence 2: what git saw, not what the agent claimed.
+    A file both committed and then edited appears once, with its committed status.
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return None
+    if _git_resolve(root, "HEAD") is None:
+        return None
+    baseline = base or _factory_baseline(root)
+    try:
+        committed = _run(["git", "diff", "--name-status", baseline, "HEAD"], root)
+        working = _run(["git", "diff", "--name-status"], root)
+        untracked = _run(["git", "ls-files", "--others", "--exclude-standard"], root)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if committed.returncode != 0:
+        return None
+
+    files: dict[str, str] = {}
+    for proc in (committed, working):
+        if proc.returncode != 0:
+            continue
+        for line in proc.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            # Rename lines are "R100\told\tnew" — the new path is what changed.
+            status, path = parts[0][:1], parts[-1].strip()
+            if _is_noise(path):
+                continue
+            files.setdefault(path, _STATUS_MAP.get(status, "modified"))
+    if untracked.returncode == 0:
+        for path in untracked.stdout.splitlines():
+            path = path.strip()
+            if path and not _is_noise(path):
+                files.setdefault(path, "added")
+    return [{"path": p, "change": c} for p, c in sorted(files.items())]
+
+
+def _is_noise(path: str) -> bool:
+    """Infra/tooling paths that are not application code the factory authored."""
+    if not path or "__pycache__" in path or path.endswith((".pyc", ".pyo")):
+        return True
+    return path.split("/", 1)[0] in {".opencode", ".git", ".sandbox", ".venv"}
+
+
+def git_changed_paths(root: Path) -> list[str] | None:
+    """Return changed paths from `git status --porcelain`, or None if not a repo."""
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return None
+    try:
+        # --untracked-files=all lists individual files (not collapsed dirs) so the
+        # diff is comparable to the agent's per-file claims. Project repos are tiny.
+        proc = _run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=root)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    paths: list[str] = []
+    for line in proc.stdout.splitlines():
+        # format: "XY <path>" (XY = 2-char status)
+        path = line[3:].strip().strip('"')
+        if not path or "__pycache__" in path or path.endswith((".pyc", ".pyo")):
+            continue
+        # Infra/tooling noise — not application code the agent claims to author.
+        if path.split("/", 1)[0] in {".opencode", ".git", ".sandbox", ".venv"}:
+            continue
+        paths.append(path)
+    return paths

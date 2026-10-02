@@ -14,7 +14,7 @@ Its effectiveness metric is **trust per interruption**: the factory is working w
 it hands you a package you can trust *without reading all the code*, and interrupts
 you only when you are the only one who can decide.
 
-> **Governing contract:** [`mvp/docs/factory/EFFECTIVENESS.md`](mvp/docs/factory/EFFECTIVENESS.md).
+> **Governing contract:** [`docs/contract/EFFECTIVENESS.md`](docs/contract/EFFECTIVENESS.md).
 > If the code and that document disagree, one of them is wrong.
 
 ---
@@ -51,27 +51,26 @@ chokepoint also refuses credential-shaped paths (`.env`, `.git/`, key material).
 brew install opencode              # or see https://opencode.ai
 opencode auth login                # you pay for the model calls
 
-# 2. the factory itself (Python 3.12+)
-cd mvp
-uv sync
+# 2. the factory itself (Python 3.12+), from the repo root
+uv sync --dev
 
 # 3. confirm it works — costs nothing, calls no model
 make check
 ```
 
-`make check` should print `284 passed`, `9/9 scenarios behaving as expected` and
-`36/36 checks green`. That is the whole verification loop in one command.
+`make check` should print `365 passed`, `9/9 scenarios behaving as expected` and
+`43/43 checks green`. That is the whole verification loop in one command.
 
 ---
 
 ## Your first project
 
-**Always run from `mvp/`** — the state database is resolved relative to your working
-directory.
+**Always run from the repo root** — the state database (`factory.db`) and `projects/` are
+resolved relative to your working directory. (Moving them to `$FACTORY_HOME`, default
+`~/.factory`, is in progress; legacy state from before the restructure still sits in
+`mvp/factory.db` + `mvp/projects/`.)
 
 ```bash
-cd mvp
-
 # Register a project. Creates projects/PROJ-00X-bookmarks/ with repo/, docs/
 # and a project-spec.json from the stack template.
 .venv/bin/factory project create bookmarks --stack fastapi
@@ -103,7 +102,7 @@ reject at Checkpoint 2 and the design is redone with your objections.
 ## What the factory hands you
 
 ```
-mvp/projects/PROJ-00X-bookmarks/
+projects/PROJ-00X-bookmarks/
 ├── repo/                             ← your software (own git repo, "factory:" commits)
 └── docs/
     ├── work/US-0001/
@@ -168,9 +167,9 @@ so other stacks mean writing the JSON by hand — worth the hour.
 
 **Read the trust package, not the diff.** If you find yourself reading every line,
 the factory is failing at its actual job; tighten the project spec or
-[`REVIEW.md`](mvp/docs/factory/REVIEW.md) instead.
+[`REVIEW.md`](agents/policies/REVIEW.md) instead.
 
-**Tune review in one place.** [`mvp/docs/factory/REVIEW.md`](mvp/docs/factory/REVIEW.md)
+**Tune review in one place.** [`agents/policies/REVIEW.md`](agents/policies/REVIEW.md)
 holds the tester's passes, severity ladder, skip list and nit cap. Editing it changes
 review behaviour without touching an agent definition — then run `make evals`.
 
@@ -191,14 +190,14 @@ review behaviour without touching an agent definition — then run `make evals`.
    story, no PR. Separation of duties is currently *you reading the trust package*.
 4. **There is no Checkpoint 3 (release sign-off).** `gate-release` is not built. You
    are the final gate.
-5. **`verify.py` covers Python, JS and TS only.** Java, Go and others need their own
+5. **Verification (`src/factory/verification/`) covers Python, Go, JS and TS only.** Java and others need their own
    verification commands before the build gate means anything on those repos.
 6. **Four `factory.db` files exist on this machine** because the path is
-   working-directory relative. Always run from `mvp/`.
+   working-directory relative. Always run from the repo root.
 
 The full built-vs-todo table, and the playbook plays deliberately **rejected** as
 ceremony for a one-person team, are in
-[EFFECTIVENESS.md §8–§9](mvp/docs/factory/EFFECTIVENESS.md).
+[EFFECTIVENESS.md §8–§9](docs/contract/EFFECTIVENESS.md).
 
 ---
 
@@ -206,11 +205,11 @@ ceremony for a one-person team, are in
 
 | Document | What it is |
 |---|---|
-| [EFFECTIVENESS.md](mvp/docs/factory/EFFECTIVENESS.md) | **the governing contract** — purpose, checkpoints, trust package, red flags |
-| [GATES.md](mvp/docs/factory/GATES.md) | every gate, what it checks, what it blocks on |
-| [AGENTS.md](mvp/docs/factory/AGENTS.md) | the agent roster and output contracts |
-| [REVIEW.md](mvp/docs/factory/REVIEW.md) | the versioned review policy the tester applies |
-| [REVIEW_QUEUE.md](mvp/docs/factory/REVIEW_QUEUE.md) | how work parks, how you are notified, resume semantics |
+| [EFFECTIVENESS.md](docs/contract/EFFECTIVENESS.md) | **the governing contract** — purpose, checkpoints, trust package, red flags |
+| [GATES.md](docs/contract/GATES.md) | every gate, what it checks, what it blocks on |
+| [AGENTS.md](docs/contract/AGENTS.md) | the agent roster and output contracts |
+| [REVIEW.md](agents/policies/REVIEW.md) | the versioned review policy the tester applies |
+| [REVIEW_QUEUE.md](docs/contract/REVIEW_QUEUE.md) | how work parks, how you are notified, resume semantics |
 | [CLAUDE.md](CLAUDE.md) | for Claude Code working **on** the factory (not using it) |
 
 ---

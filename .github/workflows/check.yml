@@ -3,9 +3,9 @@
 #
 # NOTE: this repo currently has no git remote, so this workflow is inert until one
 # exists. It is committed anyway because the gate it encodes is the point: a change
-# to the AGENT CONFIGURATION (.opencode/agents/*.md, gates.py, model_tiers.py,
-# context_pack.py, pipeline.py, docs/factory/REVIEW.md) must not land without the
-# eval suite passing at 100%.
+# to the AGENT CONFIGURATION (agents/*.md, agents/policies/REVIEW.md,
+# src/factory/domain/{gates,ambiguity}.py, src/factory/agent_config/, prompt assembly
+# in src/factory/pipeline/) must not land without the eval suite passing at 100%.
 #
 # Everything below is offline and costs zero tokens — no opencode call, no API key.
 name: check
@@ -22,13 +22,10 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mvp
     steps:
       - uses: actions/checkout@v4
         with:
-          # verify.collect_repo_diff / _factory_baseline walk history; a shallow
+          # workspace.git.collect_repo_diff / _factory_baseline walk history; a shallow
           # clone would silently change what the diff-measurement tests see.
           fetch-depth: 0
 
@@ -53,5 +50,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: eval-report
-          path: mvp/eval-report.md
+          path: eval-report.md
           if-no-files-found: ignore

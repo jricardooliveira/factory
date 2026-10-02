@@ -21,10 +21,9 @@ projects/*/.secrets/*
 # (INTENT/SPEC/PLAN, ADRs, PROJECT_RULES, project-spec) together WITH its code —
 # tracking the docs here and the code in repo/ split every product's audit trail
 # across two repositories. Nothing under a projects/ folder is versioned here.
+# (`projects/` also covers the legacy mvp/projects/ until it is migrated to $FACTORY_HOME.)
 projects/
-mvp/projects/
 # Default/scratch working tree the factory materializes into when no project is set.
-mvp/repo/
 repo/
 
 # Python
@@ -58,9 +57,13 @@ node_modules/
 # uv
 .uv-cache/
 
-# opencode local state if any
+# opencode: only the `.opencode/agents -> ../agents` symlink is versioned. Plugin
+# deps opencode installs here are covered by .opencode/.gitignore.
 .opencode/state/
 .opencode/cache/
+
+# CI eval report (`factory evals --report eval-report.md`)
+eval-report.md
 
 # Generated reports (`factory visualize`, `factory metrics --report`) are output, not source.
 reports/
