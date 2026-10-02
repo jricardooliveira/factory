@@ -11,9 +11,9 @@ Design notes:
   pytest collection fails — collection imports project deps that may not be
   installed in the factory's environment, so a failure there is not proof the
   code is broken.
-- Running test BODIES is opt-in (FACTORY_RUN_TESTS=1): a test failure then HARD-
-  fails the gate. Off by default since executing agent-generated code is risky
-  without true OS-level isolation.
+- Test BODIES run only inside a disposable container (`sandbox.py`): by default
+  when a container runtime is up (FACTORY_RUN_TESTS unset = auto), never on the
+  host. A test failure HARD-fails the gate. FACTORY_RUN_TESTS=0 turns it off.
 
 Layout: shared types and the subprocess runner in base.py, one module per
 toolchain (python, go, typescript), plus the scope policy (scope.py).
@@ -53,10 +53,9 @@ def verify_changes(written_paths: list[Path], *, root: Path) -> VerifyResult:
         if tests_enabled():
             if python.has_tests(root):
                 result.checks.append(python.run_tests(root))
-        # No `pytest --collect-only` by default: collection imports conftest.py and
-        # every test module, so it EXECUTED agent-written code on the operator's
-        # machine with FACTORY_RUN_TESTS off (review task T03). Opting in to tests
-        # is opting in to running that code.
+        # Never `pytest --collect-only` on the host: collection imports conftest.py
+        # and every test module — it EXECUTES agent-written code (review task T03).
+        # The suite itself runs in a container (`run_tests` → `sandbox`).
 
     if go_files:
         module_dirs = go.go_module_dirs(root, go_files)
@@ -72,7 +71,7 @@ def verify_changes(written_paths: list[Path], *, root: Path) -> VerifyResult:
         if build.status == "pass":
             result.checks.append(go.go_vet(module_dirs))
             if tests_enabled():
-                result.checks.append(go.run_go_tests(module_dirs))
+                result.checks.append(go.run_go_tests(module_dirs, root))
 
     if js_files:
         result.checks.append(typescript.node_check(js_files, root))

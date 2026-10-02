@@ -46,15 +46,20 @@ class VerifyStdinTests(unittest.TestCase):
         self.assertIs(run.call_args.kwargs.get("stdin"), subprocess.DEVNULL)
 
     def test_running_agent_written_tests_never_inherits_stdin(self) -> None:
-        """Agent-written test code reading stdin must not hang the gate."""
+        """Agent-written test code reading stdin must not hang the gate: every
+        container-runtime call the sandbox makes passes stdin=DEVNULL."""
         from factory.verification import python as verify_python
+        from factory.verification import sandbox
 
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.dict("os.environ", {"FACTORY_RUN_TESTS": "1"}), \
-                patch("factory.verification.python.subprocess.run", return_value=_done()) as run, \
-                patch("factory.verification.python.importlib.util.find_spec", return_value=object()):
+                patch.object(sandbox, "container_runtime", return_value="docker"), \
+                patch.object(sandbox, "_ensure_image", return_value=None), \
+                patch("factory.verification.sandbox.subprocess.run", return_value=_done()) as run:
             verify_python.run_tests(Path(tmp))
-        self.assertIs(run.call_args.kwargs.get("stdin"), subprocess.DEVNULL)
+        self.assertTrue(run.call_args_list)
+        for call in run.call_args_list:
+            self.assertIs(call.kwargs.get("stdin"), subprocess.DEVNULL)
 
 
 class ArtifactAuthorStdinTests(unittest.TestCase):

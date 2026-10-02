@@ -13,7 +13,7 @@ judges the result.
 | Module | What it does |
 |---|---|
 | `__init__.py` | `verify_changes(written_paths, *, root) -> VerifyResult`: picks checks by file extension. Re-exports `VerifyCheck`, `VerifyResult`, `tests_enabled`. |
-| `base.py` | `VerifyCheck(name, status, detail)` with status `pass`/`fail`/`warn`/`skip`; `VerifyResult` (`passed`, `verdict`, `summary`); `run_command` (subprocess with `stdin=DEVNULL`); `tests_enabled()` (`FACTORY_RUN_TESTS`); timeouts `COMMAND_TIMEOUT=60`, `TEST_TIMEOUT=180`, `BUILD_TIMEOUT=180`. |
+| `base.py` | `VerifyCheck(name, status, detail)` with status `pass`/`fail`/`warn`/`skip`; `VerifyResult` (`passed`, `verdict`, `summary`); `run_command` (subprocess with `stdin=DEVNULL`); `test_mode()` (`FACTORY_RUN_TESTS`: unset = auto, 0 = off, 1 = on) and `tests_enabled()`; timeouts `COMMAND_TIMEOUT=60`, `TEST_TIMEOUT=180`, `BUILD_TIMEOUT=180`. |
 | `python.py` | `py_compile_check`, `static_import_check` (AST only), `run_tests` (opt-in), `has_tests`, `is_py_test`, plus `pytest_collect` / `_classify_collect_failure`. |
 | `go.py` | `go_module_dirs` (nearest `go.mod` per file), `go_build`, `go_parse` (`gofmt -e`, no module needed), `go_vet`, `run_go_tests` (opt-in), `_classify_go_failure`. |
 | `typescript.py` | `node_check` (`node --check` for `.js/.mjs/.cjs`), `tsc_check` (`tsc --noEmit -p <dir>` per owning `tsconfig.json`), `_resolve_tsc` (prefers the project's own `node_modules/.bin/tsc`). |
@@ -47,17 +47,17 @@ Invariants:
 
 - **A missing toolchain FAILS its files, never skips them** (`node`, `gofmt`, `go` for build,
   `tsc`: "not installed ... see `factory doctor`"). A check that cannot run cannot earn a pass.
-  Exceptions that do `skip`: `go_vet`/`go_test` without `go`, and pytest not installed for the
-  opt-in test run.
-- **Nothing the coder wrote is executed by default.** `pytest --collect-only` is not called from
+- **Nothing the coder wrote is executed on the host.** `pytest --collect-only` is not called from
   `verify_changes` (collection imports test modules); `pytest_collect` still exists in `python.py`
-  but is unwired. Pytest and `go test` run only with `FACTORY_RUN_TESTS=1|true|yes|on`. This is a
-  subprocess with a timeout, not an OS sandbox.
-- `scope.py` has uncommitted edits in the working tree (adds `__init__.py` to `_MANIFEST_NAMES`
-  and the `repo/`-prefix normalization of `changed`). Its module docstring still says the
-  out-of-scope check "does not block"; in `pipeline/nodes/coder.py` (also uncommitted) `_outside_scope`
-  now refuses out-of-scope `code_blocks` before they are written, while the trust package still
-  reports `scope_violations`.
+  but is unwired. Pytest and `go test` run only in a disposable container (`sandbox.py`: the repo
+  is copied in with `docker cp`, no host mount / environment / credentials, capabilities dropped,
+  CPU / memory / process limits, a hard timeout, always removed). `FACTORY_RUN_TESTS` unset runs
+  them when a runtime is up and reports "not run" otherwise; `=1` fails without a runtime; `=0`
+  turns them off. Real-container proofs: `FACTORY_SANDBOX_TESTS=1 pytest
+  tests/verification/test_sandbox_container.py`.
+- **Out-of-scope `code_blocks` are refused before they are written** (`pipeline/nodes/coder.py`
+  `_outside_scope`, operator decision); the trust package still reports `scope_violations` for
+  anything git measures outside a task's declared scope.
 
 ## Imports / imported by
 

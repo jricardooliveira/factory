@@ -12,7 +12,14 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from factory.verification.base import BUILD_TIMEOUT, TEST_TIMEOUT, VerifyCheck, run_command, tests_enabled
+from factory.verification import sandbox
+from factory.verification.base import (
+    BUILD_TIMEOUT,
+    TEST_TIMEOUT,
+    VerifyCheck,
+    run_command,
+    test_mode,
+)
 
 
 def _go_module_path(module_dir: Path) -> str:
@@ -160,22 +167,30 @@ def go_vet(module_dirs: list[Path]) -> VerifyCheck:
     return VerifyCheck("go_vet", "pass", "no findings")
 
 
-def run_go_tests(module_dirs: list[Path]) -> VerifyCheck:
-    """`go test ./...` (opt-in, like the Python suite). A failure HARD-fails."""
-    if not tests_enabled():
-        return VerifyCheck("go_test", "skip", "disabled (set FACTORY_RUN_TESTS=1 to run)")
-    if shutil.which("go") is None:
-        return VerifyCheck("go_test", "skip", "go not installed")
+def run_go_tests(module_dirs: list[Path], root: Path) -> VerifyCheck:
+    """`go test ./...` per module, IN A CONTAINER (`verification.sandbox`). A failure
+    HARD-fails; never run on the host."""
+    mode = test_mode()
+    if mode == "off":
+        return VerifyCheck("go_test", "skip", "disabled (FACTORY_RUN_TESTS=0)")
     if not module_dirs:
         return VerifyCheck("go_test", "skip", "no go module")
+    if sandbox.container_runtime() is None:
+        return VerifyCheck("go_test", "fail" if mode == "on" else "skip", sandbox.NO_RUNTIME)
     for module_dir in module_dirs:
         try:
-            proc = run_command(["go", "test", "./..."], module_dir, timeout=TEST_TIMEOUT)
-        except subprocess.TimeoutExpired:
+            workdir = module_dir.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return VerifyCheck("go_test", "fail", f"module {module_dir} is outside the repo")
+        result = sandbox.run_in_container(root, "go", workdir, ["go", "test", "./..."],
+                                 timeout=TEST_TIMEOUT)
+        if result.error:
+            return VerifyCheck("go_test", "fail" if mode == "on" else "skip", result.error)
+        if result.returncode is None:
             return VerifyCheck("go_test", "fail", f"tests timed out after {TEST_TIMEOUT}s")
-        if proc.returncode != 0:
-            output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        if result.returncode != 0:
+            output = result.output.strip()
             if _classify_go_failure(output, _go_module_path(module_dir)) == "warn":
                 return VerifyCheck("go_test", "warn", output[-300:])
             return VerifyCheck("go_test", "fail", output[-600:])
-    return VerifyCheck("go_test", "pass", "tests passed")
+    return VerifyCheck("go_test", "pass", "tests passed (in a container)")

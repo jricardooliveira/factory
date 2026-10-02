@@ -24,3 +24,11 @@ def _isolated_factory_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch
     home = tmp_path_factory.mktemp("factory-home")
     monkeypatch.setenv("FACTORY_HOME", str(home))
     return home
+
+
+@pytest.fixture(autouse=True)
+def _no_test_execution(monkeypatch) -> None:
+    """Generated tests run in a container by default (FACTORY_RUN_TESTS unset = auto).
+    The unit suite must never start one: tests that exercise execution opt in
+    explicitly and swap in `tests/verification/sandbox_double.py`."""
+    monkeypatch.setenv("FACTORY_RUN_TESTS", "0")

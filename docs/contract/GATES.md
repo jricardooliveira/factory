@@ -61,7 +61,7 @@ The boundary-agent returns four sub-verdicts — tenant, authorization, API cont
 **Runs:** after `coder-agent`, post-materialization. **Code:** `src/factory/verification/` → `verify_changes()`, called from `pipeline/nodes/coder.py`.
 
 Infers toolchain from materialized file extensions and runs deterministic checks:
-- **Python:** `py_compile` and a **static import check** (`python.static_import_check`: a local module or name the coder imports must exist — found by parsing, not importing). `pytest --collect-only` and the suite run only when opted in (`FACTORY_RUN_TESTS=1`): collection imports `conftest.py` and test modules, i.e. it EXECUTES generated code, so by default nothing the coder wrote is run.
+- **Python:** `py_compile` and a **static import check** (`python.static_import_check`: a local module or name the coder imports must exist — found by parsing, not importing). No `pytest --collect-only` on the host: collection imports `conftest.py` and test modules, i.e. it EXECUTES generated code. The suite itself runs in a container (below).
 - **Go:** `go build ./...`, then `go vet ./...`, then `go test ./...` (opted in), run from
   each module root found by walking up from the changed `.go` files — a monorepo's module is
   `backend/go.mod`, not the repo root. An unresolvable import UNDER the module's own path
@@ -71,7 +71,7 @@ Infers toolchain from materialized file extensions and runs deterministic checks
 
 **Verdict policy:** **fail** on real syntax/compile/import errors — and when the **toolchain itself is not installed** (`go`, `gofmt`, `node`, `tsc`): a check that cannot run cannot earn a pass, and it used to `skip` its files through. **warn** when a third-party dependency is missing (not proof the code is broken). Running test **bodies** is opt-in until a sandbox exists.
 
-Tests are run after **any** Python change once `FACTORY_RUN_TESTS=1` — not only when the task happened to write a test file, which used to leave a source-only change never exercising the project's existing suite.
+**Test suites run in a disposable container, never on the host** (`verification/sandbox.py`, operator decision 2026-10-02): the repository is copied in (`docker cp`), nothing from the host is mounted, no host environment or credential is passed, all capabilities are dropped, CPU / memory / process counts are limited, a hard timeout kills it, and it is always removed. The network stays on for dependency installs. With a runtime up, tests run after **any** Python or Go change (`FACTORY_RUN_TESTS` unset = auto); without one they are reported *not run* (a gap at Checkpoint 3); `=1` makes a missing runtime a failure; `=0` turns them off. Zero collected tests prove nothing (`skip`).
 
 A `complete` coder verdict does **not** win if `gate-build` fails. Also computes a **scope-mismatch** note by comparing the real git diff against the agent's claimed files, and **blocks** on any file that landed in the repo but was not declared in `code_blocks` (an out-of-band write). The factory's own evidence inside a project repo (`workspace.layout.EVIDENCE_PATHS`: `docs/work/`, `docs/architecture/adr/`, `docs/releases/`, `PROJECT_RULES.md`, `project-spec.json`) is committed by the factory as it is produced and excluded from this check — and a code block that targets one of those paths is refused outright, since gate-1 reads `PROJECT_RULES.md` as operator-authored.
 

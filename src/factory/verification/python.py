@@ -1,6 +1,6 @@
-"""Python checks: py_compile and a static import check by default; pytest collection
-and the test suite only on opt-in (FACTORY_RUN_TESTS), because both import — and so
-execute — agent-written code."""
+"""Python checks: py_compile and a static import check on the host (they execute
+nothing); the test suite only inside a container (`verification.sandbox`), because
+running — even collecting — tests executes agent-written code."""
 
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from factory.verification.base import TEST_TIMEOUT, VerifyCheck, run_command, tests_enabled
+from factory.verification import sandbox
+from factory.verification.base import TEST_TIMEOUT, VerifyCheck, run_command, test_mode
 
 
 def py_compile_check(py_files: list[Path], root: Path) -> VerifyCheck:
@@ -181,26 +182,32 @@ def pytest_collect(root: Path) -> VerifyCheck | None:
 
 
 def run_tests(root: Path) -> VerifyCheck:
-    """Actually run the materialized tests (opt-in). A failure HARD-fails the gate.
+    """Run the repo's test suite IN A CONTAINER. A failure HARD-fails the gate.
 
-    Not a hardened security sandbox — it's a subprocess with a timeout. Gated by
-    `tests_enabled()` so untrusted generated code is never executed by default.
+    Never on the host (`verification.sandbox`): without a runtime the check says
+    the tests were not run ("auto") or fails ("on"), so the trust package can
+    never claim an executed suite that did not run.
     """
-    if not tests_enabled():
-        return VerifyCheck("pytest_run", "skip", "disabled (set FACTORY_RUN_TESTS=1 to run)")
-    if importlib.util.find_spec("pytest") is None:
-        return VerifyCheck("pytest_run", "skip", "pytest not installed")
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", str(root)],
-            cwd=str(root), capture_output=True, text=True, timeout=TEST_TIMEOUT,
-            stdin=subprocess.DEVNULL,
-        )
-    except subprocess.TimeoutExpired:
+    mode = test_mode()
+    if mode == "off":
+        return VerifyCheck("pytest_run", "skip", "disabled (FACTORY_RUN_TESTS=0)")
+    if sandbox.container_runtime() is None:
+        return VerifyCheck("pytest_run", "fail" if mode == "on" else "skip", sandbox.NO_RUNTIME)
+    result = sandbox.run_in_container(root, "python", ".",
+                             ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"],
+                             timeout=TEST_TIMEOUT)
+    if result.error:
+        return VerifyCheck("pytest_run", "fail" if mode == "on" else "skip", result.error)
+    if result.returncode is None:
         return VerifyCheck("pytest_run", "fail", f"tests timed out after {TEST_TIMEOUT}s")
-    if proc.returncode != 0:
-        return VerifyCheck("pytest_run", "fail", (proc.stdout or proc.stderr).strip()[-600:])
-    return VerifyCheck("pytest_run", "pass", "tests passed")
+    output = result.output.strip()
+    if "FACTORY: pytest could not be installed" in output:
+        return VerifyCheck("pytest_run", "skip", "the sandbox could not install pytest")
+    if result.returncode == 5:  # pytest: no tests collected — proves nothing
+        return VerifyCheck("pytest_run", "skip", "no tests were collected")
+    if result.returncode != 0:
+        return VerifyCheck("pytest_run", "fail", output[-600:])
+    return VerifyCheck("pytest_run", "pass", "tests passed (in a container)")
 
 
 def is_py_test(path: Path) -> bool:

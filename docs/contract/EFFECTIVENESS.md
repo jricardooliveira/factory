@@ -154,7 +154,7 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | **A product's evidence is versioned WITH its code**: the project directory IS its git repo; INTENT/SPEC/PLAN, ADRs, trust packages, rules and spec are committed as produced (`factory:`), refused as coder output, and excluded from every code measurement (scope check, trust-package diff, tester diff) | ✅ built |
 | Branch per story + PR-shaped review (the factory commits straight onto the current branch) | ⛔ to build |
 | tester-agent + gate-test (QA/AC-coverage, security, performance sub-verdicts) | ✅ built |
-| Run generated test bodies in the build gate (opt-in `FACTORY_RUN_TESTS`) | ✅ built (subprocess; hardened sandbox still ⛔) |
+| Run generated test suites in the build gate — in a disposable container, never on the host: copy in, no host mount / env / credentials, capabilities dropped, resource limits, hard timeout; by default whenever a runtime is up | ✅ built |
 | Per-agent model tiers as ROLES — GPT-6 Astra plans, Sol codes, Luna summarises; Claude Opus/Sonnet review (never the authors' family); Fable retries a failed attempt (`factory tiers`, policy in `agents/tiers.toml`; `factory doctor` probes every tier model before a run) | ✅ built |
 | Tester reviews the **real git diff of this run** (from its `base_commit`, not every story since the first; not the last task's self-report) | ✅ built (`workspace.git.collect_repo_diff`) |
 | Tester failure routes back to the coder for a bounded remediation pass (`MAX_TESTER_REMEDIATIONS`), findings carried, coder escalated to frontier | ✅ built |
@@ -171,7 +171,7 @@ The build order that turns this contract into reality is the phased workflow in 
 ## 9. Open questions (deliberately deferred)
 
 - **Brownfield stacks:** `src/factory/verification/` covers Python, **Go** (build + vet + test) and JS/TS. Java, Rust, C# etc. still need their own verification commands (see [ARCHITECTURE.md → a new toolchain](../ARCHITECTURE.md#a-new-toolchain-eg-java-rust)) before the factory can be trusted on those repos — until then `gate-build` reports "no verifiable files" and passes, which is a silent false PASS.
-- **Sandbox:** running agent-generated *test bodies* — or even collecting them, which imports them — executes untrusted code; required before tests run by default (today the default `gate-build` executes nothing it was given: compile, static import check, typecheck).
+- **Sandbox network policy:** the test container keeps network access so dependencies can be installed; nothing secret is inside it to leak. A no-network mode with pre-fetched dependencies is the next step if that ever matters.
 - **Notification mechanism:** the macOS desktop-ping implementation (`osascript`,
   `src/factory/adapters/notify.py`) is implemented but opt-in via `FACTORY_NOTIFY=1`.
 

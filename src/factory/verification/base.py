@@ -19,13 +19,24 @@ TEST_TIMEOUT = 180
 BUILD_TIMEOUT = 180
 
 
-def tests_enabled() -> bool:
-    """Whether to actually RUN materialized tests (opt-in).
+def test_mode() -> str:
+    """`FACTORY_RUN_TESTS`: unset = "auto", 0/false/no/off = "off", 1/true/yes/on = "on".
 
-    Off by default: executing agent-generated code is risky without true OS-level
-    isolation. Operators who trust their setup opt in with FACTORY_RUN_TESTS=1.
+    Generated tests only ever run inside a container (`verification.sandbox`).
+    "auto" runs them when a container runtime is up and reports them as not run
+    otherwise; "on" FAILS the check without a runtime rather than run on the host.
     """
-    return os.environ.get("FACTORY_RUN_TESTS", "").strip().lower() in ("1", "true", "yes", "on")
+    value = os.environ.get("FACTORY_RUN_TESTS", "").strip().lower()
+    if value in ("0", "false", "no", "off"):
+        return "off"
+    if value in ("1", "true", "yes", "on"):
+        return "on"
+    return "auto"
+
+
+def tests_enabled() -> bool:
+    """Whether test execution is wanted at all (it then happens in a container)."""
+    return test_mode() != "off"
 
 
 @dataclass

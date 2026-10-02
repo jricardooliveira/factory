@@ -277,11 +277,13 @@ review behaviour without touching an agent definition — then run `make evals`.
 
 ## Known limits — read before trusting it unattended
 
-1. **Generated code is not executed by default.** `gate-build` compiles, typechecks and
-   checks imports statically — it does not even collect tests, since that imports them.
-   Opt in with `FACTORY_RUN_TESTS=1`, but understand what that means: AI-generated
-   code runs on your machine in a subprocess, with no hardened sandbox. Without it,
-   the trust package reports `tests.executed: false` and withholds sign-off.
+1. **Generated tests only run inside a container.** With Docker (or podman) running,
+   every build runs the product's tests in a disposable container: the code is copied
+   in, nothing from your machine is mounted, no environment variable or credential is
+   passed, and a hung test is killed. Without a container runtime the tests are
+   reported as *not run* — never run on your machine instead — and Checkpoint 3 names
+   that gap. `FACTORY_RUN_TESTS=0` turns test runs off; `=1` makes a missing runtime
+   an error. The network stays on inside the container so dependencies can install.
 2. **The $10-per-story cap is an estimate on a subscription login.** A ChatGPT/Codex
    login reports $0, so spend is tokens × the model's public list price
    (`agents/tiers.toml` [prices]); paid API providers report their real cost. Calls

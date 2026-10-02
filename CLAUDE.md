@@ -213,9 +213,13 @@ input/output is stored, so any run replays offline for free. Evidence is version
   stage. Usage comes from opencode's `step_finish` events (rows before 2026-10-02 are NULL);
   the ChatGPT/Codex login reports **$0**, so spend is tokens × list price from
   `agents/tiers.toml` [prices] (`domain/budget.py`). A new model needs a price there.
-- **Default verification executes nothing the coder wrote.** No `pytest --collect-only`
-  without `FACTORY_RUN_TESTS=1` (collection imports — runs — test modules); the static
-  import check covers what it caught. A missing toolchain FAILS its files, never skips them.
+- **Nothing the coder wrote ever runs on the host.** Test suites run only in a container
+  (`verification/sandbox.py`; `FACTORY_RUN_TESTS` unset = auto, 0 = off, 1 = on); no
+  `pytest --collect-only` on the host (collection imports test modules) — the static import
+  check covers what it caught. `tests/conftest.py` sets `FACTORY_RUN_TESTS=0` for every test;
+  a test that exercises execution patches `sandbox.run_in_container` with
+  `tests/verification/sandbox_double.host_execute`. Real-container proofs are opt-in:
+  `FACTORY_SANDBOX_TESTS=1`. A missing toolchain FAILS its files, never skips them.
 - **One live run per project** (`runs.service._refuse_if_project_busy`): the coder's
   checkpoint stages the whole working tree. Replays are exempt (own scratch clone).
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins

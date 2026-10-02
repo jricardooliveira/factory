@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import os
@@ -108,13 +109,28 @@ class CollectRepoDiffTests(unittest.TestCase):
         self.assertIn("truncated", diff)
 
 
+def _sandboxed(test: unittest.TestCase) -> None:
+    """Route test execution through `sandbox_double.host_execute` (a COPY of the repo,
+    no container needed) — the factory itself only ever runs tests in a container."""
+    from factory.verification import sandbox
+    from tests.verification.sandbox_double import host_execute
+
+    for target, kwargs in ((sandbox, {"attribute": "container_runtime", "return_value": "double"}),
+                           (sandbox, {"attribute": "run_in_container", "side_effect": host_execute})):
+        attribute = kwargs.pop("attribute")
+        patcher = patch.object(target, attribute, **kwargs)
+        patcher.start()
+        test.addCleanup(patcher.stop)
+
+
 class RunTestsTests(unittest.TestCase):
-    """Opt-in test execution: passing -> pass, failing -> fail, off -> skip."""
+    """Test execution (in a container): passing -> pass, failing -> fail, off -> skip."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self._orig = os.environ.get("FACTORY_RUN_TESTS")
+        _sandboxed(self)
 
     def tearDown(self) -> None:
         if self._orig is None:
@@ -123,8 +139,8 @@ class RunTestsTests(unittest.TestCase):
             os.environ["FACTORY_RUN_TESTS"] = self._orig
         self._tmp.cleanup()
 
-    def test_disabled_by_default_skips(self) -> None:
-        os.environ.pop("FACTORY_RUN_TESTS", None)
+    def test_switched_off_skips(self) -> None:
+        os.environ["FACTORY_RUN_TESTS"] = "0"
         (self.root / "test_x.py").write_text("def test_ok():\n    assert True\n")
         check = run_tests(self.root)
         self.assertEqual(check.status, "skip")
@@ -224,6 +240,7 @@ class TestExecutionScopeTests(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self._prev = os.environ.get("FACTORY_RUN_TESTS")
         os.environ["FACTORY_RUN_TESTS"] = "1"
+        _sandboxed(self)
 
     def tearDown(self) -> None:
         if self._prev is None:
@@ -265,8 +282,8 @@ class TestExecutionScopeTests(unittest.TestCase):
         result = verify_changes([self.root / "mod.py"], root=self.root)
         self.assertTrue(result.passed, result.summary)
 
-    def test_execution_stays_opt_in(self) -> None:
-        os.environ.pop("FACTORY_RUN_TESTS", None)
+    def test_execution_can_be_switched_off(self) -> None:
+        os.environ["FACTORY_RUN_TESTS"] = "0"
         self._write("mod.py", "def value():\n    return 2\n")
         self._write("test_mod.py", "from mod import value\n\n\n"
                                    "def test_value():\n    assert value() == 1\n")
@@ -370,6 +387,7 @@ class GoVerificationTests(unittest.TestCase):
     def test_go_tests_run_when_opted_in_and_a_failure_blocks(self) -> None:
         prev = os.environ.get("FACTORY_RUN_TESTS")
         os.environ["FACTORY_RUN_TESTS"] = "1"
+        _sandboxed(self)
         try:
             self._write("internal/domain/ticket.go",
                         "package domain\n\n// Value returns 2.\nfunc Value() int { return 2 }\n")

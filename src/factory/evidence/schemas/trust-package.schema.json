@@ -98,7 +98,7 @@
         },
         "executed": {
           "type": "boolean",
-          "description": "Whether any test body was executed at all (gate-build recorded pytest_run:*). False on the default configuration, where FACTORY_RUN_TESTS is off and the build gate only compiles/collects."
+          "description": "Whether any test body was executed at all (gate-build recorded pytest_run:*). False when no test body ran: no container runtime was available (tests only ever run in a container) or FACTORY_RUN_TESTS=0."
         }
       }
     },

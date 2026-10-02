@@ -189,8 +189,9 @@ def _blockers(
         blockers.append(run.get("error") or run["status"])
     if not tests_executed:
         blockers.append(
-            "Tests were never executed (gate-build ran compile/collect only). Set "
-            "FACTORY_RUN_TESTS=1 — with a sandbox — for §5.1 evidence."
+            "Tests were never executed (§5.1): no container runtime was running, or "
+            "FACTORY_RUN_TESTS=0. Generated tests only ever run in a container — start "
+            "Docker for this evidence."
         )
     elif not tests_really_passed:
         blockers.append("Executed tests did not pass (gate-build reported pytest_run:fail).")

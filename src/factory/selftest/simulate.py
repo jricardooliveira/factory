@@ -10,7 +10,10 @@ broken" report. Doubles as a living, executable spec of factory behavior.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -107,10 +110,33 @@ def _seed_original(conn, outputs: dict[str, Any]) -> int:
     return rid
 
 
+@contextmanager
+def _no_test_execution() -> Iterator[None]:
+    """Self-tests replay FROZEN outputs to test orchestration: their verdict must not
+    depend on a running container runtime or the network. The operator's own
+    FACTORY_RUN_TESTS is restored afterwards. Test execution has its own proofs
+    (tests/verification/test_sandbox*.py)."""
+    previous = os.environ.get("FACTORY_RUN_TESTS")
+    os.environ["FACTORY_RUN_TESTS"] = "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("FACTORY_RUN_TESTS", None)
+        else:
+            os.environ["FACTORY_RUN_TESTS"] = previous
+
+
 def run_scenario(scenario: Scenario) -> ScenarioResult:
     """Replay one scenario through the run service — the same entry path the CLI
     and the TUI use (replay sandbox, base-commit pin, finish/outcome) — in a
-    throwaway home. Nothing is notified: no operator is waiting on a scenario."""
+    throwaway home. Nothing is notified: no operator is waiting on a scenario.
+    No generated test is run (`_no_test_execution`)."""
+    with _no_test_execution():
+        return _run_scenario(scenario)
+
+
+def _run_scenario(scenario: Scenario) -> ScenarioResult:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         db_path = root / "factory.db"
