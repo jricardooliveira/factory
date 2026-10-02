@@ -292,8 +292,13 @@ def node_gate_release(state: PipelineState) -> dict[str, Any]:
     if state.get("status") in ("failed", "blocked"):
         return state
 
+    # Saved FIRST: the package is what the operator reads at the checkpoint, and an
+    # unsaved package is not evidence. Its content does not depend on the park.
+    gaps = release_evidence_gaps(state)
+    if state.get("project_dir") and write_trust_package(state) is None:
+        gaps.append("The trust package could not be saved to docs/releases/ for you to read")
     result = gate_after_release(
-        release_evidence_gaps(state),
+        gaps,
         _parsed_or_none(ReleaseOutput, state.get("release")),
         _parsed_or_none(ArchitectOutput, state.get("architect")),
     )
@@ -308,8 +313,6 @@ def node_gate_release(state: PipelineState) -> dict[str, Any]:
         conn.commit()
     finally:
         conn.close()
-    # The package the operator reads to decide — written at the checkpoint.
-    write_trust_package(state)
     return {
         "gate_release": {
             "gate": result.gate, "passed": result.passed, "reason": result.reason,

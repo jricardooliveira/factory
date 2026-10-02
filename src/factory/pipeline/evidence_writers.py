@@ -66,11 +66,15 @@ def commit_adr(state: PipelineState, adr_path: Path | str) -> None:
     commit_evidence(state, adr_path, f"{state['story_id']} ADR")
 
 
-def write_trust_package(state: PipelineState) -> None:
-    """Best-effort: save the assembled trust package to docs/releases/ (project runs)."""
+def write_trust_package(state: PipelineState) -> Path | None:
+    """Best-effort: save the assembled trust package to docs/releases/ (project runs).
+
+    Returns where it was saved, or None — never raises. gate-release turns a None
+    on a project run into a named gap: an unsaved package is not release evidence.
+    """
     project_dir = state.get("project_dir")
     if not project_dir:
-        return
+        return None
     try:
         from factory.evidence import trust_package
 
@@ -80,8 +84,9 @@ def write_trust_package(state: PipelineState) -> None:
         target = releases / f"run-{state['run_id']}-trust-package.json"
         target.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
     except Exception:
-        return  # never let release-note I/O fail the run
+        return None  # never let release-note I/O fail the run
     commit_evidence(state, target, f"{state['story_id']} trust package (run {state['run_id']})")
+    return target
 
 
 def release_evidence_gaps(state: PipelineState) -> list[str]:
@@ -95,4 +100,7 @@ def release_evidence_gaps(state: PipelineState) -> list[str]:
         pkg = trust_package.assemble(Path(state["db_path"]), state["run_id"])
     except Exception as e:  # noqa: BLE001 — the failure is reported as a gap
         return [f"The trust package could not be assembled: {e}"]
-    return list(pkg.get("blockers") or [])
+    return list(pkg.get("blockers") or []) + [
+        f"The trust package does not match its schema: {e}"
+        for e in trust_package.schema_errors(pkg)
+    ]

@@ -116,5 +116,30 @@ class TrustPackageTests(unittest.TestCase):
         self.assertEqual(tp.assemble(self.db_path, 999), {})
 
 
+
+class EvidenceBarTests(unittest.TestCase):
+    """Bars the package claimed but never enforced (independent assessment, F1)."""
+
+    def test_a_missing_design_record_is_a_named_blocker(self) -> None:
+        blockers = tp._blockers(
+            {"status": "waiting_human"}, True, True,
+            {"source": "git", "scope_violations": []}, {"unassessed": []}, adr_path="",
+        )
+        self.assertTrue(any("ADR" in b for b in blockers), blockers)
+
+    def test_a_present_design_record_is_not_a_blocker(self) -> None:
+        blockers = tp._blockers(
+            {"status": "waiting_human"}, True, True,
+            {"source": "git", "scope_violations": []}, {"unassessed": []},
+            adr_path="docs/architecture/adr/ADR-US-0001-x.md",
+        )
+        self.assertEqual(blockers, [])
+
+    def test_schema_errors_report_shape_violations_only(self) -> None:
+        errors = tp.schema_errors({"verdict": "shipped", "diff": {"source": "unavailable"}})
+        self.assertTrue(any("verdict" in e for e in errors), errors)
+        # The unmeasured diff is an evidence bar (already a blocker), not a shape error.
+        self.assertFalse(any("unavailable" in e for e in errors), errors)
+
 if __name__ == "__main__":
     unittest.main()

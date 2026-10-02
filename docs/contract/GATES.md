@@ -85,7 +85,8 @@ On failure the run routes back to the coder for ONE bounded remediation pass car
 
 **It always parks for Checkpoint 3 — it ASKS, it never allows.** Its verdict is whether the evidence bar is met (`passed` = READY), never whether to release. The gaps it names:
 
-- every blocker of the **trust package** (`evidence/trust_package.assemble`): tests never executed / failed, a change set not measured from git, files changed outside the declared scope, acceptance criteria the tester never assessed;
+- every blocker of the **trust package** (`evidence/trust_package.assemble`): tests never executed / failed — judged on the FINAL candidate, newest result per toolchain, so a failure a retry fixed no longer sinks it — a change set not measured from git, files changed outside the declared scope, acceptance criteria the tester never assessed, no ADR for the story;
+- a package that does not match its schema (`trust_package.schema_errors`) or **could not be saved** to `docs/releases/` — unsaved evidence is not evidence;
 - **no usable release notes** (the release-agent failed, went off-script, or the run predates it);
 - **migration notes missing** when the design changes the database (`db_impact` / `migration_needed`), **rollback notes missing** when it changes the schema or breaks an API;
 - a **blocking concern** raised by the release-agent (`verdict: fail`). Its `warn` concerns are shown but do not count as gaps.

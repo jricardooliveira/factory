@@ -179,6 +179,33 @@ class TestsClaimTests(unittest.TestCase):
         self.assertTrue(pkg["tests"]["executed"])
         self.assertFalse(pkg["tests"]["passed"])
 
+    def _builds(self, *reasons: str) -> int:
+        """A run whose gate-build ran several times (retries / later tasks)."""
+        rid = self._run(reasons[0])
+        with db.get_db(self.db_path) as conn:
+            for reason in reasons[1:]:
+                db.log_gate(conn, rid, "gate-build", True, reason)
+        return rid
+
+    def test_a_failure_fixed_by_a_retry_counts_as_passed(self) -> None:
+        """Judged on the FINAL candidate: a failed attempt that a retry fixed used
+        to sink the claim forever (found by an independent assessment, F1)."""
+        pkg = tp.assemble(self.db_path, self._builds("[T-1] pytest_run:fail",
+                                                     "[T-1] pytest_run:pass"))
+        self.assertTrue(pkg["tests"]["passed"])
+
+    def test_a_regression_after_a_pass_is_a_failure(self) -> None:
+        pkg = tp.assemble(self.db_path, self._builds("[T-1] pytest_run:pass",
+                                                     "[T-2] pytest_run:fail"))
+        self.assertFalse(pkg["tests"]["passed"])
+
+    def test_each_toolchain_keeps_its_own_newest_result(self) -> None:
+        # A final frontend-only task must not erase the backend's real go test result.
+        pkg = tp.assemble(self.db_path, self._builds("[T-1] go_test:pass",
+                                                     "[T-2] tsc:pass"))
+        self.assertTrue(pkg["tests"]["executed"])
+        self.assertTrue(pkg["tests"]["passed"])
+
     def test_untested_package_is_not_release_ready(self) -> None:
         pkg = tp.assemble(self.db_path, self._run("[T-1] py_compile:pass"))
         self.assertEqual(pkg["next_authorization"], "operator-review")

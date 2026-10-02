@@ -69,7 +69,7 @@ _TEST_RUN_COMMANDS = {"pytest_run": "pytest -q", "go_test": "go test ./..."}
 
 
 def _test_execution(gates: list[dict]) -> tuple[bool, bool, str]:
-    """(executed, passed) for actual test BODIES, read from gate-build's evidence.
+    """(executed, passed, command) for actual test BODIES, judged on the FINAL candidate.
 
     `verification.VerifyResult.summary` records each check as ``name:status``, so a
     gate-build reason containing ``pytest_run:pass`` is proof a suite really ran.
@@ -77,26 +77,22 @@ def _test_execution(gates: list[dict]) -> tuple[bool, bool, str]:
     default — and the package must not claim otherwise, however green the gates
     look. `gate-build` passes on WARN and on compile-only runs, so the gate
     boolean is not evidence about tests at all.
+
+    Each gate-build verifies the CUMULATIVE repo, so per toolchain the newest
+    result is the final candidate's. Reading every historical row instead made a
+    failure that a retry fixed sink the claim forever; a later frontend-only task
+    must not erase the backend's real result either, hence per toolchain.
     """
-    executed = passed = False
-    commands: list[str] = []
+    latest: dict[str, bool] = {}  # marker -> passed, from the newest build that ran it
     for gate in gates:
         if gate["gate_name"] != "gate-build":
             continue
         reason = gate["reason"] or ""
         for marker in _TEST_RUN_MARKERS:
-            if f"{marker}:" not in reason:
-                continue
-            executed = True
-            command = _TEST_RUN_COMMANDS[marker]
-            if command not in commands:
-                commands.append(command)
-            # Every task's run must pass; one failing run sinks the claim.
-            if f"{marker}:fail" in reason:
-                return True, False, " && ".join(commands)
-            if f"{marker}:pass" in reason:
-                passed = True
-    return executed, passed, " && ".join(commands)
+            if f"{marker}:" in reason:
+                latest[marker] = f"{marker}:fail" not in reason
+    commands = [_TEST_RUN_COMMANDS[m] for m in _TEST_RUN_MARKERS if m in latest]
+    return bool(latest), bool(latest) and all(latest.values()), " && ".join(commands)
 
 
 def _ac_traceability(
@@ -167,7 +163,7 @@ def _diff_block(repo: Path | None, base_commit: str | None, logs: list[dict]) ->
 
 def _blockers(
     run: dict, tests_executed: bool, tests_really_passed: bool,
-    diff_block: dict[str, Any], traceability: dict[str, Any],
+    diff_block: dict[str, Any], traceability: dict[str, Any], *, adr_path: str,
 ) -> list[str]:
     """Every unmet evidence bar, named rather than silently absent."""
     blockers: list[str] = []
@@ -192,6 +188,11 @@ def _blockers(
         blockers.append(
             f"Files changed outside the tasks' declared scope (§6): "
             f"{diff_block['scope_violations']}"
+        )
+    if not adr_path:
+        blockers.append(
+            "No design record (ADR) for this story (§5.3): the design decision and its "
+            "reasons are not on record."
         )
     if traceability["unassessed"]:
         blockers.append(
@@ -232,7 +233,8 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
     diff_block = _diff_block(repo, run.get("base_commit"), logs)
 
     completed = run["status"] == "completed"
-    blockers = _blockers(run, tests_executed, tests_really_passed, diff_block, ac_traceability)
+    blockers = _blockers(run, tests_executed, tests_really_passed, diff_block, ac_traceability,
+                         adr_path=adr_path)
 
     tests_block: dict[str, Any] = {
         "passed": tests_passed,
@@ -285,6 +287,27 @@ def validate(pkg: dict[str, Any]) -> list[str]:
     package cannot claim to meet a bar it doesn't: `validate()` returning [] is
     the machine-checkable precondition for a release sign-off.
     """
+    errors = schema_errors(pkg)
+
+    # ── Evidence bars beyond schema shape (EFFECTIVENESS.md §5) ───────
+    # `"unavailable"` is a legal *representation* — the package must be able to
+    # state honestly that it could not measure the diff — but it is not a legal
+    # basis for sign-off. Keeping this here, rather than in the enum, is what
+    # lets the package be truthful AND still be refused.
+    if (pkg.get("diff") or {}).get("source") == "unavailable":
+        errors.append(
+            "diff.source is 'unavailable': the change set was not measured from git, "
+            "so §5.2 (real git diff, not the agent's self-report) is unmet"
+        )
+    return errors
+
+
+def schema_errors(pkg: dict[str, Any]) -> list[str]:
+    """The package's SHAPE against the schema: required fields, consts, enums.
+
+    Evidence bars (an unmeasured diff, unexecuted tests) are `blockers`, not shape
+    errors; gate-release names both, so a malformed package can never read READY.
+    """
     try:
         schema = json.loads(_SCHEMA_PATH.read_text())
     except (OSError, ValueError):
@@ -318,15 +341,9 @@ def validate(pkg: dict[str, Any]) -> list[str]:
                 errors.append(
                     f"{section}.{key} is {value!r}, not one of {allowed}"
                 )
-
-    # ── Evidence bars beyond schema shape (EFFECTIVENESS.md §5) ───────
-    # `"unavailable"` is a legal *representation* — the package must be able to
-    # state honestly that it could not measure the diff — but it is not a legal
-    # basis for sign-off. Keeping this here, rather than in the enum, is what
-    # lets the package be truthful AND still be refused.
-    if (pkg.get("diff") or {}).get("source") == "unavailable":
-        errors.append(
-            "diff.source is 'unavailable': the change set was not measured from git, "
-            "so §5.2 (real git diff, not the agent's self-report) is unmet"
-        )
+    # Top-level enums too (the verdict used to be an invalid "failed").
+    for key, field_spec in props.items():
+        allowed = field_spec.get("enum") if isinstance(field_spec, dict) else None
+        if allowed is not None and key in pkg and pkg[key] not in allowed:
+            errors.append(f"{key} is {pkg[key]!r}, not one of {allowed}")
     return errors
