@@ -108,6 +108,85 @@ _REVIEWERS: dict[str, Callable[[dict], None]] = {
 }
 
 
+def _print_review_header(run: dict) -> None:
+    output.console.print()
+    status = run["status"]
+    style = "green" if status == "completed" else "red"
+    output.console.print(Rule(f"[bold]📊 Review: Run #{run['id']}[/bold]"))
+    output.console.print(f"  [dim]Story:[/dim]   {run['story_id']}")
+    output.console.print(f"  [dim]Status:[/dim]  [{style}]{status.upper()}[/{style}]")
+    output.console.print(f"  [dim]Started:[/dim] {run['started_at']}")
+    if run.get("finished_at"):
+        output.console.print(f"  [dim]Finished:[/dim] {run['finished_at']}")
+    output.console.print()
+
+    # Original request
+    output.console.print(Panel(run["request"], title="📋 Original Request", border_style="cyan"))
+    output.console.print()
+
+
+def _print_trust_package(pkg: dict, trust_issues: list[str]) -> None:
+    """The release sign-off evidence, one panel."""
+    sb = pkg["security_boundary"]
+    tick = lambda b: "[green]✓[/green]" if b else "[red]✗[/red]"  # noqa: E731
+    lines = [
+        f"Verdict: [bold]{pkg['verdict']}[/bold]  ·  next: {pkg['next_authorization']}",
+        f"{tick(pkg['tests']['passed'])} tests passed  ·  AC covered: {len(pkg['tests']['ac_coverage'])}",
+        f"Files changed: {len(pkg['diff']['files'])}  ·  ADR: {pkg['adr']['path'] or '—'}",
+        f"Security: {sb['overall']} (highest: {sb['highest_severity']})"
+        + (f" — {sb['findings']}" if sb['findings'] else ""),
+        f"Cost: ${pkg['cost']['usd']:.4f}  ·  {pkg['cost']['tokens_in']}→{pkg['cost']['tokens_out']} tok",
+    ]
+    if trust_issues:
+        lines.append(f"[red]schema issues: {trust_issues}[/red]")
+    border = "green" if pkg["next_authorization"] == "release" else "yellow"
+    output.console.print(Panel("\n".join(lines), title="📦 Trust Package", border_style=border))
+    output.console.print()
+
+
+def _print_usage_line(log: dict) -> tuple[float, int, int]:
+    """The cost / provenance line of one agent call (if captured); returns
+    (cost, tokens in, tokens out) to add to the run total."""
+    cost = log.get("cost_usd")
+    t_in = log.get("tokens_in")
+    t_out = log.get("tokens_out")
+    if cost is None and t_in is None and t_out is None:
+        return 0.0, 0, 0
+    parts = []
+    if t_in is not None or t_out is not None:
+        parts.append(f"{t_in or 0}→{t_out or 0} tok")
+    if cost is not None:
+        parts.append(f"${cost:.4f}")
+    if log.get("model_name"):
+        parts.append(log["model_name"])
+    output.console.print(f"    [dim]{' · '.join(parts)}[/dim]")
+    return cost or 0.0, t_in or 0, t_out or 0
+
+
+def _print_agent_output(
+    log: dict, parse_output: Callable[[str], dict | None], show_raw: bool
+) -> None:
+    """What was SENT to the agent, then its structured (or raw) output."""
+    agent = log["agent"]
+    if log.get("input_text"):
+        inp = log["input_text"]
+        if len(inp) > 300:
+            inp = inp[:300] + "..."
+        output.console.print(f"    [dim italic]Prompt:[/dim italic] {inp}")
+
+    if log.get("output_text"):
+        parsed = parse_output(log["output_text"])
+        if parsed and not show_raw:
+            reviewer = _REVIEWERS.get(agent)
+            if reviewer:
+                reviewer(parsed)
+        elif show_raw:
+            text = log["output_text"]
+            if len(text) > 2000:
+                text = text[:2000] + "\n... (truncated, use --full for complete output)"
+            output.console.print(Panel(text, title=f"{agent} raw output", border_style="dim"))
+
+
 def print_run_review(
     run: dict,
     logs: list[dict],
@@ -122,22 +201,7 @@ def print_run_review(
 ) -> None:
     """`factory review <run_id>`: header, flow, timeline, trust package, then each
     agent in order with the gate that followed it."""
-    run_id = run["id"]
-    # Header
-    output.console.print()
-    status = run["status"]
-    style = "green" if status == "completed" else "red"
-    output.console.print(Rule(f"[bold]📊 Review: Run #{run_id}[/bold]"))
-    output.console.print(f"  [dim]Story:[/dim]   {run['story_id']}")
-    output.console.print(f"  [dim]Status:[/dim]  [{style}]{status.upper()}[/{style}]")
-    output.console.print(f"  [dim]Started:[/dim] {run['started_at']}")
-    if run.get("finished_at"):
-        output.console.print(f"  [dim]Finished:[/dim] {run['finished_at']}")
-    output.console.print()
-
-    # Original request
-    output.console.print(Panel(run["request"], title="📋 Original Request", border_style="cyan"))
-    output.console.print()
+    _print_review_header(run)
 
     # Pipeline flow + chronological timeline
     if flow:
@@ -146,24 +210,8 @@ def print_run_review(
         output.console.print(Panel(timeline, title="🕒 Timeline", border_style="dim"))
         output.console.print()
 
-    # Trust package (the release sign-off evidence)
-    pkg = trust_package
-    if pkg:
-        sb = pkg["security_boundary"]
-        tick = lambda b: "[green]✓[/green]" if b else "[red]✗[/red]"  # noqa: E731
-        lines = [
-            f"Verdict: [bold]{pkg['verdict']}[/bold]  ·  next: {pkg['next_authorization']}",
-            f"{tick(pkg['tests']['passed'])} tests passed  ·  AC covered: {len(pkg['tests']['ac_coverage'])}",
-            f"Files changed: {len(pkg['diff']['files'])}  ·  ADR: {pkg['adr']['path'] or '—'}",
-            f"Security: {sb['overall']} (highest: {sb['highest_severity']})"
-            + (f" — {sb['findings']}" if sb['findings'] else ""),
-            f"Cost: ${pkg['cost']['usd']:.4f}  ·  {pkg['cost']['tokens_in']}→{pkg['cost']['tokens_out']} tok",
-        ]
-        if trust_issues:
-            lines.append(f"[red]schema issues: {trust_issues}[/red]")
-        border = "green" if pkg["next_authorization"] == "release" else "yellow"
-        output.console.print(Panel("\n".join(lines), title="📦 Trust Package", border_style=border))
-        output.console.print()
+    if trust_package:
+        _print_trust_package(trust_package, trust_issues)
 
     # Walk through each agent + gate in order
     gate_idx = 0
@@ -174,44 +222,15 @@ def print_run_review(
         agent = log["agent"]
         v = log.get("verdict") or "—"
         dur = f" ({log['duration_secs']:.1f}s)" if log.get("duration_secs") else ""
-        output.console.print(f"  🤖 [bold cyan]{agent}[/bold cyan] → [{output.verdict_style(v)}]{v.upper()}[/{output.verdict_style(v)}]{dur}")
-
-        # Cost / provenance line (if captured)
-        cost = log.get("cost_usd")
-        t_in = log.get("tokens_in")
-        t_out = log.get("tokens_out")
-        if cost is not None or t_in is not None or t_out is not None:
-            total_cost += cost or 0.0
-            total_tokens_in += t_in or 0
-            total_tokens_out += t_out or 0
-            parts = []
-            if t_in is not None or t_out is not None:
-                parts.append(f"{t_in or 0}→{t_out or 0} tok")
-            if cost is not None:
-                parts.append(f"${cost:.4f}")
-            if log.get("model_name"):
-                parts.append(log["model_name"])
-            output.console.print(f"    [dim]{' · '.join(parts)}[/dim]")
-
-        # Show what was SENT to the agent
-        if log.get("input_text"):
-            inp = log["input_text"]
-            if len(inp) > 300:
-                inp = inp[:300] + "..."
-            output.console.print(f"    [dim italic]Prompt:[/dim italic] {inp}")
-
-        # Show structured output
-        if log.get("output_text"):
-            parsed = parse_output(log["output_text"])
-            if parsed and not show_raw:
-                reviewer = _REVIEWERS.get(agent)
-                if reviewer:
-                    reviewer(parsed)
-            elif show_raw:
-                text = log["output_text"]
-                if len(text) > 2000:
-                    text = text[:2000] + "\n... (truncated, use --full for complete output)"
-                output.console.print(Panel(text, title=f"{agent} raw output", border_style="dim"))
+        style = output.verdict_style(v)
+        output.console.print(
+            f"  🤖 [bold cyan]{agent}[/bold cyan] → [{style}]{v.upper()}[/{style}]{dur}"
+        )
+        cost, t_in, t_out = _print_usage_line(log)
+        total_cost += cost
+        total_tokens_in += t_in
+        total_tokens_out += t_out
+        _print_agent_output(log, parse_output, show_raw)
 
         # Show gate that follows this agent
         if gate_idx < len(gates):

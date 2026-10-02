@@ -165,6 +165,107 @@ def _opencode_agents_check(
     return _check("opencode-loads-exactly-the-agents", not problems, "; ".join(problems))
 
 
+def _agent_checks(
+    agent: str, tier: str, agents_dir: Path, tier_config: tiers.TierConfig
+) -> list[EvalResult]:
+    """Every invariant over one agent's definition file."""
+    results: list[EvalResult] = []
+    path = agents_dir / f"{agent}.md"
+    if not path.is_file():
+        results.append(
+            _check(f"agent-definition-exists:{agent}", False, f"missing {path}")
+        )
+        return results
+    results.append(_check(f"agent-definition-exists:{agent}", True))
+    text = path.read_text(encoding="utf-8")
+    fm = _frontmatter(text)
+
+    # ── Governance: the tools that would bypass materialize stay off ──
+    tools = fm.get("tools") or {}
+    enabled = [t for t in FORBIDDEN_TOOLS if tools.get(t) is not False]
+    results.append(
+        _check(
+            f"agent-tools-disabled:{agent}",
+            not enabled,
+            "" if not enabled
+            else (
+                f"tools not explicitly disabled: {enabled}. An agent that can "
+                f"{'/'.join(enabled)} writes outside code_blocks, bypassing "
+                f"materialize and the out-of-band-write check in gate-build."
+            ),
+        )
+    )
+
+    # ── Tier policy declared in the file matches the registry ──
+    results.append(
+        _check(
+            f"agent-tier-matches-registry:{agent}",
+            fm.get("model_tier") == tier,
+            "" if fm.get("model_tier") == tier
+            else f"declares model_tier={fm.get('model_tier')!r}, registry says {tier!r}",
+        )
+    )
+    expected_model = tier_config.tier_models[tier]
+    results.append(
+        _check(
+            f"agent-model-matches-tier:{agent}",
+            fm.get("model") == expected_model,
+            "" if fm.get("model") == expected_model
+            else f"declares model={fm.get('model')!r}, tier {tier!r} default is {expected_model!r}",
+        )
+    )
+
+    # ── The prompt must demand JSON-only: run_agent_json depends on it ──
+    results.append(
+        _check(
+            f"agent-demands-json-only:{agent}",
+            "only a json" in text.lower(),
+            "" if "only a json" in text.lower()
+            else "no JSON-only instruction; the orchestrator parses the reply as JSON",
+        )
+    )
+
+    # ── Output contract in the prompt vs the model the code validates with ──
+    model = OUTPUT_MODELS.get(agent)
+    if model is None:
+        results.append(
+            _check(
+                f"agent-output-contract:{agent}",
+                False,
+                f"no Pydantic output model registered for {agent} in OUTPUT_MODELS",
+            )
+        )
+        return results
+    example = _json_example(text)
+    if example is None:
+        results.append(
+            _check(
+                f"agent-output-contract:{agent}",
+                False,
+                "no JSON output example found in the definition",
+            )
+        )
+        return results
+    problems: list[str] = []
+    unknown = _unknown_keys(example, model)
+    if unknown:
+        problems.append(
+            f"contract declares fields {model.__name__} does not have (silently "
+            f"dropped by the orchestrator): {unknown}"
+        )
+    missing = _missing_required(example, model)
+    if missing:
+        problems.append(f"contract omits required {model.__name__} fields: {missing}")
+    try:
+        model.model_validate(example)
+    except ValidationError as exc:
+        problems.append(f"contract does not validate against {model.__name__}: {exc}")
+    results.append(
+        _check(f"agent-output-contract:{agent}", not problems, "; ".join(problems))
+    )
+    return results
+
+
 def config_checks(
     *, agents_dir: Path | None = None, opencode_dir: Path | None = None
 ) -> list[EvalResult]:
@@ -175,99 +276,7 @@ def config_checks(
     results: list[EvalResult] = []
 
     for agent, tier in tier_config.agent_tiers.items():
-        path = agents_dir / f"{agent}.md"
-        if not path.is_file():
-            results.append(
-                _check(f"agent-definition-exists:{agent}", False, f"missing {path}")
-            )
-            continue
-        results.append(_check(f"agent-definition-exists:{agent}", True))
-        text = path.read_text(encoding="utf-8")
-        fm = _frontmatter(text)
-
-        # ── Governance: the tools that would bypass materialize stay off ──
-        tools = fm.get("tools") or {}
-        enabled = [t for t in FORBIDDEN_TOOLS if tools.get(t) is not False]
-        results.append(
-            _check(
-                f"agent-tools-disabled:{agent}",
-                not enabled,
-                "" if not enabled
-                else (
-                    f"tools not explicitly disabled: {enabled}. An agent that can "
-                    f"{'/'.join(enabled)} writes outside code_blocks, bypassing "
-                    f"materialize and the out-of-band-write check in gate-build."
-                ),
-            )
-        )
-
-        # ── Tier policy declared in the file matches the registry ──
-        results.append(
-            _check(
-                f"agent-tier-matches-registry:{agent}",
-                fm.get("model_tier") == tier,
-                "" if fm.get("model_tier") == tier
-                else f"declares model_tier={fm.get('model_tier')!r}, registry says {tier!r}",
-            )
-        )
-        expected_model = tier_config.tier_models[tier]
-        results.append(
-            _check(
-                f"agent-model-matches-tier:{agent}",
-                fm.get("model") == expected_model,
-                "" if fm.get("model") == expected_model
-                else f"declares model={fm.get('model')!r}, tier {tier!r} default is {expected_model!r}",
-            )
-        )
-
-        # ── The prompt must demand JSON-only: run_agent_json depends on it ──
-        results.append(
-            _check(
-                f"agent-demands-json-only:{agent}",
-                "only a json" in text.lower(),
-                "" if "only a json" in text.lower()
-                else "no JSON-only instruction; the orchestrator parses the reply as JSON",
-            )
-        )
-
-        # ── Output contract in the prompt vs the model the code validates with ──
-        model = OUTPUT_MODELS.get(agent)
-        if model is None:
-            results.append(
-                _check(
-                    f"agent-output-contract:{agent}",
-                    False,
-                    f"no Pydantic output model registered for {agent} in OUTPUT_MODELS",
-                )
-            )
-            continue
-        example = _json_example(text)
-        if example is None:
-            results.append(
-                _check(
-                    f"agent-output-contract:{agent}",
-                    False,
-                    "no JSON output example found in the definition",
-                )
-            )
-            continue
-        problems: list[str] = []
-        unknown = _unknown_keys(example, model)
-        if unknown:
-            problems.append(
-                f"contract declares fields {model.__name__} does not have (silently "
-                f"dropped by the orchestrator): {unknown}"
-            )
-        missing = _missing_required(example, model)
-        if missing:
-            problems.append(f"contract omits required {model.__name__} fields: {missing}")
-        try:
-            model.model_validate(example)
-        except ValidationError as exc:
-            problems.append(f"contract does not validate against {model.__name__}: {exc}")
-        results.append(
-            _check(f"agent-output-contract:{agent}", not problems, "; ".join(problems))
-        )
+        results.extend(_agent_checks(agent, tier, agents_dir, tier_config))
 
     # ── What opencode actually loads: exactly these agents, nothing else ──
     results.append(
