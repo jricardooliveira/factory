@@ -1,6 +1,6 @@
 ---
 model_tier: fast
-model: openai/gpt-5.4-mini
+model: openai/gpt-5.5-fast
 temperature: 0.2
 tools:
   write: false

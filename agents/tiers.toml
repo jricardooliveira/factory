@@ -1,0 +1,38 @@
+# Model-tier policy — the single source of truth for which model each agent runs on.
+#
+# Read by factory.agent_config.tiers. Reserve the frontier tier for high-leverage
+# thinking (planning, design trade-offs, risk/security review) and the cheap tier for
+# high-volume rote work (implementation). A failed attempt by an agent listed under
+# [escalate_on_retry] re-runs one tier up: a retry is exactly the case where cheap
+# reasoning already proved insufficient.
+#
+# Each agent's <name>.md frontmatter repeats its `model_tier:` and the tier's `model:`
+# (the fallback for a hand-run `opencode run`). `factory evals` and
+# tests/agent_config/test_tiers.py fail if the two drift — change both together.
+#
+# Re-point a tier without editing this file: FACTORY_TIER_<TIER>=provider/model
+# (e.g. FACTORY_TIER_FAST=openai/gpt-5.5). `factory doctor` probes every distinct
+# model below before a run spends tokens on a spec and an architect call.
+
+# Tier used for any agent not listed under [agents].
+default_tier = "standard"
+
+# Tier -> concrete opencode model id (provider/model). These must be models the
+# configured opencode provider accepts: on a ChatGPT/Codex login that is the
+# openai/gpt-5.5 family (gpt-5.4-mini is rejected; anthropic/* is not configured).
+[tiers]
+frontier = "openai/gpt-5.5"
+standard = "openai/gpt-5.5"
+fast = "openai/gpt-5.5-fast"
+
+# Agent -> tier on its first attempt.
+[agents]
+spec-agent = "frontier"       # planning / decomposition — "is this the right work?"
+architect-agent = "frontier"  # design trade-offs, risk, ADRs
+tester-agent = "frontier"     # risk analysis + security / QA review (≈ PR review)
+coder-agent = "fast"          # implementation — highest call volume
+
+# Agent -> tier on attempt 2+. A failed cheap attempt is the signal that the task
+# needs more reasoning, not another cheap pass.
+[escalate_on_retry]
+coder-agent = "frontier"

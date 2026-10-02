@@ -1,7 +1,8 @@
-"""Commands that measure the factory itself: simulate, evals, metrics, tiers.
+"""Commands that measure the factory itself: doctor, simulate, evals, metrics, tiers.
 
-All offline and zero-token. `evals` exits non-zero below its pass threshold so
-`make evals` / CI can gate a merge on it.
+All offline and zero-token except `doctor`, which spends one trivial probe per
+distinct tier model (none with `--offline`). `evals` and `doctor` exit non-zero
+on failure so `make evals` / CI / a wrapper script can gate on them.
 """
 
 from __future__ import annotations
@@ -17,6 +18,21 @@ def tiers_command(args: list[str]) -> None:
     from factory.agent_config import tiers as mt
 
     render.print_tiers(mt.AGENT_TIERS, mt.ESCALATE_ON_RETRY, mt.model_for_tier)
+
+
+def doctor_command(args: list[str]) -> None:
+    """Preflight: opencode, a probe per distinct tier model, toolchains.
+
+    Exits non-zero if a blocking check fails (opencode missing, a tier model
+    unreachable), so a script can gate `factory run` on it. `--offline` skips the
+    model probes and spends no tokens.
+    """
+    from factory.selftest import doctor
+
+    report = doctor.run_doctor(offline="--offline" in args)
+    render.print_doctor(report)
+    if not report.passed:
+        sys.exit(1)
 
 
 def simulate_command(args: list[str]) -> None:

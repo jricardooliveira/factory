@@ -3,7 +3,7 @@
 A LangGraph pipeline that drives opencode agents (spec → architect → coder → tester) through
 deterministic gates to build software projects. **The factory is an agent configuration**, so
 changes to `agents/*.md`, `agents/policies/REVIEW.md`, `domain/gates.py` + `domain/ambiguity.py`,
-`agent_config/tiers.py`, or prompt assembly in `pipeline/` are behaviour changes and must be
+`agents/tiers.toml`, or prompt assembly in `pipeline/` are behaviour changes and must be
 regression-tested like code.
 
 Governing contract: `docs/contract/EFFECTIVENESS.md`. When code and that doc disagree, one of
@@ -16,14 +16,15 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `397 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `397 passed` (~40s, offline, zero tokens) |
+| `make check` | `421 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `421 passed` (~40s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 9/9 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 43/43 agent-configuration checks; exits non-zero below 100% |
 | `.venv/bin/factory evals capture <run_id> <name>` | freeze a real run (or incident) as a permanent eval case |
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
+| `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc; non-zero if a model is unreachable |
 | `.venv/bin/factory --help` | full CLI verb list |
 
 `ruff` is configured in `pyproject.toml` (line-length 100, `E,F,I,W`) but **is not installed** in
@@ -33,7 +34,9 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 ```
 agents/                 The agent configuration: the 4 agent .md definitions (write/edit/bash/patch
-                        all disabled) + policies/REVIEW.md (injected into the tester prompt).
+                        all disabled), policies/REVIEW.md (injected into the tester prompt) and
+                        tiers.toml (agent -> tier -> model, escalate-on-retry: the ONLY place
+                        model ids are chosen).
 .opencode/agents        -> ../agents (relative symlink; opencode resolves agents through it).
 src/factory/
   domain/               PURE, no I/O, imports nothing else from factory.
@@ -43,7 +46,8 @@ src/factory/
     task_order.py       Dependency-ordered task list (Kahn sort), shared by pipeline + PLAN.md.
     traceability.py     Deterministic AC ↔ tester-claim cross-check (catches silently dropped criteria).
     agent_output.py     parse_agent_json & friends.   project_spec.py  ProjectSpec model.
-  agent_config/         tiers.py (model tiers; must match agent frontmatter), review_policy.py.
+  agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
+                        review_policy.py.
   pipeline/             The orchestrator (LangGraph). Owns routing/remediation. __init__ is the
                         PUBLIC API — other packages import only from `factory.pipeline`.
     state.py            PipelineState.
@@ -63,7 +67,8 @@ src/factory/
                         materialize.py, repo_map.py.
   adapters/             opencode.py (the only place a model is called), notify.py.
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
-  selftest/             evals.py (agent-configuration regression), simulate.py (scenario matrix).
+  selftest/             evals.py (agent-configuration regression), simulate.py (scenario matrix),
+                        doctor.py (`factory doctor` preflight; probes go through run_agent).
   runs/                 Application service: run / replay / resume / retry (service.py), resume
                         context + decision recovery (context.py). NEVER prints: reports progress
                         through an `on_event` callback (events.py) and refuses with `RunError`.
@@ -110,8 +115,13 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Agents cannot write files.** Code reaches disk only via `code_blocks` → `materialize_code_blocks`.
   Any file that appears in the repo undeclared is an out-of-band write and *blocks* gate-build.
   Don't "fix" that by enabling agent write tools.
-- **`model_tier` in each agent's `.md` frontmatter must match `agent_config.tiers.AGENT_TIERS`** —
-  `tests/agent_config/test_tiers.py` fails on drift. Update both.
+- **Model choice lives in `agents/tiers.toml`, nowhere else.** Each agent's `.md` frontmatter
+  repeats its `model_tier:` and that tier's `model:`; `tests/agent_config/test_tiers.py` and
+  `factory evals` fail on drift. Change the toml and the frontmatter together. Default models
+  must be ones this machine's opencode login accepts (a ChatGPT/Codex login: openai/gpt-5.5
+  family; gpt-5.4-mini is rejected, anthropic/* is not configured).
+- **`factory doctor` tests patch `factory.selftest.doctor.run_agent`** — a probe is a real,
+  paid model call.
 - **The `factory:` commit-message prefix is load-bearing.** `workspace.git._factory_baseline()` finds the
   pre-factory baseline by locating the oldest commit whose subject starts with it.
 - Agents prefix paths with `repo/`; `materialize.normalize_block_path` strips it. Don't double-prefix.

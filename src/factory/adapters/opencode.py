@@ -120,15 +120,21 @@ def _hash_agent_definition(agent_name: str, cwd: str | None) -> str | None:
 
 
 def run_agent(
-    agent_name: str, prompt: str, cwd: str | None = None, model: str | None = None
+    agent_name: str,
+    prompt: str,
+    cwd: str | None = None,
+    model: str | None = None,
+    timeout: int | None = None,
 ) -> AgentResult:
     """Call `opencode run --agent <name> --format json <prompt>`.
 
     Uses JSON format for clean output parsing. When ``model`` is given it is
     passed as ``--model provider/model``, overriding the agent's frontmatter so
     the orchestrator's tier policy (see ``agent_config.tiers``) — including
-    cheap-first/escalate-on-retry — is the single source of truth.
+    cheap-first/escalate-on-retry — is the single source of truth. ``timeout``
+    (seconds) overrides ``FACTORY_AGENT_TIMEOUT`` for this one call.
     """
+    timeout = timeout if timeout is not None else _default_timeout()
     start = time.monotonic()
     model_args = ["--model", model] if model else []
     try:
@@ -144,7 +150,7 @@ def run_agent(
             ],
             capture_output=True,
             text=True,
-            timeout=_default_timeout(),
+            timeout=timeout,
             cwd=cwd,
             # `opencode run` READS STDIN when it is not a terminal and waits for
             # EOF before starting. Inherited from a background job, cron, CI or the
@@ -186,7 +192,7 @@ def run_agent(
         duration = time.monotonic() - start
         return AgentResult(
             agent=agent_name,
-            output=f"ERROR: Agent timed out after {_default_timeout()} seconds",
+            output=f"ERROR: Agent timed out after {timeout} seconds",
             duration_secs=round(duration, 2),
             returncode=-1,
             agent_prompt_hash=_hash_agent_definition(agent_name, cwd),

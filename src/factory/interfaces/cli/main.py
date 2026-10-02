@@ -31,6 +31,7 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "evals": selftest.evals_command,
     "metrics": selftest.metrics_command,
     "tiers": selftest.tiers_command,
+    "doctor": selftest.doctor_command,
     "board": board.board_command,
     "visualize": board.visualize_command,
 }
@@ -61,6 +62,7 @@ def print_usage(exit_code: int = 1) -> NoReturn:
     console.print("  factory [bold cyan]reject <run_id> [reason][/bold cyan]      Reject paused run")
     console.print("  factory [bold cyan]retry <run_id>[/bold cyan]                Re-drive a run that died after you answered")
     console.print("  factory [bold cyan]tiers[/bold cyan]                          Show per-agent model tiers (leverage allocation)")
+    console.print("  factory [bold cyan]doctor [--offline][/bold cyan]             Preflight: opencode, tier models reachable, toolchains")
     sys.exit(exit_code)
 
 
