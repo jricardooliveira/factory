@@ -55,6 +55,13 @@ class VerbHelpTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("factory reject", out)
 
+    def test_interview_and_next_help_name_their_flags(self) -> None:
+        _code, out = _main("interview", "--help")
+        self.assertIn("--amend", out)
+        self.assertIn("--import", out)
+        _code, out = _main("next", "--help")
+        self.assertIn("--no-interview", out)
+
     def test_every_verb_has_a_usage_line(self) -> None:
         from factory.interfaces.cli.main import COMMANDS
 

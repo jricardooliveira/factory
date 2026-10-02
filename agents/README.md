@@ -1,6 +1,6 @@
 # Agent configuration
 
-This folder contains the instructions and model settings for the factory's six
+This folder contains the instructions and model settings for the factory's eight
 agents. The agents propose and review work; the Python pipeline checks their
 outputs and controls what can be written to a product repository.
 
@@ -8,6 +8,8 @@ outputs and controls what can be written to a product repository.
 
 | File | Role |
 |---|---|
+| `interview-agent.md` | Interviews you about the product before any story is written; your answers become the approved brief. |
+| `backlog-agent.md` | Turns the approved brief into an ordered list of small stories for you to approve; you start each with `factory next`. |
 | `spec-agent.md` | Turns your request into a story with clear requirements and small tasks. |
 | `architect-agent.md` | Plans how to implement an approved story and records design risks. |
 | `coder-agent.md` | Implements one approved task at a time and returns proposed file changes. |

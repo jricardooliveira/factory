@@ -17,12 +17,24 @@ from typing import NoReturn
 from rich.markup import escape
 
 from factory.interfaces import render
-from factory.interfaces.cli import board, project, review, run, selftest, workspace
+from factory.interfaces.cli import (
+    backlog,
+    board,
+    interview,
+    project,
+    review,
+    run,
+    selftest,
+    workspace,
+)
 from factory.interfaces.cli.common import fail
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "project": project.project_command,
     "spec": project.spec_command,
+    "interview": interview.interview_command,
+    "backlog": backlog.backlog_command,
+    "next": backlog.next_command,
     "run": run.run_command,
     "approve": run.approve_command,
     "reject": run.reject_command,
@@ -49,7 +61,12 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
 # (tests/interfaces/cli/test_verb_help.py enforces it).
 USAGE: tuple[tuple[str, str], ...] = (
     ('"Your request here"', "Run pipeline"),
-    ('run --project <id> "..."', "Run pipeline for project"),
+    ('run --project <id> [--no-interview] "..."', "Run pipeline for project"),
+    ("interview <project>", "Define the product with the operator: writes the approved brief"),
+    ('interview <project> --amend "..."', "Reopen the approved brief for one change"),
+    ("interview <project> --import <file>", "Record answers from the /factory-intake skill"),
+    ("backlog <project>", "Propose the story list from the brief; approve or give feedback"),
+    ("next <project> [--no-interview]", "Run the next approved story in the backlog"),
     ("spec init <slug> --stack fastapi", "Create project spec"),
     ("project create <slug>", "Create/register project"),
     ("project list", "List projects"),

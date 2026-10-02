@@ -31,12 +31,15 @@ frontier = "openai/gpt-6-astra"         # OpenAI's top model: the hardest reason
 build = "openai/gpt-6.1-sol"            # "complex coding at lower cost"
 notes = "openai/gpt-6-luna"             # fast, cheap: summaries
 review = "requesty/claude-opus-5-5"     # independent review of OpenAI-written code
+intake = "requesty/claude-opus-5-5"     # the interview: every later stage builds on its brief
 check = "requesty/claude-sonnet-5-5"    # independent boundary review of the design
 special = "requesty/claude-fable-5.1"   # special cases: a failed attempt, retried
 standard = "requesty/claude-haiku-4-5"  # fallback for any agent not listed below
 
 # Agent -> tier on its first attempt.
 [agents]
+interview-agent = "intake"     # pre-pipeline product interview — "what are we building?"
+backlog-agent = "intake"       # brief -> ordered story list — "in what order?"
 spec-agent = "frontier"        # planning / decomposition — "is this the right work?"
 architect-agent = "frontier"   # design trade-offs, risk, ADRs
 coder-agent = "build"          # implementation — highest call volume

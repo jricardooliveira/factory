@@ -17,15 +17,20 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `757 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `757 passed` (~90s, offline, zero tokens) |
+| `make check` | `848 passed` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `848 passed` (~60s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
-| `.venv/bin/factory evals` | 56/56 agent-configuration checks; exits non-zero below 100% |
+| `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
 | `.venv/bin/factory evals capture <run_id> <name>` | freeze a real run (or incident) as a permanent eval case |
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
 | `.venv/bin/factory workspace` | resolved `$FACTORY_HOME` (default `~/.factory`), its `factory.db` and every project repo |
+| `.venv/bin/factory interview <project>` | interviews the operator about the product (live model calls), then writes + commits `docs/work/BRIEF.md` and `INTERVIEW.md` on approval; re-running resumes. `factory run --project` requires that brief (or `--no-interview`) |
+| `.venv/bin/factory interview <project> --amend "what changed"` | reopens an approved brief for that change only, rewrites + commits it, then offers `factory backlog` so unstarted stories are re-proposed |
+| `.venv/bin/factory interview <project> --import answers.json` | records answers from the `/factory-intake` skill (`[{topic, question, options?, answer, assumed?}]`); refuses, recording nothing, unless every required topic is answered |
+| `.venv/bin/factory backlog <project>` | proposes the ordered story list from the brief; approve, or type feedback to regenerate |
+| `.venv/bin/factory next <project> [--no-interview]` | starts the next approved backlog story (story-level interview first on a TTY) |
 | `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
 | `.venv/bin/factory --help` | full CLI verb list |
 
@@ -35,7 +40,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 ## Architecture
 
 ```
-agents/                 The agent configuration: the 6 agent .md definitions (write/edit/bash/patch
+agents/                 The agent configuration: the 8 agent .md definitions (write/edit/bash/patch
                         all disabled), policies/REVIEW.md (injected into the tester prompt) and
                         tiers.toml (agent -> tier -> model, escalate-on-retry: the ONLY place
                         model ids are chosen).
@@ -50,6 +55,9 @@ src/factory/
     authorization.py    The boss's rules: may a stage START, given the recorded verdicts? (pure)
     traceability.py     Deterministic AC ↔ tester-claim cross-check (catches silently dropped criteria).
     agent_output.py     parse_agent_json & friends.   project_spec.py  ProjectSpec model.
+    backlog.py          BacklogStory/BacklogOutput (the backlog-agent's contract).
+    interview.py        Intake interview: REQUIRED_TOPICS, InterviewTurn, uncovered_topics (coverage
+                        is decided from recorded answers, never the model's claim), resolve_answer.
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
                         review_policy.py, settings.py (factory.toml: budget, timeouts, feature
                         switches; env > file > default; `settings()` is read per call, never
@@ -75,22 +83,31 @@ src/factory/
                         trust_package.py (+ schemas/), metrics.py, progress.py (per-run stage
                         flow + timeline from the DB; shared by CLI, TUI and simulate),
                         pipeline_record.py (docs/work/<story>/PIPELINE.md — the boss's committed
-                        record of a run, written from runs.service._finish at every stop).
+                        record of a run, written from runs.service._finish at every stop),
+                        brief.py (docs/work/BRIEF.md + INTERVIEW.md, rendered from recorded answers),
+                        backlog.py (docs/work/BACKLOG.md from the backlog rows).
   workspace/            layout.py ($FACTORY_HOME resolver: home/db_path/projects_dir, re-exported
                         from `factory.workspace`; EVIDENCE_PATHS = what the factory owns in a
                         product repo), projects.py, templates.py, git.py (checkpoint + evidence
                         commits, baseline, real diff), materialize.py, repo_map.py, legacy.py
                         (`factory workspace import-legacy`).
-  adapters/             opencode.py (the only place a model is called), notify.py.
+  adapters/             opencode.py + claude_sdk.py (the only places a model is called; the SDK
+                        one only for the interview, optional extra `.[claude]`), notify.py.
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
+  state/interviews.py   interview_answers / interview_turns accessors (verbatim agent I/O).
+  state/backlog.py      backlog_stories accessors: a new proposal replaces only unstarted rows.
   selftest/             evals.py (agent-configuration regression), simulate.py (scenario matrix),
                         doctor.py (`factory doctor` preflight; probes go through run_agent).
   runs/                 Application service: run / replay / resume / retry (service.py), resume
-                        context + decision recovery (context.py). NEVER prints: reports progress
-                        through an `on_event` callback (events.py) and refuses with `RunError`.
+                        context + decision recovery (context.py), the intake interview that runs
+                        BEFORE the pipeline (interview.py), the
+                        story backlog + `factory next` (backlog.py). NEVER prints: reports progress through
+                        an `on_event` callback (events.py) — the interview through `ask`/`approve`
+                        callbacks — and refuses with `RunError`.
   interfaces/           render.py (every rich print helper; takes data, never reads the DB),
                         cli/ (main.py = argv dispatch + usage; run.py, review.py, project.py,
-                        selftest.py, board.py, workspace.py = one module per command group),
+                        interview.py, backlog.py, selftest.py, board.py, workspace.py = one module per command
+                        group),
                         board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
 evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected outcome).
 examples/specs/         Sample project specs.
@@ -216,6 +233,24 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Default verification executes nothing the coder wrote.** No `pytest --collect-only`
   without `FACTORY_RUN_TESTS=1` (collection imports — runs — test modules); the static
   import check covers what it caught. A missing toolchain FAILS its files, never skips them.
+- **`docs/work/BRIEF.md` existing IS the approved brief** (`runs.has_brief`); there is no flag
+  in the DB. The intake interview (`factory interview`, `runs/interview.py`) runs BEFORE the
+  pipeline — it is not a graph node, so the boss and `replay` know nothing about it — and
+  `factory run --project` refuses a project without a brief unless `--no-interview` (on a TTY
+  it interviews first). Once the brief is approved the same agent proposes `project-spec.json`
+  (`confirm_stack`; corrections are `stack` answers, `MAX_STACK_PROPOSALS`). An approved brief
+  is only reopened by `--amend`. On a TTY with a brief, `factory run --project` and `factory
+  next` first run the story-level interview (`run_story_interview`, `# Mode: story`, at most
+  `MAX_STORY_INTERVIEW_QUESTIONS`): its answers are appended to the story REQUEST, never stored
+  as project answers (they would leak into the brief); `--no-interview` skips it, Checkpoint 1
+  stays the safety net. The brief is injected into prompts by `project_memory_block`; with no
+  BRIEF.md the prompts are byte-identical. Interview tests patch
+  `factory.runs.interview.run_agent`; `tests/conftest.py` pins `FACTORY_INTERVIEW_ENGINE=opencode`
+  for every test (with the `.[claude]` extra and `claude` on PATH, "auto" is a live SDK call); CLI tests patch `factory.runs.run_interview` / `.has_brief` /
+  `.run_story_interview` / `.import_answers`.
+  The `/factory-intake` skill (`.claude/skills/factory-intake/SKILL.md`) is a second door to the
+  same interview: Claude asks in Claude Code, then calls `factory interview --import` (product) or
+  `factory run --project --no-interview` with an Operator clarifications block (story).
 - **One live run per project** (`runs.service._refuse_if_project_busy`): the coder's
   checkpoint stages the whole working tree. Replays are exempt (own scratch clone).
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins

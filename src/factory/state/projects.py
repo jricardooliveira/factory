@@ -81,3 +81,11 @@ def relocate_project(
         "WHERE id = ?",
         (repo_path, spec_path, project_id),
     )
+
+
+def set_spec_path(conn: sqlite3.Connection, project_id: str, spec_path: str) -> None:
+    """Register the project's spec file (one written after the project was created)."""
+    conn.execute(
+        "UPDATE projects SET spec_path = ?, updated_at = datetime('now') WHERE id = ?",
+        (spec_path, project_id),
+    )

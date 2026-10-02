@@ -92,6 +92,49 @@ CREATE TABLE IF NOT EXISTS authorizations (
     warnings TEXT NOT NULL DEFAULT '[]',
     decided_at TEXT NOT NULL
 );
+
+-- The intake interview, keyed by PROJECT (it runs before any story or run exists).
+-- options is a JSON list of the option labels offered; assumed = the operator said
+-- "you decide", so the answer is the factory's, not theirs.
+CREATE TABLE IF NOT EXISTS interview_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    topic TEXT NOT NULL,
+    question TEXT NOT NULL,
+    options TEXT NOT NULL DEFAULT '[]',
+    answer TEXT NOT NULL,
+    assumed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+-- Every interview-agent call, verbatim (agent_logs needs a run_id; there is none yet).
+CREATE TABLE IF NOT EXISTS interview_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    prompt TEXT NOT NULL,
+    output_text TEXT,
+    model_name TEXT,
+    tokens_in INTEGER,
+    tokens_out INTEGER,
+    cost_usd REAL,
+    duration_secs REAL,
+    created_at TEXT NOT NULL
+);
+
+-- The approved story backlog, per project, in delivery order. status: 'approved'
+-- (not started) | 'started' (story_id/run_id set; fixed from then on) | 'dropped'.
+CREATE TABLE IF NOT EXISTS backlog_stories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    position INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    request TEXT NOT NULL,
+    rationale TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    story_id TEXT,
+    run_id INTEGER,
+    created_at TEXT NOT NULL
+);
 """
 
 

@@ -11,6 +11,8 @@ Agent definitions live in `agents/<name>.md` (resolved by opencode through one r
 | Agent | Layer | Role | Status |
 |---|---|---|---|
 | `god` | factory | Request intake, classification, routing, cross-project state | ⛔ deferred (premature for solo) |
+| `interview-agent` | project | Pre-pipeline intake: proposes the questions that define the product (the brief). Coverage is decided in code | ✅ built (`intake` tier; `factory interview`, not a graph node) |
+| `backlog-agent` | project | Brief → ordered story list; the operator approves or gives feedback (≤ `MAX_BACKLOG_REVISIONS` regenerations). Started stories are fixed | ✅ built (`intake` tier; `factory backlog` / `factory next`, not a graph node) |
 | `spec-agent` | project | Intent → story + acceptance criteria + sliced tasks | ✅ built |
 | `boss` | project | Orchestration, context-pack assembly, gate authorization | ✅ built — as code, not an LLM (`domain/authorization.py`, `pipeline/boss.py`, `PIPELINE.md`) |
 | `architect-agent` | project | Technical approach, ADR, data/API impact, risks | ✅ built |
@@ -42,6 +44,10 @@ Validated by Pydantic models in `src/factory/domain/contracts.py`:
 
 - **`release-agent` → `ReleaseOutput`**: `verdict, summary, changes[], how_to_verify[], migration_notes, rollback_notes, known_limitations[], concerns[]`. Of the brief's release-agent duties, everything that is a *check* — gates passed, pipeline complete, state updated, migration/rollback notes present — is deterministic code in `gate-release` and the boss; only *writing* the notes is the agent's. Its `verdict` is a concern level surfaced at Checkpoint 3, never an approval. A run recorded before the agent existed replays with the stage `skipped` (`agent_calls.ReplayGap`), so the frozen corpus keeps working.
 
+- **`interview-agent` → `InterviewTurn`** (`src/factory/domain/interview.py`): `questions[{topic, question, options[{label, description}]}], done`. It only PROPOSES questions, recommended option first. Whether the product is defined well enough is decided in code from the recorded answers (`domain.interview.uncovered_topics`): an agent that says `done` with a required topic open is overruled by the fallback questions. The brief (`docs/work/BRIEF.md`) is rendered deterministically from the answers, never written by the agent.
+
+- **`backlog-agent` → `BacklogOutput`** (`src/factory/domain/backlog.py`): `stories[{title, request, rationale}]`. A proposal is stored (`backlog_stories`, `docs/work/BACKLOG.md`) only once the operator approves it, and replaces only the stories no run has started. Each `request` is handed verbatim to `run_project_pipeline` by `factory next`; the operator starts every story, nothing chains.
+
 - **`boundary-agent` → `BoundaryOutput`**: `overall, tenant{verdict, findings}, authorization{…}, api_contract{verdict, findings, breaking_changes}, security{…}, rules_for_coder[], required_changes[]`. Separate sub-verdicts, per the original spec. The verdict that counts is computed in code (`domain/gates.boundary_overall`: any failed dimension fails the review, whatever `overall` says). Whether a review is needed at all is code too (`boundary_review_reasons`, from the architect's own `api_impact` / `db_impact` / `migration_needed` / `breaking_changes` / `sensitivity`). Its `rules_for_coder` reach the coder's and the tester's prompts, and its sub-verdicts fill the trust package's `security_boundary.tenant_isolation` / `authorization` (§5 evidence 4).
 
 ---
@@ -58,6 +64,8 @@ Each stage produces a handoff that the next stage and the gates consume. Today t
 
 | Agent | Tier | Model | Why |
 |---|---|---|---|
+| interview-agent | `intake` | `requesty/claude-opus-5-5` | the interview defines the product every later stage builds on |
+| backlog-agent | `intake` | `requesty/claude-opus-5-5` | the story order every later run follows |
 | spec, architect | `frontier` | `openai/gpt-6-astra` | the hardest reasoning: what to build and how |
 | coder | `build` | `openai/gpt-6.1-sol` | complex coding at a lower cost |
 | coder, attempt 2+ | `special` | `requesty/claude-fable-5.1` | the special case: a failed attempt, retried by the other family's strongest model |

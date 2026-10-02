@@ -28,6 +28,8 @@ from factory.domain.contracts import (
     TesterOutput,
     TestCoverage,
 )
+from factory.domain.backlog import BacklogOutput, BacklogStory
+from factory.domain.interview import InterviewQuestion, InterviewTurn
 from factory.selftest.evals.report import EvalResult
 
 # Tools that MUST stay disabled in every agent definition. Code reaches disk only
@@ -44,6 +46,8 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "tester-agent": TesterOutput,
     "release-agent": ReleaseOutput,
     "boundary-agent": BoundaryOutput,
+    "interview-agent": InterviewTurn,
+    "backlog-agent": BacklogOutput,
 }
 
 # Nested models, so a drifted key inside a list/object is caught too.
@@ -55,6 +59,8 @@ NESTED_MODELS: dict[str, type[BaseModel]] = {
     "authorization": BoundaryVerdict,
     "api_contract": ApiContractVerdict,
     "security": BoundaryVerdict,
+    "questions": InterviewQuestion,
+    "stories": BacklogStory,
 }
 
 _FENCE_RE = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.DOTALL)

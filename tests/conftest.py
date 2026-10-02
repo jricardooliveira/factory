@@ -24,3 +24,14 @@ def _isolated_factory_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch
     home = tmp_path_factory.mktemp("factory-home")
     monkeypatch.setenv("FACTORY_HOME", str(home))
     return home
+
+
+@pytest.fixture(autouse=True)
+def _opencode_interview_engine(monkeypatch) -> None:
+    """Pin the interview engine to opencode for EVERY test.
+
+    With the optional [claude] extra installed and `claude` on PATH, the default
+    "auto" engine calls the Claude Agent SDK — a live, paid call from any test that
+    patched only `run_agent`. Tests of the engine choice set the variable themselves.
+    """
+    monkeypatch.setenv("FACTORY_INTERVIEW_ENGINE", "opencode")

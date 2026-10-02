@@ -5,10 +5,14 @@ without leaving the screen. Resume work runs in a worker thread (the pipeline ca
 take minutes) through `factory.runs` with no event callback: the service never
 prints, so nothing can corrupt the screen, and the board's own refresh tick picks
 up the progress from the DB.
+
+`i` runs the intake interview for the filtered project in a worker thread whose
+callbacks block on the modals in `interview_screen`; `B` shows its brief and backlog.
 """
 
 from __future__ import annotations
 
+import queue
 from pathlib import Path
 
 from rich.markup import escape
@@ -16,6 +20,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -27,6 +32,7 @@ from textual.widgets import (
     Static,
     TextArea,
 )
+from textual.worker import get_current_worker
 
 from factory.interfaces.board.data import (
     KANBAN_COLUMNS,
@@ -35,9 +41,15 @@ from factory.interfaces.board.data import (
     list_projects_on_board,
     load_board_runs,
 )
+from factory.domain.interview import InterviewQuestion
+from factory.domain.project_spec import ProjectSpec
+from factory.evidence.backlog import BACKLOG_RELPATH
+from factory.evidence.brief import load_brief
+from factory.interfaces.board.interview_screen import QuestionScreen, ReviewScreen
 from factory.interfaces.render.review import render_flow
-from factory.runs import RunError, dismiss_run, resume_run
+from factory.runs import RunError, dismiss_run, has_brief, resume_run, run_interview
 from factory.runs.queries import run_stages
+from factory.workspace.projects import get_project, list_projects
 
 
 def _col_slug(name: str) -> str:
@@ -76,6 +88,8 @@ class FactoryBoard(App):
         ("a", "approve", "Approve"),
         ("x", "reject", "Reject"),
         ("d", "dismiss", "Dismiss"),
+        ("i", "interview", "Interview"),
+        ("B", "brief", "Brief/backlog"),
     ]
 
     def __init__(self, db_path: Path) -> None:
@@ -287,7 +301,12 @@ class FactoryBoard(App):
                 self._show_detail(run)
 
     def action_cycle_project(self) -> None:
-        options: list[str | None] = [None, *self._all_projects]
+        # Registered projects too: a new one has no runs yet, and that is exactly
+        # when it needs its interview.
+        registered = [p["slug"] for p in list_projects(self.db_path)]
+        options: list[str | None] = [
+            None, *self._all_projects, *(s for s in registered if s not in self._all_projects)
+        ]
         try:
             idx = options.index(self._project_filter)
         except ValueError:
@@ -373,6 +392,74 @@ class FactoryBoard(App):
         else:
             self.query_one("#result", Static).update(f"[green]Run #{run_id} {action} done.[/green]")
         self.reload()
+
+    # ── intake interview ──────────────────────────────────────────
+    def _selected_project(self) -> str | None:
+        if self._project_filter in (None, "—"):
+            self.notify("Pick a project first: press p to cycle projects.", severity="warning")
+            return None
+        return self._project_filter
+
+    def action_brief(self) -> None:
+        if not (ref := self._selected_project()):
+            return
+        try:
+            repo = Path(get_project(self.db_path, ref)["repo_path"])
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        backlog = repo / BACKLOG_RELPATH
+        body = (load_brief(repo) or "(no approved brief yet: press i to interview)") + "\n\n" + (
+            backlog.read_text(encoding="utf-8") if backlog.is_file() else "(no backlog yet)"
+        )
+        self.push_screen(ReviewScreen(f"Project {ref}", body, review=False))
+
+    def action_interview(self) -> None:
+        if ref := self._selected_project():
+            self._do_interview(ref)
+
+    @work(thread=True, exclusive=True, group="interview")
+    def _do_interview(self, ref: str) -> None:
+        try:
+            if has_brief(ref, db_path=self.db_path):
+                self.call_from_thread(
+                    self.notify, f"{ref}: the brief is already approved (B shows it). "
+                    f"To change it: factory interview {ref} --amend \"what changed\""
+                )
+                return
+            outcome = run_interview(ref, db_path=self.db_path, ask=self._ask,
+                                    approve=self._approve, confirm_stack=self._confirm_stack)
+        except Exception as exc:  # RunError, unknown project, or a crash: never kill the board
+            self.call_from_thread(self.notify, str(exc), severity="error")
+            return
+        if outcome.approved:
+            self.call_from_thread(self.notify, f"{ref}: brief approved ({outcome.brief_path}).")
+        else:
+            self.call_from_thread(
+                self.notify, f"{ref}: interview paused, {outcome.answers} answer(s) saved."
+            )
+
+    def _modal(self, screen: Screen):
+        """Show `screen` and block this worker thread until it is dismissed."""
+        answer: queue.Queue = queue.Queue()
+        self.call_from_thread(self.push_screen, screen, answer.put)
+        worker = get_current_worker()
+        while True:
+            try:
+                return answer.get(timeout=0.1)
+            except queue.Empty:
+                if worker.is_cancelled:  # the board is closing: unblock the thread
+                    raise RunError("Interview closed; the answers so far are saved.") from None
+
+    def _ask(self, question: InterviewQuestion, missing: list[str]) -> str | None:
+        return self._modal(QuestionScreen(question, missing))
+
+    def _approve(self, brief: str) -> bool | str:
+        return self._modal(ReviewScreen("Approve this product brief?", brief, review=True))
+
+    def _confirm_stack(self, spec: ProjectSpec) -> bool | str:
+        return self._modal(ReviewScreen("Proposed tech stack (project-spec.json)",
+                                        spec.model_dump_json(indent=2), review=True))
 
 
 def run_board_tui(db_path: Path) -> None:
