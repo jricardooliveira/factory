@@ -204,6 +204,19 @@ def _blockers(
             f"Files changed outside the tasks' declared scope (§6): "
             f"{diff_block['scope_violations']}"
         )
+    # Operator decision (review task T06): changing a test that existed BEFORE the
+    # story is allowed — a legitimate update must stay possible — but it is the one
+    # way a coder can make a failing check pass, so it is named for Checkpoint 3.
+    touched = sorted(
+        f["path"] for f in diff_block.get("files", [])
+        if f.get("change") in ("modified", "deleted", "renamed")
+        and scope_policy.is_test_path(f["path"])
+    )
+    if diff_block["source"] == "git" and touched:
+        blockers.append(
+            f"Existing tests were changed or deleted by this story — check that they were "
+            f"not weakened to make a failing check pass: {touched}"
+        )
     if not adr_path:
         blockers.append(
             "No design record (ADR) for this story (§5.3): the design decision and its "

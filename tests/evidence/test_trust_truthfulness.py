@@ -85,6 +85,40 @@ class GitMeasuredDiffTests(unittest.TestCase):
         _git(self.repo, "commit", "-m", "factory: T-1", "--no-gpg-sign")
         return rid
 
+    def _commit(self, files: dict[str, str | None], message: str) -> None:
+        for rel, text in files.items():
+            path = self.repo / rel
+            if text is None:
+                path.unlink()
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-m", message, "--no-gpg-sign")
+
+    def test_changing_a_test_that_existed_before_the_story_is_a_named_gap(self) -> None:
+        """Operator decision (review task T06): a coder could make a failing check
+        pass by editing or deleting an old test. Allowed — but shown at Checkpoint 3."""
+        self._commit({"tests/test_old.py": "def test_x():\n    assert 1 == 1\n",
+                      "tests/test_gone.py": "def test_y():\n    pass\n"}, "baseline tests")
+        self.base = git.git_head(self.repo)
+        rid = self._run_with_changes()
+        self._commit({"tests/test_old.py": "def test_x():\n    pass\n",
+                      "tests/test_gone.py": None,
+                      "tests/test_new.py": "def test_z():\n    pass\n"}, "factory: T-2")
+        pkg = tp.assemble(self.db_path, rid)
+        gap = [b for b in pkg["blockers"] if "existing test" in b.lower()]
+        self.assertEqual(len(gap), 1, pkg["blockers"])
+        self.assertIn("tests/test_old.py", gap[0])
+        self.assertIn("tests/test_gone.py", gap[0])
+        self.assertNotIn("tests/test_new.py", gap[0])  # adding coverage is fine
+
+    def test_only_new_tests_raise_no_gap(self) -> None:
+        rid = self._run_with_changes()
+        self._commit({"tests/test_new.py": "def test_z():\n    pass\n"}, "factory: T-2")
+        pkg = tp.assemble(self.db_path, rid)
+        self.assertFalse([b for b in pkg["blockers"] if "existing test" in b.lower()])
+
     def test_base_commit_is_recorded_on_the_run(self) -> None:
         rid = self._run_with_changes()
         with db.get_db(self.db_path) as conn:

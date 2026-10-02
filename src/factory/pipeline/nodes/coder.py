@@ -25,7 +25,11 @@ from factory.state.db import (
     update_story_status,
 )
 from factory.verification import verify_changes
-from factory.verification.scope import declared_scope_mismatch, scope_note
+from factory.verification.scope import (
+    declared_scope_mismatch,
+    paths_outside_scope,
+    scope_note,
+)
 from factory.workspace.git import collect_repo_diff, git_changed_paths, git_commit_all
 from factory.workspace.materialize import materialize_code_blocks, normalize_block_path
 
@@ -74,6 +78,35 @@ def _materialize(state: PipelineState, coder: CoderOutput) -> tuple[Path, tuple[
     return root, owned, written
 
 
+def _outside_scope(state: PipelineState, coder: CoderOutput, scope: list[str]) -> list[str]:
+    """Declared code_blocks that fall outside `scope` — checked BEFORE anything lands.
+
+    Operator decision (review task T06): out-of-scope writes are refused and retried,
+    not merely reported at Checkpoint 3. Tests and toolchain manifests stay allowed
+    and an empty scope forbids nothing (`verification.scope.paths_outside_scope`).
+    """
+    root = Path(state.get("opencode_cwd") or ".")
+    repo_root = bool(factory_owned_paths(state))
+    paths = [normalize_block_path(root, b.path, repo_root=repo_root) for b in coder.code_blocks]
+    return sorted(set(paths_outside_scope(paths, scope)))
+
+
+def _scope_reason(label: str, outside: list[str], scope: list[str]) -> str:
+    return (
+        f"[{label}] SCOPE: writes outside the declared files were refused: {outside} "
+        f"(allowed: {scope}). Write only inside that scope — tests and manifests "
+        "(go.mod, package.json, ...) are always allowed."
+    )
+
+
+def _story_scope(spec: SpecOutput) -> list[str]:
+    """A remediation pass may touch what ANY task declared; if one task declared
+    nothing, the story is unrestricted (an empty scope forbids nothing)."""
+    if not spec.tasks or any(not t.scope for t in spec.tasks):
+        return []
+    return [s for t in spec.tasks for s in t.scope]
+
+
 def _block_out_of_band(
     conn: sqlite3.Connection, state: PipelineState, gate_reason: str
 ) -> None:
@@ -116,6 +149,19 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
                 "error": f"remediation coder did not return JSON: {agent_said}"}
 
     coder = CoderOutput.model_validate(parsed)
+    outside = _outside_scope(state, coder, _story_scope(spec))
+    if outside:
+        log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
+                  verdict=coder.verdict, duration_secs=result.duration_secs,
+                  stage_type="remediation", **usage_kwargs(result))
+        gate_reason = _scope_reason("remediation", outside, _story_scope(spec))
+        log_gate(conn, state["run_id"], "gate-build", False, gate_reason)
+        error = f"remediation failed gate-build: {gate_reason}"
+        _fail_story(conn, state, error)
+        return {"coder_raw": result.output, "coder": parsed, "remediation": False,
+                "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,
+                               "task": "remediation"},
+                "next_action": "give_up", "status": "failed", "error": error}
     root, owned, written = _materialize(state, coder)
     log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
               verdict=coder.verdict, duration_secs=result.duration_secs,
@@ -282,6 +328,20 @@ def _implement_task(
     coder = CoderOutput.model_validate(parsed)
     if coder.design_feedback.strip():
         return _design_feedback(conn, state, task, prompt, result, parsed, coder)
+
+    outside = _outside_scope(state, coder, task.scope)
+    if outside:
+        # Refused before anything lands: the retry starts from a clean tree.
+        log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
+                  verdict=coder.verdict, duration_secs=result.duration_secs,
+                  stage_type=task.id, **usage_kwargs(result))
+        gate_reason = _scope_reason(task.id, outside, task.scope)
+        log_gate(conn, state["run_id"], "gate-build", False, gate_reason)
+        base = {"coder_raw": result.output, "coder": parsed,
+                "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,
+                               "task": task.id}}
+        return _route_after_build(conn, state, tasks, task, coder, base, False, gate_reason,
+                                  Path(state.get("opencode_cwd") or "."))
 
     root, owned, written = _materialize(state, coder)
     log_agent(

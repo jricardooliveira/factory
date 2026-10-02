@@ -32,6 +32,10 @@ _MANIFEST_NAMES = frozenset({
 })
 
 
+def is_test_path(path: str) -> bool:
+    return bool(_TEST_PATH_RE.search(path))
+
+
 def _strip_repo_prefix(path: str) -> str:
     """Drop a leading ``repo/`` (or ``./repo/``), mirroring normalize_block_path.
 
