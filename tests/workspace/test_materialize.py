@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from factory.workspace.materialize import materialize_code_blocks, normalize_block_path
 from factory.adapters.opencode import AgentResult
-from factory.pipeline import node_coder_agent
+from factory.pipeline.nodes.coder import node_coder_agent
 from factory.state.db import create_story, get_db, init_db, start_run
 
 
@@ -121,7 +121,7 @@ class CoderAgentMaterializationTests(unittest.TestCase):
         }
 
         with patch(
-            "factory.pipeline.run_agent",
+            "factory.pipeline.agent_calls.run_agent",
             return_value=AgentResult("coder-agent", json.dumps(output), 0.1, 0),
         ):
             result = node_coder_agent(state)

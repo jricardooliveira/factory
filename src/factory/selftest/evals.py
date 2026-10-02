@@ -3,7 +3,7 @@
 The AI-Native SDLC playbook's Stage-4 play that this factory was missing entirely.
 Its point is that in an AI-native pipeline the *configuration* — agent definitions,
 gate policy, tier policy, prompt assembly — is production behaviour. Editing
-`coder-agent.md` changes what the factory builds as surely as editing `pipeline.py`
+`coder-agent.md` changes what the factory builds as surely as editing `pipeline/`
 does, and nothing here regression-tested that.
 
 Two kinds of eval, both offline and free (no opencode calls, zero tokens):

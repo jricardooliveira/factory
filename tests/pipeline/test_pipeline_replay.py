@@ -14,13 +14,9 @@ import unittest
 from pathlib import Path
 
 from factory.domain.gates import MAX_CODER_ATTEMPTS
-from factory.pipeline import (
-    _retry_context_block,
-    _reviewer_feedback_block,
-    compile_architect_resume_pipeline,
-    compile_pipeline,
-    route_after_coder,
-)
+from factory.pipeline import compile_architect_resume_pipeline, compile_pipeline
+from factory.pipeline.graph import route_after_coder
+from factory.pipeline.prompts.blocks import _retry_context_block, _reviewer_feedback_block
 from factory.state import db
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "agent_outputs"

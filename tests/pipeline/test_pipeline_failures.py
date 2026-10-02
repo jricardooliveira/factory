@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from factory.adapters.opencode import AgentResult
-from factory.pipeline import node_spec_agent
+from factory.pipeline.nodes.spec import node_spec_agent
 from factory.state.db import create_story, get_db, init_db, start_run
 
 
@@ -37,7 +37,7 @@ class PipelineFailureTests(unittest.TestCase):
         }
 
         with patch(
-            "factory.pipeline.run_agent",
+            "factory.pipeline.agent_calls.run_agent",
             return_value=AgentResult("spec-agent", "ERROR: opencode help", 0.7, 0),
         ):
             result = node_spec_agent(state)

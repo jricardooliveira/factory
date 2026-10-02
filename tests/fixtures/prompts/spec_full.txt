@@ -1,0 +1,36 @@
+# Project: Ledger
+
+## Stack
+- python 3.12
+- sqlite
+
+## Forbidden
+- network calls at import time
+
+## NFRs
+- p95 latency under 200 ms
+
+
+## Project Rules (MUST follow)
+
+- Money is integer cents, never float.
+
+## Prior Architecture Decisions (stay consistent; do NOT re-litigate)
+
+# ADR US-0000: storage
+
+- Status: approved by operator
+
+Use sqlite.
+
+
+## Operator feedback on your previous story (it was REJECTED)
+
+Re-specify the work taking these answers as settled. Do not re-ask them, and do not simply re-propose the same story:
+- Overdue means 30 days after issue date.
+
+## Request
+
+List invoices that are overdue, oldest first.
+
+Define the story WITHIN the constraints above. If a constraint makes the request impossible as stated, say so in `questions` rather than writing an acceptance criterion that violates it.

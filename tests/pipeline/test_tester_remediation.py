@@ -16,7 +16,10 @@ from unittest.mock import patch
 
 from langgraph.graph import END
 
-from factory import pipeline
+from factory.pipeline import agent_calls
+from factory.pipeline.graph import route_after_gate_test
+from factory.pipeline.nodes.coder import node_coder_agent
+from factory.pipeline.nodes.gates import node_gate_test
 from factory.domain.gates import MAX_TESTER_REMEDIATIONS
 from factory.adapters.opencode import AgentResult
 from factory.state import db
@@ -37,16 +40,16 @@ def _ar(output: str) -> AgentResult:
 class RouteAfterGateTestTests(unittest.TestCase):
     def test_remediation_routes_back_to_coder(self) -> None:
         self.assertEqual(
-            pipeline.route_after_gate_test({"remediation": True}), "coder-agent"
+            route_after_gate_test({"remediation": True}), "coder-agent"
         )
 
     def test_completed_ends(self) -> None:
         self.assertEqual(
-            pipeline.route_after_gate_test({"remediation": True, "status": "completed"}), END
+            route_after_gate_test({"remediation": True, "status": "completed"}), END
         )
 
     def test_no_remediation_ends(self) -> None:
-        self.assertEqual(pipeline.route_after_gate_test({}), END)
+        self.assertEqual(route_after_gate_test({}), END)
 
 
 class GateTestRemediationDecisionTests(unittest.TestCase):
@@ -72,7 +75,7 @@ class GateTestRemediationDecisionTests(unittest.TestCase):
         }
 
     def test_first_failure_routes_to_remediation_and_keeps_run_running(self) -> None:
-        out = pipeline.node_gate_test(self._state())
+        out = node_gate_test(self._state())
         self.assertTrue(out.get("remediation"))
         self.assertEqual(out.get("triggered_by"), "tester-agent")
         self.assertEqual(out.get("tester_attempt"), 2)
@@ -83,7 +86,7 @@ class GateTestRemediationDecisionTests(unittest.TestCase):
         self.assertEqual(_run_status(self.db_path, self.run_id), "running")
 
     def test_exhausted_budget_fails_the_run(self) -> None:
-        out = pipeline.node_gate_test(self._state(tester_attempt=MAX_TESTER_REMEDIATIONS + 1))
+        out = node_gate_test(self._state(tester_attempt=MAX_TESTER_REMEDIATIONS + 1))
         self.assertEqual(out.get("status"), "failed")
         self.assertNotIn("remediation", out)
         self.assertEqual(_run_status(self.db_path, self.run_id), "failed")
@@ -100,7 +103,7 @@ class GateTestRemediationDecisionTests(unittest.TestCase):
                        "ac_coverage": ["alpha works"], "security_verdict": "pass",
                        "highest_severity": "none", "performance_verdict": "pass"},
         }
-        out = pipeline.node_gate_test(state)
+        out = node_gate_test(state)
         self.assertEqual(out.get("status"), "completed")  # still passes — non-blocking
         self.assertIn("unassessed", out["gate_test"]["reason"].lower())
         self.assertIn("beta is paginated", out["gate_test"]["reason"])
@@ -154,8 +157,8 @@ class CoderRemediationPassTests(unittest.TestCase):
                 ],
             }
         )
-        with patch.object(pipeline, "_run_or_replay", return_value=_ar(fix)):
-            out = pipeline.node_coder_agent(self._state())
+        with patch.object(agent_calls, "_run_or_replay", return_value=_ar(fix)):
+            out = node_coder_agent(self._state())
 
         self.assertEqual(out.get("next_action"), "complete")  # back to tester
         self.assertFalse(out.get("remediation"))
@@ -178,8 +181,8 @@ class CoderRemediationPassTests(unittest.TestCase):
                 ],
             }
         )
-        with patch.object(pipeline, "_run_or_replay", return_value=_ar(broken)):
-            out = pipeline.node_coder_agent(self._state())
+        with patch.object(agent_calls, "_run_or_replay", return_value=_ar(broken)):
+            out = node_coder_agent(self._state())
         self.assertEqual(out.get("status"), "failed")
         self.assertEqual(out.get("next_action"), "give_up")
         self.assertFalse(out["gate_build"]["passed"])
