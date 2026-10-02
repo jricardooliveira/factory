@@ -107,7 +107,9 @@ On failure the run routes back to the coder for ONE bounded remediation pass car
 
 The trust package is written to `docs/releases/` *at* the checkpoint, so the operator reads it before deciding. The gate first **pins the candidate** (`pipeline_runs.candidate_commit`): the package names it and measures its change set up to it, so re-assembling it after later work cannot change its meaning, and the boss will release exactly that code — if any code changed after the checkpoint (another story, a manual edit; the factory's own evidence commits do not count), the approval is refused. After release the package says `next_authorization: none`. The release-agent writes words only; it cannot pass this gate, and nothing else can either: `release` runs behind the boss, which requires the operator's APPROVAL on the newest gate-release row (`domain/authorization.authorize_release`). Approving a NOT READY release is permitted — the gaps were named — and is recorded as accepted risk.
 
-**Feeds → Checkpoint 3 (release sign-off) `✅ built`.** Resume: approve → `release` (story completed, final trust package); reject → a remediation coder pass carrying the operator's words, then the tester and this gate again.
+**Release = merged PR** (operator decision, 2026-10-02; `pipeline/delivery.py`). A live run builds on `factory/<story>`, cut from the main line before anything is written. At the checkpoint the branch is offered for review: pushed and opened as a GitHub pull request (`adapters/github.py`, release notes as its description) when the product repo's `origin` is on GitHub — a failure there is a named gap — else the branch itself, to be merged locally.
+
+**Feeds → Checkpoint 3 (release sign-off) `✅ built`.** Resume: approve → `release`, which MERGES the PR (or the branch, with a `factory:` merge commit); the story is completed only once the merge landed — a conflict or a failing required check BLOCKS the run with the reason and leaves the main line as it was (`factory retry` re-attempts it once fixed). Reject → a remediation coder pass on the same branch, carrying the operator's words, then the tester and this gate again (the PR is reused).
 
 ---
 

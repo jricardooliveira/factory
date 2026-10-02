@@ -48,8 +48,12 @@ def _next_step(run: dict, pending_gate: dict | None) -> str:
     run_id, status = run["id"], run["status"]
     if status == "waiting_human":
         gate = pending_gate["gate_name"] if pending_gate else "a checkpoint"
+        merges = ""
+        if gate == "gate-release" and run.get("story_branch"):
+            what = run.get("pr_url") or f"branch {run['story_branch']}"
+            merges = f" — approval merges {what} into {run.get('target_branch')}"
         return (
-            f"The operator decides at {gate}: `factory approve {run_id}` to accept, or "
+            f"The operator decides at {gate}{merges}: `factory approve {run_id}` to accept, or "
             f"`factory reject {run_id} \"<your answers>\"` to send it back."
         )
     if status == "completed":

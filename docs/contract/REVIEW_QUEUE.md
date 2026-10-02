@@ -55,7 +55,7 @@ When a task parks, `runs/service.py` fires a **desktop notification** (macOS) su
 ## Resume semantics
 
 - **Approve at Checkpoint 1/2:** continue to the next stage using the already-produced artifacts (no re-run of the approved stage).
-- **Approve at Checkpoint 3:** the boss runs `release` only with your approval on record; the story is marked completed and the final trust package written. Approving a release `gate-release` judged NOT READY is allowed — the gaps were named — and is recorded as accepted risk in `PIPELINE.md`.
+- **Approve at Checkpoint 3:** the boss runs `release` only with your approval on record; it merges the story's pull request (a GitHub PR, or the `factory/<story>` branch locally) and the story is completed only once the merge landed — a merge that cannot land blocks the run with the reason; the final trust package is written. Approving a release `gate-release` judged NOT READY is allowed — the gaps were named — and is recorded as accepted risk in `PIPELINE.md`.
 - **Reject at Checkpoint 3:** your feedback becomes the findings of a remediation coder pass (frontier tier), then the tester, then release notes and Checkpoint 3 again (`resume_entry_for` → `remediation`).
 - **Reject anywhere:** increment `attempt_number`, attach the operator's feedback as `prior_findings`, and re-enter at spec (Checkpoint 1) or architecture (Checkpoint 2) or coder (failure), bounded by the same remediation budget. The routing is `resume_entry_for` in `src/factory/pipeline/graph.py`; the state handed to the re-entered stage is rebuilt from the LATEST agent output by `runs.build_resume_context`.
 

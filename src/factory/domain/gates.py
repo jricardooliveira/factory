@@ -332,6 +332,8 @@ def gate_after_release(
     evidence_blockers: list[str],
     notes: ReleaseOutput | None,
     architect: ArchitectOutput | None,
+    *,
+    delivery_note: str = "",
 ) -> GateResult:
     """Is the release ready for sign-off? ALWAYS parks for the operator (Checkpoint 3).
 
@@ -369,6 +371,8 @@ def gate_after_release(
     )]
     lines += [f"  • {g}" for g in gaps]
     lines += [f"  ◦ {n}" for n in notices]
+    if delivery_note:  # what approval merges: the PR, or the story branch
+        lines.append(f"  ◦ {delivery_note}")
     lines.append(
         "  → Approve to release" + (" accepting the gaps above as a known risk" if gaps else "")
         + ", or reject with what must change — it goes back to the coder, then the tester."

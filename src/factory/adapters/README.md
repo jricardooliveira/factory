@@ -12,6 +12,7 @@ talks to models only through `run_agent`.
 | Module | What it does |
 |---|---|
 | `opencode.py` | `run_agent(agent_name, prompt, cwd, model, timeout)` runs `opencode run --agent <name> --format json --dangerously-skip-permissions [--model m] -- <prompt>`. `AgentResult` dataclass (`agent`, `output`, `duration_secs`, `returncode`, `tokens_in/out`, `cost_usd`, `model_name`, `agent_prompt_hash`, `.success`). Parsers `_extract_text_from_json_stream`, `_extract_usage_from_json_stream`, helper `_hash_agent_definition`. |
+| `github.py` | `open_pull_request(repo, branch, target, title, body)` (reuses an open PR for the branch) and `merge_pull_request(repo, url)` through the `gh` CLI. Failures are returned, never raised. Release = merged PR (2026-10-02). |
 | `notify.py` | `notify(title, message)` runs `osascript display notification`; `enabled()` reads `FACTORY_NOTIFY`. |
 
 ## How it works

@@ -75,6 +75,11 @@ class GateAfterReleaseTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertIn("slow on 10k rows", "\n".join(result.human_questions))
 
+    def test_the_question_names_what_approval_merges(self) -> None:
+        note = "Pull request: https://github.com/me/shop/pull/7 (factory/US-0001 → main)."
+        text = "\n".join(gate_after_release([], NOTES, PLAIN, delivery_note=note).human_questions)
+        self.assertIn("pull/7", text)
+
     def test_the_question_says_what_approve_and_reject_do(self) -> None:
         text = "\n".join(gate_after_release(["gap"], NOTES, PLAIN).human_questions)
         self.assertIn("Approve", text)

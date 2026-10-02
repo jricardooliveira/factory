@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 from factory.workspace.layout import is_evidence_path
@@ -350,3 +351,108 @@ def git_changed_paths(root: Path, *, exclude: tuple[str, ...] = ()) -> list[str]
             continue
         paths.append(path)
     return paths
+
+
+# ── Story branches: release = merged PR (operator decision, 2026-10-02) ──
+
+STORY_BRANCH_PREFIX = "factory/"
+_IDENTITY = ["-c", "user.name=factory", "-c", "user.email=factory@local"]
+
+
+class GitError(RuntimeError):
+    """A branch operation the factory cannot do safely (e.g. uncommitted changes)."""
+
+
+@dataclass(frozen=True)
+class StoryBranch:
+    name: str  # factory/<story>
+    target: str  # the main line it merges into
+
+
+def current_branch(root: Path) -> str | None:
+    proc = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], root)
+    name = proc.stdout.strip()
+    return name if proc.returncode == 0 and name and name != "HEAD" else None
+
+
+def _branch_exists(root: Path, name: str) -> bool:
+    return _git_resolve(root, f"refs/heads/{name}") is not None
+
+
+def main_line(root: Path) -> str:
+    """The branch stories are cut from and merged into: the current branch unless it
+    is itself a story branch (another story parked at a checkpoint), else main/master."""
+    current = current_branch(root)
+    if current and not current.startswith(STORY_BRANCH_PREFIX):
+        return current
+    for candidate in ("main", "master"):
+        if _branch_exists(root, candidate):
+            return candidate
+    raise GitError("cannot tell which branch is the main line")
+
+
+def _require_clean(root: Path) -> None:
+    status = _run(["git", "status", "--porcelain", "--untracked-files=no"], root).stdout.strip()
+    if status:
+        raise GitError(
+            "the product repository has uncommitted changes to tracked files; commit or "
+            f"discard them before the factory switches branches:\n{status[:400]}"
+        )
+
+
+def checkout_branch(root: Path, name: str) -> None:
+    current = current_branch(root)
+    if current == name:
+        return
+    _require_clean(root)
+    proc = _run(["git", "checkout", "-q", name], root)
+    if proc.returncode != 0:
+        raise GitError(f"could not check out {name}: {proc.stderr.strip()[:300]}")
+
+
+def start_story_branch(root: Path, story_id: str) -> StoryBranch:
+    """Check out `factory/<story_id>`, cutting it from the main line if it is new.
+
+    Cut from the MAIN LINE, not from HEAD: HEAD may be another story's branch parked
+    at a checkpoint, and this story must not be built on that unreviewed work.
+    """
+    name = f"{STORY_BRANCH_PREFIX}{story_id}"
+    target = main_line(root)
+    if _branch_exists(root, name):
+        checkout_branch(root, name)
+        return StoryBranch(name, target)
+    _require_clean(root)
+    proc = _run(["git", "checkout", "-q", "-b", name, target], root)
+    if proc.returncode != 0:
+        raise GitError(f"could not create {name} from {target}: {proc.stderr.strip()[:300]}")
+    return StoryBranch(name, target)
+
+
+def merge_story_branch(root: Path, branch: str, target: str, message: str) -> tuple[bool, str]:
+    """Merge `branch` into `target` (a merge commit). On a conflict the merge is aborted,
+    `target` is left exactly as it was and `branch` is checked out again."""
+    try:
+        checkout_branch(root, target)
+    except GitError as e:
+        return False, str(e)
+    proc = _run(["git", *_IDENTITY, "merge", "--no-ff", "--no-edit", "-m", message, branch], root)
+    if proc.returncode != 0:
+        _run(["git", "merge", "--abort"], root)
+        _run(["git", "checkout", "-q", branch], root)
+        output = (proc.stdout + proc.stderr).strip()
+        kind = "conflict" if "CONFLICT" in output else "failure"
+        return False, f"merge {kind} merging {branch} into {target}: {output[-400:]}"
+    _run(["git", "branch", "-q", "-d", branch], root)
+    return True, f"merged {branch} into {target}"
+
+
+def github_remote(root: Path) -> str | None:
+    """`origin`'s URL when it is a GitHub repository — the only kind a PR is opened on."""
+    proc = _run(["git", "remote", "get-url", "origin"], root)
+    url = proc.stdout.strip()
+    return url if proc.returncode == 0 and "github.com" in url else None
+
+
+def push_branch(root: Path, branch: str) -> tuple[bool, str]:
+    proc = _run(["git", "push", "-q", "-u", "origin", branch], root, timeout=120)
+    return proc.returncode == 0, (proc.stderr or proc.stdout).strip()[-400:]

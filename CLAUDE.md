@@ -222,6 +222,12 @@ input/output is stored, so any run replays offline for free. Evidence is version
   `FACTORY_SANDBOX_TESTS=1`. A missing toolchain FAILS its files, never skips them.
 - **One live run per project** (`runs.service._refuse_if_project_busy`): the coder's
   checkpoint stages the whole working tree. Replays are exempt (own scratch clone).
+- **Release = merged PR.** A live project run builds on `factory/<story>` (cut from the main
+  line in `runs.service`, BEFORE the story row exists — a dirty product repo refuses the run);
+  resume checks it out again. Checkpoint 3 opens a GitHub PR when `origin` is on GitHub
+  (`pipeline/delivery.py` → `adapters/github.py`), else the branch is the PR; `release` merges
+  it and only a landed merge completes the story. Replays branch inside their scratch clone and
+  never push.
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins
   `candidate_commit`: `release` refuses if code changed since (evidence commits excluded).
 - Editing anything in `agents/`, `domain/gates.py`, `domain/ambiguity.py`, `agent_config/`, or

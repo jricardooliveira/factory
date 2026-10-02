@@ -175,6 +175,46 @@ class ReleaseCheckpointTests(unittest.TestCase):
         self.assertTrue(pkg["candidate"]["commit"])
         self.assertEqual(len(pkg["candidate"]["commit"]), len(head))
 
+    def _branches(self) -> str:
+        return subprocess.run(["git", "branch"], cwd=self.work, capture_output=True,
+                              text=True).stdout
+
+    def test_the_story_is_built_on_its_own_branch_and_approval_merges_it(self) -> None:
+        """Release = merged PR (operator decision, 2026-10-02). This repo has no GitHub
+        remote, so the story branch is the pull request and is merged locally."""
+        parked = self._run()
+        with db.get_db(self.db_path) as conn:
+            run = db.get_run(conn, parked.run_id)
+        self.assertEqual(run["story_branch"], "factory/US-0001")
+        self.assertIn("factory/US-0001", "\n".join(parked.human_questions or []))
+        outcome = runs.resume_run(parked.run_id, "approve", "ship it", db_path=self.db_path)
+        self.assertEqual(outcome.status, "completed", outcome.error)
+        head = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=self.work,
+                              capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head, run["target_branch"])          # back on the main line...
+        self.assertTrue((self.work / "src" / "search.py").is_file())  # ...with the story in
+        self.assertNotIn("factory/US-0001", self._branches())
+        self.assertTrue(any("merge US-0001" in s for s in _git_log(self.work)))
+
+    def test_a_merge_that_cannot_land_blocks_the_release(self) -> None:
+        parked = self._run()
+        with db.get_db(self.db_path) as conn:
+            target = db.get_run(conn, parked.run_id)["target_branch"]
+        git_ = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git_, "checkout", "-q", target], cwd=self.work, check=True)
+        (self.work / "src").mkdir(exist_ok=True)
+        (self.work / "src" / "search.py").write_text("def s():\n    return 'main moved'\n")
+        subprocess.run([*git_, "add", "-A"], cwd=self.work, check=True)
+        subprocess.run([*git_, "commit", "-qm", "someone else"], cwd=self.work, check=True)
+        main_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.work,
+                                   capture_output=True, text=True).stdout.strip()
+        outcome = runs.resume_run(parked.run_id, "approve", "ship it", db_path=self.db_path)
+        self.assertEqual(outcome.status, "blocked")
+        self.assertIn("merge", outcome.error or "")
+        after = subprocess.run(["git", "rev-parse", target], cwd=self.work,
+                               capture_output=True, text=True).stdout.strip()
+        self.assertEqual(after, main_head)  # the main line is exactly as it was
+
     def test_reject_sends_the_operators_words_to_the_coder_then_parks_again(self) -> None:
         parked = self._run()
         outcome = runs.resume_run(parked.run_id, "reject", "results must not be empty",

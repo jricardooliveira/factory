@@ -299,13 +299,22 @@
     },
     "candidate": {
       "type": "object",
-      "description": "The code under review: the commit gate-release pinned at Checkpoint 3 (empty before it) and the run's base. The change set is measured between them.",
+      "description": "The code under review: the commit gate-release pinned at Checkpoint 3 (empty before it), the run's base, the story branch and the main line it merges into, and its GitHub pull request (empty = merged locally). The change set is measured between base and candidate.",
       "additionalProperties": false,
       "properties": {
         "commit": {
           "type": "string"
         },
         "base_commit": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "target_branch": {
+          "type": "string"
+        },
+        "pull_request": {
           "type": "string"
         }
       }

@@ -29,6 +29,7 @@ from factory.domain.gates import (
 )
 from factory.domain.traceability import trace_criteria, unassessed_criteria
 from factory.pipeline.agent_calls import budget_refusal_for, db_conn, spend_so_far
+from factory.pipeline.delivery import open_release_pr
 from factory.pipeline.evidence_writers import release_evidence_gaps, write_trust_package
 from factory.pipeline.state import PipelineState
 from factory.workspace.git import git_head
@@ -319,10 +320,16 @@ def node_gate_release(state: PipelineState) -> dict[str, Any]:
     gaps = release_evidence_gaps(state)
     if state.get("project_dir") and write_trust_package(state) is None:
         gaps.append("The trust package could not be saved to docs/releases/ for you to read")
+    # Release = merged PR: offer the story branch for review (a GitHub PR when the repo
+    # has a GitHub remote) — after the evidence commits, so the PR carries them.
+    delivery_note, delivery_gap = open_release_pr(state)
+    if delivery_gap:
+        gaps.append(delivery_gap)
     result = gate_after_release(
         gaps,
         _parsed_or_none(ReleaseOutput, state.get("release")),
         _parsed_or_none(ArchitectOutput, state.get("architect")),
+        delivery_note=delivery_note,
     )
     conn = db_conn(state)
     try:

@@ -154,6 +154,11 @@ def init_db(path: Path) -> None:
         # The commit gate-release judged and the operator reviewed at Checkpoint 3:
         # releasing it later must release exactly that code.
         _ensure_column(conn, "pipeline_runs", "candidate_commit", "TEXT")
+        # Release = merged PR (2026-10-02): the story branch a run works on, the main
+        # line it merges into, and its pull request on GitHub (NULL = merged locally).
+        _ensure_column(conn, "pipeline_runs", "story_branch", "TEXT")
+        _ensure_column(conn, "pipeline_runs", "target_branch", "TEXT")
+        _ensure_column(conn, "pipeline_runs", "pr_url", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -203,6 +208,15 @@ def start_run(
         (story_id, project_id, now, base_commit, replay_of),
     )
     return cursor.lastrowid  # type: ignore[return-value]
+
+
+def set_story_branch(conn: sqlite3.Connection, run_id: int, branch: str, target: str) -> None:
+    conn.execute("UPDATE pipeline_runs SET story_branch = ?, target_branch = ? WHERE id = ?",
+                 (branch, target, run_id))
+
+
+def set_pr_url(conn: sqlite3.Connection, run_id: int, url: str | None) -> None:
+    conn.execute("UPDATE pipeline_runs SET pr_url = ? WHERE id = ?", (url, run_id))
 
 
 def set_candidate_commit(conn: sqlite3.Connection, run_id: int, commit: str | None) -> None:

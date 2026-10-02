@@ -337,7 +337,11 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
         "verdict": {"failed": "fail", "blocked": "blocked"}.get(
             run["status"], "warn" if blockers else "pass"
         ),
-        "candidate": {"commit": candidate or "", "base_commit": run.get("base_commit") or ""},
+        "candidate": {
+            "commit": candidate or "", "base_commit": run.get("base_commit") or "",
+            "branch": run.get("story_branch") or "", "target_branch": run.get("target_branch") or "",
+            "pull_request": run.get("pr_url") or "",
+        },
         "tests": tests_block,
         "ac_traceability": ac_traceability,
         "diff": diff_block,

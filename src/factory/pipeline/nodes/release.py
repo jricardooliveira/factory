@@ -13,6 +13,7 @@ from typing import Any
 
 from factory.domain.contracts import ReleaseOutput, SpecOutput
 from factory.pipeline.agent_calls import ReplayGap, db_conn, run_agent_json, usage_kwargs
+from factory.pipeline.delivery import merge_release
 from factory.pipeline.evidence_writers import (
     release_evidence_gaps,
     write_chain_artifact,
@@ -68,12 +69,24 @@ def node_release_agent(state: PipelineState) -> dict[str, Any]:
 
 
 def node_release(state: PipelineState) -> dict[str, Any]:
-    """The operator approved Checkpoint 3: the story is released."""
+    """The operator approved Checkpoint 3: merge the story (release = merged PR).
+
+    Released only once the merge landed. A merge that cannot land — a conflict, a
+    failing required check on GitHub — BLOCKS the run with the reason; the main line
+    is left as it was, and `factory retry` re-attempts the merge once it is fixed.
+    """
     if state.get("status") in _STOPPED:
         return state
+    merged, detail = merge_release(state)
     conn = db_conn(state)
     try:
         update_run_stage(conn, state["run_id"], "release")
+        if not merged:
+            error = f"Release approved, but the merge did not land: {detail}"
+            update_story_status(conn, state["story_id"], "blocked")
+            finish_run(conn, state["run_id"], "blocked", error=error)
+            conn.commit()
+            return {"status": "blocked", "error": error}
         update_story_status(conn, state["story_id"], "completed")
         finish_run(conn, state["run_id"], "completed")
         conn.commit()

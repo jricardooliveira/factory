@@ -28,8 +28,9 @@ ALLOWED: dict[str, set[str]] = {
     "agent_calls": {"state"},
     "evidence_writers": {"state"},
     "prompts": {"state", "prompts"},
-    "nodes": {"state", "agent_calls", "evidence_writers", "prompts", "nodes"},
+    "nodes": {"state", "agent_calls", "evidence_writers", "prompts", "nodes", "delivery"},
     "boss": {"state", "agent_calls"},
+    "delivery": {"state", "agent_calls"},
     "graph": {"state", "nodes", "boss"},
 }
 

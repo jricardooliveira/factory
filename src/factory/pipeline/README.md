@@ -11,6 +11,7 @@ The orchestrator: a LangGraph state machine that drives the agents (spec, archit
 | `__init__.py` | The PUBLIC API (`__all__`): `PipelineState`, `build_*`/`compile_*` graph builders, `resume_entry_for`, `settled_threshold_terms`, `build_spec_prompt`, `build_tester_prompt`. |
 | `state.py` | `PipelineState` (a `total=False` TypedDict) and `factory_owned_paths(state)` (evidence paths to exclude from every code measurement; `()` off-project). |
 | `graph.py` | Conditional edges (`should_continue_after_*`, `route_after_*`), `_AUTHORIZED_STAGES`, `build_pipeline(entry=...)`, `resume_entry_for`, the compile helpers. |
+| `delivery.py` | Release = merged PR: `open_release_pr(state)` at Checkpoint 3 (GitHub PR when `origin` is on GitHub, else the story branch) and `merge_release(state)` on approval. |
 | `boss.py` | `authorized(stage, node)` wrapper and `authorization_for(state, stage, gates)`; maps each stage to a rule in `domain/authorization.py`. |
 | `agent_calls.py` | `run_agent_json` (run/replay + one JSON-repair retry), `_run_or_replay`, `ReplayGap`, `usage_kwargs`, `db_conn`. |
 | `evidence_writers.py` | Best-effort, committed evidence: `write_chain_artifact` (intent/spec/plan/release), `commit_adr`, `write_trust_package`, `release_evidence_gaps`. |

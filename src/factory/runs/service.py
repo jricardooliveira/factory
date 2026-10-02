@@ -48,6 +48,7 @@ from factory.runs.events import (
     ignore_events,
 )
 from factory.state.db import (
+    set_story_branch,
     live_runs_in_project,
     create_story,
     get_answered_human_gate,
@@ -61,9 +62,17 @@ from factory.state.db import (
     respond_to_gate,
     start_run,
 )
-from factory.workspace.git import git_commit_paths, git_head
+from factory.workspace.git import (
+    GitError,
+    StoryBranch,
+    checkout_branch,
+    git_commit_paths,
+    git_head,
+    is_git_repo,
+    start_story_branch,
+)
 from factory.workspace.projects import agents_link_problem, get_project
-from factory.workspace.sandbox import prepare_replay_sandbox
+from factory.workspace.sandbox import prepare_replay_sandbox, run_repository
 
 
 def run_pipeline(
@@ -106,15 +115,21 @@ def run_pipeline(
             if project_id:
                 _refuse_if_project_busy(conn, project_id)
             story_id = next_story_id(conn)
+            # Release = merged PR: the story is built on its own branch, cut from the
+            # main line BEFORE anything is created (a dirty repo refuses the run).
+            branch = _story_branch(cwd, story_id) if project_id else None
             create_story(conn, story_id, "Pending", request, project_id=project_id)
             # Pin the target repo's HEAD as THIS run's baseline, so the trust package
             # can measure this run's change set from git rather than lumping in every
-            # factory commit ever made to the repo.
+            # factory commit ever made to the repo. Taken AFTER branching: HEAD may
+            # have been another story's branch, parked at a checkpoint.
             base_commit = git_head(cwd)
         run_id = start_run(
             conn, story_id, project_id=project_id, base_commit=base_commit,
             replay_of=replay_run_id,
         )
+        if not replay_run_id and branch:
+            set_story_branch(conn, run_id, branch.name, branch.target)
 
     if replay_run_id:
         cwd = prepare_replay_sandbox(
@@ -122,6 +137,12 @@ def run_pipeline(
             source=Path(opencode_cwd) if opencode_cwd else None,
             commit=base_commit,
         )
+        # The replay builds on its own story branch inside the scratch clone, so its
+        # release merges there — never into the product.
+        replay_branch = _story_branch(cwd, story_id) if project_id else None
+        if replay_branch:
+            with get_db(db_path) as conn:
+                set_story_branch(conn, run_id, replay_branch.name, replay_branch.target)
     if prepare_workdir is not None:
         prepare_workdir(cwd)
 
@@ -231,6 +252,14 @@ def resume_run(
         pending = get_pending_human_gate(conn, run_id)
         if not pending:
             raise RunError(f"No pending human gate found for run #{run_id}")
+        # Back onto the story's own branch before anything continues (the operator may
+        # have looked around, or started another story, in the meantime).
+        repo = run_repository(run, db_path)
+        if run.get("story_branch") and repo is not None:
+            try:
+                checkout_branch(repo, run["story_branch"])
+            except GitError as e:
+                raise RunError(f"Cannot resume run #{run_id}: {e}") from e
         if run.get("project_id") and not run.get("replay_of"):
             _refuse_if_project_busy(conn, run["project_id"], except_run=run_id)
 
@@ -377,6 +406,16 @@ def retry_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) ->
 
     emit(RetryStarted(run_id, gate["gate_name"], action, feedback))
     return resume_run(run_id, action, reason=feedback or None, db_path=db_path, on_event=on_event)
+
+
+def _story_branch(repo: Path, story_id: str) -> StoryBranch | None:
+    """Check out the story's branch (cut from the main line if new); None off-git."""
+    if not is_git_repo(repo):
+        return None
+    try:
+        return start_story_branch(repo, story_id)
+    except GitError as e:
+        raise RunError(f"Cannot start the story's branch: {e}") from e
 
 
 def _refuse_if_project_busy(conn: Any, project_id: str, *, except_run: int | None = None) -> None:

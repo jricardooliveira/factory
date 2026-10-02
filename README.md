@@ -288,9 +288,13 @@ review behaviour without touching an agent definition — then run `make evals`.
    login reports $0, so spend is tokens × the model's public list price
    (`agents/tiers.toml` [prices]); paid API providers report their real cost. Calls
    with no recorded usage count as $0, and `factory metrics` says how many.
-3. **It commits straight onto the generated repo's current branch.** No branch per
-   story, no PR — so only one live run per project is allowed at a time. Separation of
-   duties is *you* at Checkpoint 3, which releases exactly the code you reviewed.
+3. **Release means a merged pull request.** Each story is built on its own branch
+   (`factory/US-xxxx`). At Checkpoint 3 the factory opens a GitHub pull request when the
+   product repo has a GitHub `origin`; otherwise the branch itself is the pull request.
+   Approving merges it — exactly the code you reviewed; a merge that cannot land (a
+   conflict, a failing required check) blocks the release and leaves the main line as
+   it was. One live run per project at a time; a repo with uncommitted changes is
+   refused before the run starts.
 4. **Approving a release with gaps is allowed — and recorded.** While tests are not
    executed (point 1), every release reaches Checkpoint 3 *NOT READY* with that gap
    named. Approving it is you accepting the risk, and the story's `PIPELINE.md` says so.
