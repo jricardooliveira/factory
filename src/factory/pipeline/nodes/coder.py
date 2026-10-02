@@ -31,6 +31,7 @@ from factory.verification.scope import (
     scope_note,
 )
 from factory.workspace.git import collect_repo_diff, git_changed_paths, git_commit_all
+from factory.workspace.layout import is_evidence_path
 from factory.workspace.materialize import materialize_code_blocks, normalize_block_path
 
 
@@ -86,8 +87,11 @@ def _outside_scope(state: PipelineState, coder: CoderOutput, scope: list[str]) -
     and an empty scope forbids nothing (`verification.scope.paths_outside_scope`).
     """
     root = Path(state.get("opencode_cwd") or ".")
-    repo_root = bool(factory_owned_paths(state))
-    paths = [normalize_block_path(root, b.path, repo_root=repo_root) for b in coder.code_blocks]
+    owned = factory_owned_paths(state)
+    paths = [normalize_block_path(root, b.path, repo_root=bool(owned)) for b in coder.code_blocks]
+    # A factory-owned path (PROJECT_RULES.md, docs/work/...) is materialize's to refuse,
+    # with its own precise reason — not a matter of task scope.
+    paths = [p for p in paths if not (owned and is_evidence_path(p, owned))]
     return sorted(set(paths_outside_scope(paths, scope)))
 
 

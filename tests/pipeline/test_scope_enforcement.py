@@ -77,6 +77,26 @@ class ScopeEnforcementTests(unittest.TestCase):
         self.assertTrue(out["gate_build"]["passed"], out["gate_build"]["reason"])
         self.assertTrue((self.repo / "tests" / "test_a.py").exists())
 
+    def test_a_repo_prefixed_write_is_judged_in_the_same_space_as_the_scope(self) -> None:
+        # Found by the eval corpus: a REAL run wrote `repo/cli.py` under scope `cli.py`,
+        # in a working directory NOT named `repo` (so the path keeps its prefix).
+        work = self.root / "work"
+        work.mkdir()
+        out = self._code(self._state(["cli.py"], opencode_cwd=str(work)), _coder("repo/cli.py"))
+        self.assertTrue(out["gate_build"]["passed"], out["gate_build"]["reason"])
+
+    def test_a_python_package_marker_is_structural_not_scope_creep(self) -> None:
+        out = self._code(self._state(["calc/models.py"]), _coder("calc/__init__.py",
+                                                                 "calc/models.py"))
+        self.assertTrue(out["gate_build"]["passed"], out["gate_build"]["reason"])
+
+    def test_a_factory_owned_path_keeps_its_own_precise_refusal(self) -> None:
+        state = self._state(["src/"], project_dir=str(self.repo))
+        out = self._code(state, _coder("PROJECT_RULES.md"))
+        error = out.get("error", "") + (out.get("gate_build") or {}).get("reason", "")
+        self.assertNotIn("SCOPE", error)
+        self.assertIn("factory-owned", error)
+
     def test_a_task_without_declared_scope_is_unrestricted(self) -> None:
         out = self._code(self._state(None), _coder("anywhere/x.py"))
         self.assertTrue(out["gate_build"]["passed"], out["gate_build"]["reason"])

@@ -29,6 +29,9 @@ _MANIFEST_NAMES = frozenset({
     "tsconfig.json", "nuxt.config.ts", "vite.config.ts", "vitest.config.ts",
     "pyproject.toml", "requirements.txt", "uv.lock", "setup.cfg",
     "Makefile", "Dockerfile", ".gitignore",
+    # A Python package cannot exist without its marker: a task scoped to
+    # `calc/models.py` must create `calc/__init__.py` (found by the replay corpus).
+    "__init__.py",
 })
 
 
@@ -73,7 +76,10 @@ def paths_outside_scope(changed: list[str], allowed_scope: list[str]) -> list[st
         _strip_repo_prefix(s).rstrip("/") for s in allowed_scope if s
     ]
     violations: list[str] = []
-    for path in changed:
+    for raw in changed:
+        # Both sides in the same space: a path an agent wrote as `repo/cli.py` in a
+        # working directory not named `repo` keeps its prefix (found on a REAL run).
+        path = _strip_repo_prefix(raw)
         if _TEST_PATH_RE.search(path):
             continue
         if path.rsplit("/", 1)[-1] in _MANIFEST_NAMES:
@@ -83,7 +89,7 @@ def paths_outside_scope(changed: list[str], allowed_scope: list[str]) -> list[st
             for p in prefixes
         )
         if not ok:
-            violations.append(path)
+            violations.append(raw)
     return violations
 
 
