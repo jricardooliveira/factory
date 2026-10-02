@@ -46,7 +46,7 @@ class GateAfterSpecTests(unittest.TestCase):
     def test_open_questions_park_for_the_operator(self) -> None:
         # Checkpoint 1: the spec-agent asking for a decision is the Stage-1
         # clarifying-question round-trip, not a malformed story. See
-        # tests/test_checkpoint_1.py for the full contract.
+        # tests/pipeline/test_checkpoint_1.py for the full contract.
         r = gate_after_spec(_spec(questions=["which auth?"]))
         self.assertTrue(r.passed)
         self.assertTrue(r.needs_human)

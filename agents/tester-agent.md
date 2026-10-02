@@ -25,7 +25,7 @@ You receive: the story (with acceptance criteria), the architecture, the coder's
 
 The passes, the severity ladder, the skip list and the nit cap come from the
 **versioned review policy** injected into your input as `## Review policy` (the
-factory's `docs/factory/REVIEW.md`). Follow it — it is the single source of truth
+factory's `agents/policies/REVIEW.md`). Follow it — it is the single source of truth
 for review behaviour, so it can be tuned without editing this file.
 
 If no `## Review policy` section is present, fall back to: QA (is each acceptance

@@ -13,7 +13,9 @@ agents/                       THE AGENT CONFIGURATION (data, not code)
   spec|architect|coder|tester-agent.md   definitions; write/edit/bash/patch all false
   policies/REVIEW.md          review policy, embedded verbatim in the tester prompt
   tiers.toml                  agent -> tier -> model; the ONLY place model ids are chosen
-.opencode/agents -> ../agents relative symlink; opencode resolves agents through it
+.opencode/agents/<name>.md    one relative symlink PER AGENT (-> ../../agents/<name>.md).
+                              Not a link to agents/: opencode scans its agents dir
+                              recursively, so policies/REVIEW.md would load as an agent
 src/factory/                  the code side (layers below)
 evals/cases/*.json            behavioural eval corpus (frozen agent outputs + expected outcome)
 examples/specs/               sample project specs
@@ -26,7 +28,15 @@ docs/challenges/              challenge briefs (e.g. SupportFlow)
 Products are **not** in this repository. They live in `$FACTORY_HOME` (default
 `~/.factory`): `factory.db` plus `projects/<slug>/`, each its own git repository
 holding the product's code and the evidence the factory committed for it.
-`factory workspace` prints the resolved paths.
+`factory workspace` prints the resolved paths. Project locations are stored in
+`factory.db` relative to the home, so a copied or moved home governs its own
+products. `factory replay` works in `replays/run-<id>/`, a scratch clone of the
+product at the replayed run's baseline — a replay never touches the product.
+
+A built wheel carries a copy of `agents/` as `factory/_agents` (hatch
+`force-include`); `agent_config.location.agents_dir()` uses the checkout's
+`agents/` when there is one, else that copy, and `FACTORY_AGENTS_DIR` overrides
+both. `tiers.toml` loads on first use, so read-only verbs never need it.
 
 ---
 
@@ -34,18 +44,22 @@ holding the product's code and the evidence the factory committed for it.
 
 ```
                     ┌──────────────────────────────────────────────┐
-                    │ interfaces   cli/  render.py  board/         │  argv, rich, Textual
-                    └──────────────────────┬───────────────────────┘
+                    │ interfaces   cli/  render/  board/           │  argv, rich, Textual
+                    └───────┬──────────────┬──────────────┬────────┘
+                            ▼              ▼              ▼
+                    ┌──────────────┐ ┌───────────┐ ┌─────────────┐
+                    │ selftest     │ │ preflight │ │             │  offline evals + scenarios /
+                    │ (evals, sim) │ │ (doctor)  │ │             │  live environment checks
+                    └──────┬───────┘ └─────┬─────┘ │             │
+                           ▼               │       │             │
+                    ┌──────────────────────┴───────┴─────────────┐
+                    │ runs     run/resume/retry/replay · dismiss  │  application service
+                    │          · queries (the read side)          │
+                    └──────────────────────┬──────────────────────┘
                                            ▼
-                    ┌──────────────────────────────────────────────┐
-                    │ runs         run / resume / retry / replay   │  application service
-                    └──────────────────────┬───────────────────────┘
+        pipeline -> evidence -> verification -> workspace -> agent_config     middle layers
+                 adapters (opencode, notify)  ·  state (ALL the SQL)          infrastructure
                                            ▼
-  ┌──────────┬──────────────┬──────────┬───────────┬──────────┬──────────────┐
-  │ pipeline │ verification │ evidence │ workspace │ selftest │ agent_config │  middle layers
-  └────┬─────┴──────┬───────┴────┬─────┴─────┬─────┴────┬─────┴──────┬───────┘
-       │            │  adapters (opencode, notify)  ·  state (db)     │          infrastructure
-       ▼            ▼            ▼           ▼          ▼            ▼
                     ┌──────────────────────────────────────────────┐
                     │ domain       PURE: no I/O, no factory imports │  policy + contracts
                     └──────────────────────────────────────────────┘
@@ -54,37 +68,47 @@ holding the product's code and the evidence the factory committed for it.
 | Package | Owns | Must not |
 |---|---|---|
 | `domain/` | Pydantic agent contracts (`contracts.py`), gate policy and every `MAX_*` budget (`gates.py`), threshold-term ambiguity detection (`ambiguity.py`), task ordering (`task_order.py`), AC ↔ tester traceability, `ProjectSpec`, agent-JSON parsing (`agent_output.py`) | do I/O or import anything else from `factory` |
-| `agent_config/` | the code side of `agents/`: `tiers.py` loads and validates `tiers.toml` (`FACTORY_TIER_*` wins), `review_policy.py` loads `REVIEW.md` | choose a model anywhere but `tiers.toml` |
-| `pipeline/` | the LangGraph orchestrator: `state.py`, `graph.py` (edges, resume routing, graph builders), `nodes/` (one per stage + gate nodes + evidence), `prompts/` (every prompt, byte-pinned), `agent_calls.py` (the single agent-call boundary). `__init__` is its public API | be imported past `factory.pipeline.__all__` from outside |
-| `verification/` | non-LLM build checks: `python.py`, `go.py`, `typescript.py`, `scope.py` (declared-scope + manifest exemptions); `verify_changes` in `__init__` dispatches by file extension | judge with an LLM; run git plumbing (that is `workspace/git.py`) |
-| `evidence/` | `artifacts.py` (INTENT → SPEC → PLAN), `adr.py` (decision memory), `trust_package.py` + `schemas/`, `metrics.py`, `progress.py` (per-run stage flow) | overstate evidence (see CLAUDE.md) |
-| `workspace/` | `layout.py` (the `$FACTORY_HOME` resolver, `EVIDENCE_PATHS`), `projects.py`, `templates.py`, `git.py` (checkpoint + evidence commits, baseline, real diff), `materialize.py` (the one write chokepoint), `repo_map.py`, `legacy.py` | resolve state relative to the CWD |
+| `agent_config/` | the code side of `agents/`: `location.py` (checkout `agents/`, else the wheel's bundled copy, else `FACTORY_AGENTS_DIR`), `tiers.py` loads and validates `tiers.toml` lazily (`FACTORY_TIER_*` wins), `review_policy.py` loads `REVIEW.md` | choose a model anywhere but `tiers.toml` |
+| `pipeline/` | the LangGraph orchestrator: `state.py`, `graph.py` (edges, resume routing, graph builders), `nodes/` (one per stage + the gate nodes), `prompts/` (every prompt, byte-pinned), `agent_calls.py` (the single agent-call boundary), `evidence_writers.py` (chain/ADR/trust-package writes + their `factory:` commits). `__init__` is its public API | be imported past `factory.pipeline.__all__` from outside |
+| `verification/` | non-LLM build checks: `base.py` (check/result types, the subprocess runner, timeouts), `python.py`, `go.py`, `typescript.py`, `scope.py` (BOTH scope policies: declared-vs-changed, which blocks gate-build, and changed-vs-task-scope, which the trust package reports); `verify_changes` in `__init__` dispatches by file extension | judge with an LLM; run git plumbing (that is `workspace/git.py`) |
+| `evidence/` | `artifacts.py` (INTENT → SPEC → PLAN), `adr.py` (decision memory), `trust_package.py` + `schemas/`, `metrics.py`, `progress.py` (per-run stage flow, plain text) | overstate evidence (see CLAUDE.md); render markup (that is `interfaces/render/`) |
+| `workspace/` | `layout.py` (the `$FACTORY_HOME` resolver, `EVIDENCE_PATHS`, slugs, home-relative locations), `projects.py`, `templates.py`, `git.py` (checkpoint + evidence commits, baseline, real diff), `sandbox.py` (replay clones, a run's repository), `materialize.py` (the one write chokepoint), `repo_map.py`, `legacy.py` | resolve state relative to the CWD |
 | `adapters/` | `opencode.py` (the only place a model is called), `notify.py` | depend on anything but `domain` |
-| `state/` | `db.py`: the SQLite schema and every accessor; additive migrations | default a DB path (the caller passes `workspace.db_path()`) |
-| `selftest/` | `evals.py` (agent-configuration regression), `simulate.py` (scenario matrix), `doctor.py` (preflight) | import `interfaces` |
-| `runs/` | `service.py` (run / resume / retry / replay), `context.py` (resume context, decision recovery), `events.py` (`on_event` callback types, `RunError`) | print, or import `interfaces` |
-| `interfaces/` | `cli/main.py` (argv dispatch + usage), one module per command group, `render.py` (every rich print helper; takes data, never reads the DB), `board/` (`tui.py`, `data.py`, `html_report.py`) | be imported by anything (except the console script) |
+| `state/` | EVERY SQL statement: `db.py` (schema, connections, runs / stories / logs / gates; additive migrations), `projects.py` (the projects table), `reports.py` (read-only aggregates) | default a DB path (the caller passes `workspace.db_path()`) |
+| `runs/` | `service.py` (run / resume / retry / replay), `lifecycle.py` (dismiss + reconcile, one policy for CLI and TUI), `queries.py` (the read side the interfaces render), `context.py` (resume context, decision recovery), `events.py` (`on_event` callback types, `RunError`) | print, or import `interfaces` / `selftest` |
+| `selftest/` | offline and zero-token: `evals/` (`config`, `cases`, `capture`, `report`), `simulate.py` (scenario matrix, driven through `runs.run_pipeline`) | import `interfaces`, or spend a token |
+| `preflight/` | `doctor.py`: the live environment check (opencode, one probe per tier model, toolchains, tiers.toml, escalation, the workspace) | be part of the zero-token evals contract |
+| `interfaces/` | `cli/main.py` (argv dispatch + usage + the typo guard), one module per command group, `render/` (one module per command group + `output.py`; takes data, never reads the DB), `board/` (`tui.py`, `data.py`, `html_report.py`) | import `state`, `pipeline`, `adapters` or `verification` (go through `runs`); be imported by anything but the console script |
 
 ---
 
 ## The one-way dependency rule
 
 ```
-interfaces -> runs -> {pipeline, verification, evidence, workspace, selftest, agent_config} -> domain
+interfaces -> {selftest, preflight, runs}      selftest -> runs
+runs -> pipeline -> evidence -> verification -> workspace -> agent_config -> domain
+adapters, state -> domain
 ```
 
 - **`domain` imports nothing from `factory`.** Policy stays pure and unit-testable.
 - **`adapters` and `state` serve the middle layers** and may depend only on `domain`.
-- **The middle layers never import `runs`** — `runs` sits above them.
+- **`state` owns every SQL statement.** Nothing else calls `.execute`.
+- **`interfaces` go through `runs`** for anything that touches a run or the
+  database; they never import `state`, `pipeline`, `adapters` or `verification`.
+- **`selftest` sits above `runs`**: the scenario matrix and every replay eval drive
+  `runs.run_pipeline`, the same entry path the CLI and the TUI use.
 - **Nothing imports `interfaces`**, except the console script
   (`factory.interfaces.cli.main:main` in `pyproject.toml`). `runs` and `selftest`
   report through return values and callbacks, never by printing.
-- `interfaces/render.py` is presentation only: it may not reach `state`,
-  `pipeline`, `adapters` or `workspace`.
+- `interfaces/render/` is presentation only: it imports `domain`, `runs` (event
+  types) and `evidence.progress` (stage data), nothing else.
 
-Enforced by [`tests/integration/test_layout.py`](../tests/integration/test_layout.py),
-which walks every import (including function-level ones) with `ast`. Its
-`KNOWN_VIOLATIONS` allowlist is empty and may only shrink. Inside `pipeline/`,
+Enforced by [`tests/integration/test_layout.py`](../tests/integration/test_layout.py):
+an explicit `ALLOWED` table per package, every import resolved with `ast`
+(function-level, relative and `importlib.import_module` ones included), a Tarjan
+check that there is no import cycle (module-level or lazy), and a check that no
+SQL runs outside `factory.state`. Its `KNOWN_VIOLATIONS` / `KNOWN_CYCLES`
+allowlists are empty and may only shrink. Inside `pipeline/`,
 [`tests/pipeline/test_public_api.py`](../tests/pipeline/test_public_api.py) pins the
 public API and the internal order graph → nodes → prompts/agent_calls → state.
 
@@ -108,7 +132,7 @@ All three together, or the gate cries wolf or passes silently:
    `verification/scope._MANIFEST_NAMES`, so the scope check does not flag it.
 
 Tests go in `tests/verification/`. Add the binary to `factory doctor`
-(`selftest/doctor.py`) if the operator needs it on `PATH`.
+(`preflight/doctor.py`) if the operator needs it on `PATH`.
 
 ### A new gate
 
@@ -128,12 +152,14 @@ Tests go in `tests/verification/`. Add the binary to `factory doctor`
 2. Its tier in `agents/tiers.toml` `[agents]` (and `[escalate_on_retry]` if a retry
    should go one tier up).
 3. Its output model in `domain/contracts.py`, registered in
-   `selftest/evals.OUTPUT_MODELS` (and `NESTED_MODELS` for nested shapes) so the
+   `selftest/evals/config.OUTPUT_MODELS` (and `NESTED_MODELS` for nested shapes) so the
    JSON example in the definition is diffed against it.
 4. Its prompt builder in `pipeline/prompts/<name>.py` with a golden fixture in
    `tests/fixtures/prompts/`, its node in `pipeline/nodes/<name>.py`, and its
    edges in `pipeline/graph.py`. Calls go through `pipeline/agent_calls.py` only.
-5. A replay fixture under `tests/fixtures/agent_outputs/` and a row in
+5. A relative link `.opencode/agents/<name>-agent.md -> ../../agents/<name>-agent.md`
+   (the eval `opencode-loads-exactly-the-agents` fails without it).
+6. A replay fixture under `tests/fixtures/agent_outputs/` and a row in
    [AGENTS.md](contract/AGENTS.md). Then `make check`.
 
 ### A new CLI command
@@ -143,7 +169,8 @@ Tests go in `tests/verification/`. Add the binary to `factory doctor`
    data, never printing.
 2. A `<verb>_command(args)` in the matching `interfaces/cli/<group>.py` (`run`,
    `review`, `project`, `selftest`, `board`, `workspace`), any output helper in
-   `interfaces/render.py`.
+   the matching `interfaces/render/<group>.py`. A read the command needs goes in
+   `runs/queries.py`, never a `state` import in the interface.
 3. Register the verb in `COMMANDS` and `print_usage` in `interfaces/cli/main.py`.
    Tests in `tests/interfaces/cli/`; they patch the name where the command looks it
    up (e.g. `patch("factory.runs.run_project_pipeline")`).

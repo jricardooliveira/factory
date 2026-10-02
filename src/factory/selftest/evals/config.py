@@ -4,6 +4,7 @@ they must agree with (tiers, output models, the review policy)."""
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from factory.agent_config import tiers
 from factory.agent_config.location import agents_dir as _agents_dir
+from factory.agent_config.location import checkout_root
 from factory.domain.contracts import (
     ArchitectOutput,
     CodeBlock,
@@ -111,9 +113,64 @@ def _check(name: str, passed: bool, detail: str = "") -> EvalResult:
     return EvalResult(name=name, kind="config", passed=passed, detail=detail)
 
 
-def config_checks(*, agents_dir: Path | None = None) -> list[EvalResult]:
+def default_opencode_dir() -> Path:
+    """The checkout's ``.opencode`` — what every product's ``.opencode`` links to."""
+    return checkout_root() / ".opencode"
+
+
+def _opencode_loaded_agents(opencode_dir: Path) -> dict[str, Path]:
+    """agent name -> file, for every agent opencode would load from `opencode_dir`.
+
+    Mirrors opencode's own scan: ``{agent,agents}/**/*.md`` with symlinks FOLLOWED,
+    the agent named by its path relative to that folder minus ``.md`` (so
+    ``agents/policies/REVIEW.md`` is an agent called ``policies/REVIEW``).
+    """
+    loaded: dict[str, Path] = {}
+    for folder in ("agent", "agents"):
+        base = opencode_dir / folder
+        if not base.exists():
+            continue
+        for dirpath, _dirs, files in os.walk(base, followlinks=True):
+            for name in files:
+                if name.endswith(".md"):
+                    path = Path(dirpath) / name
+                    loaded[path.relative_to(base).with_suffix("").as_posix()] = path
+    return loaded
+
+
+def _opencode_agents_check(
+    agents_dir: Path, opencode_dir: Path, expected: set[str]
+) -> EvalResult:
+    """opencode must load exactly the registered agents, each from `agents_dir`.
+
+    A stray markdown file in the scanned tree becomes an extra agent with
+    opencode's DEFAULT permissions (write/edit/bash enabled); a missing link means
+    the factory calls an agent opencode cannot find.
+    """
+    loaded = _opencode_loaded_agents(opencode_dir)
+    problems: list[str] = []
+    extra = sorted(set(loaded) - expected)
+    missing = sorted(expected - set(loaded))
+    if extra:
+        problems.append(
+            f"opencode would also load {extra} as agents, with default (write-enabled) "
+            f"permissions — keep only agent definitions under {opencode_dir}/agents"
+        )
+    if missing:
+        problems.append(f"opencode cannot find {missing} under {opencode_dir}/agents")
+    for name in sorted(expected & set(loaded)):
+        target = (agents_dir / f"{name}.md").resolve()
+        if loaded[name].resolve() != target:
+            problems.append(f"{name} resolves to {loaded[name].resolve()}, not {target}")
+    return _check("opencode-loads-exactly-the-agents", not problems, "; ".join(problems))
+
+
+def config_checks(
+    *, agents_dir: Path | None = None, opencode_dir: Path | None = None
+) -> list[EvalResult]:
     """Deterministic invariants over the agent configuration. No LLM, no I/O cost."""
     agents_dir = agents_dir or default_agents_dir()
+    opencode_dir = opencode_dir or default_opencode_dir()
     tier_config = tiers.config()
     results: list[EvalResult] = []
 
@@ -211,6 +268,11 @@ def config_checks(*, agents_dir: Path | None = None) -> list[EvalResult]:
         results.append(
             _check(f"agent-output-contract:{agent}", not problems, "; ".join(problems))
         )
+
+    # ── What opencode actually loads: exactly these agents, nothing else ──
+    results.append(
+        _opencode_agents_check(agents_dir, opencode_dir, set(tier_config.agent_tiers))
+    )
 
     # ── The versioned review policy is agent configuration too ──
     results.extend(_review_policy_checks())

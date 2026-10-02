@@ -218,7 +218,7 @@ class OnlyOperatorAuthoredContextSettlesTests(unittest.TestCase):
 
     The "don't re-litigate settled decisions" exemption originally read the whole
     project memory block, prior ADRs included. But ADRs are written by the
-    architect-agent and `memory.render_adr` stamps every one of them
+    architect-agent and `evidence.adr.render_adr` stamps every one of them
     `Status: proposed (pending architecture sign-off)` — none is ever approved.
 
     Observed live across three runs of the same request: run 17 asked four

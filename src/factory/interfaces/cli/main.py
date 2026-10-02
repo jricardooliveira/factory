@@ -2,16 +2,20 @@
 
 The console script is `factory.interfaces.cli.main:main`. Every verb maps to a
 `<verb>_command(args)` in its command-group module, where `args` is argv after
-the verb; anything that is not a verb is a free-form request.
+the verb; anything that is not a verb is a free-form request — unless it is a
+single word or a short, verb-shaped phrase (`request_refusal`), which is refused
+before it can spend a token.
 """
 
 from __future__ import annotations
 
+import difflib
 import sys
 from collections.abc import Callable
 from typing import NoReturn
 
 from factory.interfaces.cli import board, project, review, run, selftest, workspace
+from factory.interfaces.cli.common import fail
 from factory.interfaces.render import console
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
@@ -69,6 +73,50 @@ def print_usage(exit_code: int = 1) -> NoReturn:
     sys.exit(exit_code)
 
 
+# A free-form request this short whose first word is a verb is a mistyped command
+# (`factory 'project list'`), not a story. Longer ones ("review the login flow
+# for lockouts") are genuine requests that happen to start with a verb.
+_VERB_SHAPED_MAX_WORDS = 3
+
+
+def request_refusal(argv: list[str]) -> str | None:
+    """Why `argv` (not a known verb) must not start a run, or None if it may.
+
+    Anything that is not a verb is a free-form request, and a request spends
+    tokens. A typo (`factory lsit`) or a quoted verb (`factory 'project list'`)
+    used to start a live run; refuse them, with a suggestion, before any call.
+    """
+    words = " ".join(argv).split()
+    if not words:
+        return None
+    first = words[0]
+    if len(words) == 1:
+        close = difflib.get_close_matches(first, COMMANDS, n=1)
+        hint = f" Did you mean `factory {close[0]}`?" if close else ""
+        return (
+            f"'{first}' is not a factory command, and one word is not a request.{hint}"
+            f' To run the pipeline, describe the change: factory "<your request>"'
+        )
+    if first in COMMANDS and len(words) <= _VERB_SHAPED_MAX_WORDS:
+        return (
+            f"'{' '.join(words)}' looks like a command passed as one quoted argument. "
+            f"Did you mean `factory {' '.join(words)}` (unquoted)?"
+        )
+    return None
+
+
+def _request_words(argv: list[str]) -> list[str]:
+    """argv minus the `--spec <file>` option `request_command` also strips."""
+    words, i = [], 0
+    while i < len(argv):
+        if argv[i] == "--spec" and i + 1 < len(argv):
+            i += 2
+            continue
+        words.append(argv[i])
+        i += 1
+    return words
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print_usage(exit_code=1)
@@ -80,8 +128,11 @@ def main() -> None:
     command = COMMANDS.get(cmd)
     if command is not None:
         command(sys.argv[2:])
-    else:
-        run.request_command(sys.argv[1:])
+        return
+    refusal = request_refusal(_request_words(sys.argv[1:]))
+    if refusal:
+        fail(refusal)
+    run.request_command(sys.argv[1:])
 
 
 if __name__ == "__main__":

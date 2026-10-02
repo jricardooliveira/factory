@@ -101,6 +101,26 @@ def _probe_agent(model_tiers: list[str]) -> str:
     return next(iter(tiers.AGENT_TIERS))
 
 
+def _escalation_check() -> Check:
+    """Warn when escalate-on-retry lands on the model the first attempt used: the
+    retry the policy pays a stronger model for would run the same model again."""
+    cfg = tiers.config()
+    flat = [
+        f"{agent} ({cfg.agent_tiers.get(agent, cfg.default_tier)} -> {up}: "
+        f"{tiers.model_for_tier(up)})"
+        for agent, up in cfg.escalate_on_retry.items()
+        if tiers.resolve_model(agent, 1)[0] == tiers.resolve_model(agent, 2)[0]
+    ]
+    if flat:
+        return Check(
+            "tier escalation", "warn",
+            f"retry escalation is a no-op, both attempts use one model: {', '.join(flat)}",
+            blocking=False,
+        )
+    return Check("tier escalation", "ok", "every escalation moves to a different model",
+                 blocking=False)
+
+
 def _first_line(text: str, limit: int = 200) -> str:
     line = text.strip().splitlines()[0] if text.strip() else ""
     return line if len(line) <= limit else line[: limit - 1] + "…"
@@ -214,6 +234,7 @@ def run_doctor(
         models: dict[str, list[str]] = {}
     else:
         report.checks.append(Check("tiers", "ok", str(tiers.default_tiers_path())))
+        report.checks.append(_escalation_check())
         models = tiers.distinct_models()
 
     for model, model_tiers in models.items():

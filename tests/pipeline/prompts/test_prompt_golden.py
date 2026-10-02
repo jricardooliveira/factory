@@ -223,6 +223,23 @@ class PromptGoldenTests(unittest.TestCase):
         self.assertEqual(prompt, build_spec_prompt(state))
         self._assert_golden("spec_full", prompt)
 
+    def test_spec_prompt_for_a_freshly_scaffolded_project(self) -> None:
+        """The scaffolded PROJECT_RULES.md heads the project-memory block of EVERY
+        agent's prompt, so the template is prompt text too. The other goldens seed
+        their own rules file; this one pins what `create_project` actually writes."""
+        from factory.workspace.projects import create_project
+
+        project = create_project(self.db_path, home=self.root / "home", slug="ledger")
+        repo = Path(project["repo_path"])
+        state = {
+            **self._state(full=False),
+            "project_dir": str(repo),
+            "opencode_cwd": str(repo),
+        }
+        prompt = self._capture(node_spec_agent, state)
+        self.assertIn("Source root: the repository root", prompt)
+        self._assert_golden("spec_scaffolded_project", prompt)
+
     # ── architect-agent ───────────────────────────────────────────
 
     def test_architect_prompt_bare(self) -> None:

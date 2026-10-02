@@ -4,7 +4,7 @@ The AI-Native SDLC playbook's central governance claim is that each stage commit
 an artifact the next stage reads, and that the chain IS the audit trail — "evidence
 is version-controlled and timestamped."
 
-This factory committed exactly one link: the ADR (``memory.write_adr``). The story
+This factory committed exactly one link: the ADR (``evidence.adr.write_adr``). The story
 the design answered, the operator's original ask, and the order of work all lived
 only in ``agent_logs.output_text`` inside a ``*.db`` file that ``.gitignore``
 excludes. Delete the DB and the entire record of why any project exists is gone,
@@ -19,7 +19,7 @@ then discarded:
 | INTENT.md | 1 (Plan)       | the operator's raw request + author + date          |
 | SPEC.md   | 2 (Design)     | ``SpecOutput`` — problem, why, AC, non-goals, tasks |
 | PLAN.md   | 3 (Build)      | ``order_tasks`` + ``TaskDef.scope`` + architect risks |
-| ADR       | 3 (Build)      | ``memory.write_adr`` (already existed)              |
+| ADR       | 3 (Build)      | ``evidence.adr.write_adr`` (already existed)        |
 | diff      | 5 (Deploy)     | ``workspace.git.git_changed_files`` via the trust package  |
 
 The PLAN is what makes the decomposition binding rather than descriptive:

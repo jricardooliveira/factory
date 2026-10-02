@@ -130,7 +130,7 @@ def print_doctor(report: Any) -> None:
 
 
 def print_metrics(m: Any, db_path: Path) -> None:
-    """The playbook's SDLC indicators (`evidence.metrics.Metrics`), NOT MEASURABLE last."""
+    """The playbook's SDLC indicators (`evidence.metrics.FactoryMetrics`), NOT MEASURABLE last."""
     output.console.print()
     output.console.print(Rule(f"[bold blue]Factory Metrics[/bold blue]  [dim]{db_path}[/dim]",
                        style="blue"))

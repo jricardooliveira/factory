@@ -76,6 +76,60 @@ class ConfigCheckTests(unittest.TestCase):
             self.assertIn("invented_field", offending[0].detail)
 
 
+class OpencodeAgentsDirTests(unittest.TestCase):
+    """What opencode LOADS is agent configuration too.
+
+    Found by review: opencode scans ``.opencode/{agent,agents}/**/*.md`` with
+    symlinks followed, so with ``.opencode/agents -> ../agents`` the review policy
+    (``agents/policies/REVIEW.md``) registered as a fifth agent, "policies/REVIEW",
+    with opencode's default permissions — write/edit/bash NOT disabled. The
+    per-agent checks only ever looked at the four agents they knew by name.
+    """
+
+    def _opencode_dir(self, root: Path, agents: Path) -> Path:
+        opencode = root / ".opencode"
+        opencode.mkdir()
+        (opencode / "agents").symlink_to(agents, target_is_directory=True)
+        return opencode
+
+    def _copy_agents(self, root: Path) -> Path:
+        agents = root / "agents"
+        agents.mkdir()
+        for md in evals.default_agents_dir().glob("*.md"):
+            (agents / md.name).write_text(md.read_text(encoding="utf-8"), encoding="utf-8")
+        return agents
+
+    def _check(self, results: list) -> object:
+        found = [r for r in results if r.name == "opencode-loads-exactly-the-agents"]
+        self.assertEqual(len(found), 1)
+        return found[0]
+
+    def test_the_real_checkout_exposes_exactly_the_four_agents(self) -> None:
+        self.assertTrue(self._check(evals.config_checks()).passed)
+
+    def test_a_markdown_file_beside_the_agents_is_caught(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents = self._copy_agents(root)
+            (agents / "policies").mkdir()
+            (agents / "policies" / "REVIEW.md").write_text("# Review Policy\n")
+            opencode = self._opencode_dir(root, agents)
+            check = self._check(evals.config_checks(agents_dir=agents, opencode_dir=opencode))
+        self.assertFalse(check.passed)
+        self.assertIn("policies/REVIEW", check.detail)
+
+    def test_a_missing_agent_is_caught(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents = self._copy_agents(root)
+            opencode = root / ".opencode"
+            (opencode / "agents").mkdir(parents=True)
+            (opencode / "agents" / "coder-agent.md").symlink_to(agents / "coder-agent.md")
+            check = self._check(evals.config_checks(agents_dir=agents, opencode_dir=opencode))
+        self.assertFalse(check.passed)
+        self.assertIn("spec-agent", check.detail)
+
+
 class ReplayCaseTests(unittest.TestCase):
     """Behavioural cases: frozen agent outputs driven through the real pipeline."""
 

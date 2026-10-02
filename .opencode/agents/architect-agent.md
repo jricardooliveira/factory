@@ -1,0 +1,1 @@
+../../agents/architect-agent.md

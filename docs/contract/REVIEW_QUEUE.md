@@ -48,7 +48,7 @@ When a task parks, `runs/service.py` fires a **desktop notification** (macOS) su
 - `factory approve <run_id> [note]` — sign off; the line resumes from where it parked (`runs.resume_run`, entry chosen by `pipeline.resume_entry_for`).
 - `factory reject <run_id> <feedback>` — bounce it back. **Rejection is not a dead end:** the feedback becomes `prior_findings` on a new attempt that re-enters at the appropriate stage, not a terminal `rejected` row.
 - `factory retry <run_id>` — re-drive a run whose process died after you answered (`runs.retry_run`).
-- `factory dismiss <run_id>` — archive a run off the board. `factory reconcile [--older-than S]` — fail runs stuck `running` by a dead process (`state.db.reconcile`).
+- `factory dismiss <run_id>` — archive a run off the board. `factory reconcile [--older-than S]` — fail runs stuck `running` by a dead process (`runs.reconcile_stale` → `state.db.reconcile_stale_runs`).
 
 ---
 

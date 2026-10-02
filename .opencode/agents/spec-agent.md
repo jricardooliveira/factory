@@ -1,0 +1,1 @@
+../../agents/spec-agent.md

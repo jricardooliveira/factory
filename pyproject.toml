@@ -1,5 +1,5 @@
 [project]
-name = "factory-mvp"
+name = "ai-software-factory"
 version = "0.1.0"
 description = "AI software factory: governed spec -> design -> build -> verify pipeline"
 requires-python = ">=3.12"

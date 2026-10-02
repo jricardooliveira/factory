@@ -1,0 +1,15 @@
+## Project Rules (MUST follow)
+
+# Ledger Project Rules
+
+- Project ID: PROJ-001
+- Slug: ledger
+- Source root: the repository root (write repo-relative paths, e.g. `app/main.py`)
+- Factory-owned evidence (never write these): `docs/work/`, `docs/architecture/adr/`, `docs/releases/`, `PROJECT_RULES.md`, `project-spec.json`
+
+
+## Request
+
+List invoices that are overdue, oldest first.
+
+Define the story WITHIN the constraints above. If a constraint makes the request impossible as stated, say so in `questions` rather than writing an acceptance criterion that violates it.

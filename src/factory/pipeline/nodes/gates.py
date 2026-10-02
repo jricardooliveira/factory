@@ -40,7 +40,7 @@ def settled_threshold_terms(state: PipelineState) -> frozenset[str]:
     """Threshold terms a HUMAN has actually settled for this project.
 
     Deliberately NOT the whole project-memory block. ADRs are authored by the
-    architect-agent and `memory.render_adr` stamps every one
+    architect-agent and `evidence.adr.render_adr` stamps every one
     `Status: proposed (pending architecture sign-off)` — never approved. Reading
     them here let an agent-invented number launder itself into a decision:
     observed live, one run's architect chose "24 hours" and wrote an ADR, and the

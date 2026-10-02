@@ -374,13 +374,21 @@ class GuardSelfTests(unittest.TestCase):
 
 
 class AgentConfigLayoutTests(unittest.TestCase):
-    def test_opencode_agents_is_a_relative_symlink_to_agents(self) -> None:
-        link = REPO_ROOT / ".opencode" / "agents"
-        self.assertTrue(link.is_symlink(), ".opencode/agents must be a symlink")
-        # Relative, so it survives a clone to any path (an absolute link would
-        # point at the author's machine).
-        self.assertFalse(Path(link.readlink()).is_absolute())
-        self.assertEqual(link.resolve(), (REPO_ROOT / "agents").resolve())
+    def test_opencode_agents_holds_one_relative_link_per_agent(self) -> None:
+        """NOT a link to the whole agents/ directory: opencode scans it recursively
+        with symlinks followed, so agents/policies/REVIEW.md became a fifth agent
+        (with write tools enabled). One link per agent exposes exactly the four."""
+        folder = REPO_ROOT / ".opencode" / "agents"
+        self.assertTrue(folder.is_dir() and not folder.is_symlink())
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted(f"{a}.md" for a in AGENTS))
+        for agent in AGENTS:
+            with self.subTest(agent=agent):
+                link = folder / f"{agent}.md"
+                self.assertTrue(link.is_symlink())
+                # Relative, so it survives a clone to any path (an absolute link
+                # would point at the author's machine).
+                self.assertFalse(Path(link.readlink()).is_absolute())
+                self.assertEqual(link.resolve(), (REPO_ROOT / "agents" / f"{agent}.md").resolve())
 
     def test_every_agent_resolves_where_opencode_looks(self) -> None:
         for agent in AGENTS:

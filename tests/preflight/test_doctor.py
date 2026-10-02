@@ -270,3 +270,28 @@ class BrokenTierConfigTests(unittest.TestCase):
         check = _by_name(self._run())["tiers"]
         self.assertEqual(check.status, "fail")
         self.assertIn("default_tier", check.detail)
+
+
+class TierLeverageTests(unittest.TestCase):
+    """Escalate-on-retry is the tier policy's whole point for the coder: a failed
+    cheap attempt re-runs on a stronger model. If both tiers resolve to the SAME
+    model (an env override, or a tiers.toml edit), the retry buys nothing — the
+    doctor says so instead of letting the policy silently degrade."""
+
+    def test_an_escalation_onto_the_same_model_is_a_warning(self) -> None:
+        with patch.dict(os.environ, {"FACTORY_TIER_FAST": "openai/gpt-5.5"}), \
+                patch("factory.preflight.doctor.run_agent", side_effect=_ok):
+            report = doctor.run_doctor(offline=True, which=_which(ALL_TOOLS))
+        check = _by_name(report)["tier escalation"]
+        self.assertEqual(check.status, "warn")
+        self.assertFalse(check.blocking)
+        self.assertIn("coder-agent", check.detail)
+        self.assertTrue(report.passed)
+
+    def test_distinct_models_are_ok(self) -> None:
+        saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("FACTORY_TIER_")}
+        try:
+            report = doctor.run_doctor(offline=True, which=_which(ALL_TOOLS))
+        finally:
+            os.environ.update(saved)
+        self.assertEqual(_by_name(report)["tier escalation"].status, "ok")

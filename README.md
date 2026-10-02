@@ -65,8 +65,8 @@ make check
 Every command below is `.venv/bin/factory …` (or plain `factory …` with the venv
 activated: `source .venv/bin/activate`). `factory --help` lists every verb.
 
-`make check` should print `502 passed`, `9/9 scenarios behaving as expected` and
-`43/43 checks green`. That is the whole verification loop in one command.
+`make check` should print `5xx passed` (every test green), `9/9 scenarios behaving as
+expected` and `44/44 checks green`. That is the whole verification loop in one command.
 
 ---
 
@@ -84,6 +84,9 @@ activated: `source .venv/bin/activate`). `factory --help` lists every verb.
 ```
 
 The run streams its progress. It will either finish, or **park** and tell you.
+(A request spends tokens, so the CLI refuses anything that looks like a mistyped
+command — `factory lsit`, `factory 'project list'` — with a suggestion, before any
+model is called.)
 
 ```bash
 .venv/bin/factory queue          # what is waiting for you, and why
@@ -125,7 +128,15 @@ directory; deleting `$FACTORY_HOME` resets the factory's history.
 
 `factory doctor` checks the home is usable, its DB opens, and each product's
 `.opencode` link resolves to this checkout's `.opencode/` (and so its `agents/`) — a product created from another
-checkout would otherwise run with that checkout's agent definitions.
+checkout would otherwise run with that checkout's agent definitions. A live project
+run refuses outright when the link points at another checkout, and prints the
+`ln -sfn` that re-points it.
+
+The home is self-contained: `factory.db` stores each product's location relative to
+it, so a copied or moved home (a backup, a test copy) governs its own products and
+never writes into the original's. `factory replay` never touches a product either: it
+re-drives the run in `replays/run-<id>/`, a scratch clone at the replayed run's
+baseline — and approving a parked replay keeps replaying there, zero tokens.
 
 ---
 
@@ -182,8 +193,8 @@ Everything here is offline, deterministic and free — no model calls:
 | Command | What it does |
 |---|---|
 | `factory simulate` | drives 9 representative stories through the real pipeline |
-| `factory evals` | 43 regression checks on the **agent configuration** |
-| `factory replay <run_id>` | re-runs a past run's orchestration on its frozen outputs |
+| `factory evals` | 44 regression checks on the **agent configuration** |
+| `factory replay <run_id>` | re-runs a past run's orchestration on its frozen outputs, in a scratch clone (`$FACTORY_HOME/replays/`) |
 | `factory metrics` | how the factory has actually been performing |
 | `factory tiers` | which model each agent runs at |
 | `factory workspace` | where the state lives: `$FACTORY_HOME`, its `factory.db`, every product repo |
