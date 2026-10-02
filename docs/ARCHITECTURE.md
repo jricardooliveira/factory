@@ -67,11 +67,11 @@ both. `tiers.toml` loads on first use, so read-only verbs never need it.
 
 | Package | Owns | Must not |
 |---|---|---|
-| `domain/` | Pydantic agent contracts (`contracts.py`), gate policy and every `MAX_*` budget (`gates.py`), threshold-term ambiguity detection (`ambiguity.py`), task ordering (`task_order.py`), AC ↔ tester traceability, `ProjectSpec`, agent-JSON parsing (`agent_output.py`) | do I/O or import anything else from `factory` |
+| `domain/` | Pydantic agent contracts (`contracts.py`), gate policy and every `MAX_*` budget (`gates.py`), threshold-term ambiguity detection (`ambiguity.py`), task ordering + task-graph validation (`task_order.py`), the boss's authorization rules (`authorization.py`), AC ↔ tester traceability, `ProjectSpec`, agent-JSON parsing (`agent_output.py`) | do I/O or import anything else from `factory` |
 | `agent_config/` | the code side of `agents/`: `location.py` (checkout `agents/`, else the wheel's bundled copy, else `FACTORY_AGENTS_DIR`), `tiers.py` loads and validates `tiers.toml` lazily (`FACTORY_TIER_*` wins), `review_policy.py` loads `REVIEW.md` | choose a model anywhere but `tiers.toml` |
-| `pipeline/` | the LangGraph orchestrator: `state.py`, `graph.py` (edges, resume routing, graph builders), `nodes/` (one per stage + the gate nodes), `prompts/` (every prompt, byte-pinned), `agent_calls.py` (the single agent-call boundary), `evidence_writers.py` (chain/ADR/trust-package writes + their `factory:` commits). `__init__` is its public API | be imported past `factory.pipeline.__all__` from outside |
+| `pipeline/` | the LangGraph orchestrator: `state.py`, `graph.py` (edges, resume routing, ONE graph builder entered at any stage), `boss.py` (authorizes every agent stage before it runs), `nodes/` (one per stage + the gate nodes), `prompts/` (every prompt, byte-pinned), `agent_calls.py` (the single agent-call boundary), `evidence_writers.py` (chain/ADR/trust-package writes + their `factory:` commits). `__init__` is its public API | be imported past `factory.pipeline.__all__` from outside |
 | `verification/` | non-LLM build checks: `base.py` (check/result types, the subprocess runner, timeouts), `python.py`, `go.py`, `typescript.py`, `scope.py` (BOTH scope policies: declared-vs-changed, which blocks gate-build, and changed-vs-task-scope, which the trust package reports); `verify_changes` in `__init__` dispatches by file extension | judge with an LLM; run git plumbing (that is `workspace/git.py`) |
-| `evidence/` | `artifacts.py` (INTENT → SPEC → PLAN), `adr.py` (decision memory), `trust_package.py` + `schemas/`, `metrics.py`, `progress.py` (per-run stage flow, plain text) | overstate evidence (see CLAUDE.md); render markup (that is `interfaces/render/`) |
+| `evidence/` | `artifacts.py` (INTENT → SPEC → PLAN), `adr.py` (decision memory), `trust_package.py` + `schemas/`, `metrics.py`, `progress.py` (per-run stage flow + timeline, plain text), `pipeline_record.py` (each story's committed `PIPELINE.md`) | overstate evidence (see CLAUDE.md); render markup (that is `interfaces/render/`) |
 | `workspace/` | `layout.py` (the `$FACTORY_HOME` resolver, `EVIDENCE_PATHS`, slugs, home-relative locations), `projects.py`, `templates.py`, `git.py` (checkpoint + evidence commits, baseline, real diff), `sandbox.py` (replay clones, a run's repository), `materialize.py` (the one write chokepoint), `repo_map.py`, `legacy.py` | resolve state relative to the CWD |
 | `adapters/` | `opencode.py` (the only place a model is called), `notify.py` | depend on anything but `domain` |
 | `state/` | EVERY SQL statement: `db.py` (schema, connections, runs / stories / logs / gates; additive migrations), `projects.py` (the projects table), `reports.py` (read-only aggregates) | default a DB path (the caller passes `workspace.db_path()`) |
@@ -157,6 +157,8 @@ Tests go in `tests/verification/`. Add the binary to `factory doctor`
 4. Its prompt builder in `pipeline/prompts/<name>.py` with a golden fixture in
    `tests/fixtures/prompts/`, its node in `pipeline/nodes/<name>.py`, and its
    edges in `pipeline/graph.py`. Calls go through `pipeline/agent_calls.py` only.
+   Register the node in `graph._AGENT_NODES` (so the boss wraps it) and give it an
+   authorization rule in `domain/authorization.py` + `pipeline/boss.authorization_for`.
 5. A relative link `.opencode/agents/<name>-agent.md -> ../../agents/<name>-agent.md`
    (the eval `opencode-loads-exactly-the-agents` fails without it).
 6. A replay fixture under `tests/fixtures/agent_outputs/` and a row in

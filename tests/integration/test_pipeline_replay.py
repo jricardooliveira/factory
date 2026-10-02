@@ -476,6 +476,14 @@ class ArchitectResumeTests(ReplayHarness):
         # reject flow would — carrying reviewer feedback into the architect.
         with db.get_db(self.db_path) as conn:
             new_run_id = db.start_run(conn, "US-0001")
+            # What a run rejected at Checkpoint 2 has on record — the boss
+            # authorizes from it: the story passed gate 1; the design parked at
+            # gate 2 and the operator rejected it. The re-run gate 2 (newest row)
+            # is what must authorize the coder, not the rejected one.
+            db.log_gate(conn, new_run_id, "gate-1-spec", True, "story ok")
+            gate_2 = db.log_gate(conn, new_run_id, "gate-2-architect", True, "needs sign-off",
+                                 needs_human=True)
+            db.respond_to_gate(conn, gate_2, "REJECTED: Use a layered design, not a single file")
         state = {
             "request": "do the thing",
             "story_id": "US-0001",

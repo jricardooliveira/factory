@@ -167,7 +167,9 @@ baseline — and approving a parked replay keeps replaying there, zero tokens.
     ├── work/US-0001/
     │   ├── INTENT.md                 ← your raw request, with author and date
     │   ├── SPEC.md                   ← problem, acceptance criteria, non-goals, tasks
-    │   └── PLAN.md                   ← files that change, order of work, risks, proof
+    │   ├── PLAN.md                   ← files that change, order of work, risks, proof
+    │   └── PIPELINE.md               ← what happened: every step, who authorized it, why
+    │                                   it stopped, and the next allowed step
     ├── architecture/adr/             ← the design decision and why
     └── releases/                     ← the trust package (JSON)
 ```

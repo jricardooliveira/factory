@@ -17,11 +17,11 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `559 passed` + `9/9 scenarios behaving as expected` + `44/44 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `559 passed` (~60s, offline, zero tokens) |
+| `make check` | `619 passed` + `10/10 scenarios behaving as expected` + `44/44 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `619 passed` (~70s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
-| `.venv/bin/factory simulate` | 9/9 scenario matrix, offline, zero tokens |
-| `.venv/bin/factory evals` | 43/43 agent-configuration checks; exits non-zero below 100% |
+| `.venv/bin/factory simulate` | 10/10 scenario matrix, offline, zero tokens |
+| `.venv/bin/factory evals` | 44/44 agent-configuration checks; exits non-zero below 100% |
 | `.venv/bin/factory evals capture <run_id> <name>` | freeze a real run (or incident) as a permanent eval case |
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
@@ -45,7 +45,9 @@ src/factory/
     contracts.py        Pydantic models for every agent output.
     gates.py            Deterministic gate policy + every budget constant (MAX_*). No LLM calls.
     ambiguity.py        Threshold-term detection behind Checkpoint 1 (THRESHOLD_TERMS, unbound_criteria).
-    task_order.py       Dependency-ordered task list (Kahn sort), shared by pipeline + PLAN.md.
+    task_order.py       Dependency-ordered task list (Kahn sort), shared by pipeline + PLAN.md;
+                        dependency_problems = the strict reading gate-1 applies (cycles, unknown deps).
+    authorization.py    The boss's rules: may a stage START, given the recorded verdicts? (pure)
     traceability.py     Deterministic AC ↔ tester-claim cross-check (catches silently dropped criteria).
     agent_output.py     parse_agent_json & friends.   project_spec.py  ProjectSpec model.
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
@@ -53,7 +55,10 @@ src/factory/
   pipeline/             The orchestrator (LangGraph). Owns routing/remediation. __init__ is the
                         PUBLIC API — other packages import only from `factory.pipeline`.
     state.py            PipelineState.
-    graph.py            Conditional edges, resume_entry_for, every build_*/compile_* graph.
+    graph.py            Conditional edges, resume_entry_for, ONE build_pipeline(entry=…); the
+                        build_*/compile_* resume names are that graph entered at another node.
+    boss.py             Wraps every agent node (graph._AGENT_NODES): authorizes it from the DB's
+                        gate verdicts before it runs; a refusal BLOCKS the run, agent never called.
     agent_calls.py      The single agent-call boundary (_run_or_replay, JSON repair). Tests
                         patch `factory.pipeline.agent_calls._run_or_replay` / `.run_agent`.
     nodes/              spec.py, architect.py, coder.py (+ remediation, scope diff), tester.py,
@@ -64,7 +69,9 @@ src/factory/
                         (declared-scope check); verify_changes in __init__.
   evidence/             artifacts.py (INTENT → SPEC → PLAN chain), adr.py (decision memory),
                         trust_package.py (+ schemas/), metrics.py, progress.py (per-run stage
-                        flow + timeline from the DB; shared by CLI, TUI and simulate).
+                        flow + timeline from the DB; shared by CLI, TUI and simulate),
+                        pipeline_record.py (docs/work/<story>/PIPELINE.md — the boss's committed
+                        record of a run, written from runs.service._finish at every stop).
   workspace/            layout.py ($FACTORY_HOME resolver: home/db_path/projects_dir, re-exported
                         from `factory.workspace`; EVIDENCE_PATHS = what the factory owns in a
                         product repo), projects.py, templates.py, git.py (checkpoint + evidence
@@ -135,12 +142,12 @@ input/output is stored, so any run replays offline for free. Evidence is version
   default path. Products are `$FACTORY_HOME/projects/<slug>/` — factory *output*, not source:
   never hand-edit them. `tests/conftest.py` points `FACTORY_HOME` at a tmp dir for EVERY test
   (autouse), so no test can touch the operator's real products.
-- **`factory replay <id>` of a PROJECT run writes into the live product.** It re-generates the
-  run's evidence (same content, today's date) and commits it into the product repo, and a run
-  that parked at a checkpoint parks again as a NEW `waiting_human` run. `factory approve` on
-  that replay run resumes with LIVE agents (resume is not replay-aware) and spends tokens. To
-  replay a real run for inspection, copy `$FACTORY_HOME`, rewrite `projects.repo_path` in the
-  copy, and point `FACTORY_HOME` at it.
+- **`factory replay <id>` runs in a scratch clone** (`$FACTORY_HOME/replays/run-<id>/`, at the
+  replayed run's baseline) and never writes into the product; a replay that parks at a
+  checkpoint parks as a NEW `waiting_human` run, and `factory approve` on it keeps replaying
+  (`runs.service._resume_state` carries `replay_run_id`) — zero tokens. It still writes rows
+  into the real `factory.db`; to experiment without that, copy `$FACTORY_HOME`, rewrite
+  `projects.repo_path` in the copy, and point `FACTORY_HOME` at it.
 - **A project directory IS its git repository** (`projects.repo_path` == project dir ==
   `opencode_cwd` == `state["project_dir"]`). Its evidence (`workspace.layout.EVIDENCE_PATHS`:
   `docs/work/`, `docs/architecture/adr/`, `docs/releases/`, `PROJECT_RULES.md`,
@@ -174,6 +181,11 @@ input/output is stored, so any run replays offline for free. Evidence is version
   (a test forbids it) and don't import `interfaces.cli` from the board — that console-swap
   hack is what `runs/` replaced. Tests that drive a command patch the name where the command
   looks it up, e.g. `patch("factory.runs.run_project_pipeline")`.
+- **The boss authorizes from the DB, not graph state.** A test that drives a mid-line graph
+  (architect / coder / tester entry) must seed the gate rows a real run would have — e.g. a
+  passed `gate-1-spec` before the architect, a passed or operator-APPROVED `gate-2-architect`
+  before the coder — or the boss (correctly) refuses with "never ran". Don't bypass it; seed the
+  record. A new agent node goes in `graph._AGENT_NODES` with a rule in `domain/authorization.py`.
 - **Every terminal state must call `finish_run`.** Returning `{"status": "failed"}` in graph
   state only is how a run ends up stuck `running`, invisible to `factory queue`, and later
   mislabelled by `reconcile` as a dead process.

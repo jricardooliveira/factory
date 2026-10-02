@@ -9,6 +9,7 @@ and `state.reports` (read-only aggregates). Nothing outside the package calls
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -76,6 +77,20 @@ CREATE TABLE IF NOT EXISTS gate_results (
     human_questions TEXT,
     human_response TEXT,
     checked_at TEXT NOT NULL
+);
+
+-- The boss's decisions: may a stage START (domain.authorization). Not gates —
+-- a gate judges output, this judges inputs, and keeping them apart keeps every
+-- gate pass rate in `factory metrics` honest. missing/warnings are JSON lists.
+CREATE TABLE IF NOT EXISTS authorizations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES pipeline_runs(id),
+    stage TEXT NOT NULL,
+    allowed INTEGER NOT NULL,
+    granted_by TEXT,
+    missing TEXT NOT NULL DEFAULT '[]',
+    warnings TEXT NOT NULL DEFAULT '[]',
+    decided_at TEXT NOT NULL
 );
 """
 
@@ -455,6 +470,39 @@ def get_run_logs(conn: sqlite3.Connection, run_id: int) -> list[dict[str, Any]]:
         "SELECT * FROM agent_logs WHERE run_id = ? ORDER BY id", (run_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def log_authorization(
+    conn: sqlite3.Connection,
+    run_id: int,
+    stage: str,
+    allowed: bool,
+    *,
+    granted_by: str = "",
+    missing: list[str] | tuple[str, ...] = (),
+    warnings: list[str] | tuple[str, ...] = (),
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO authorizations (run_id, stage, allowed, granted_by, missing, warnings, "
+        "decided_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (run_id, stage, int(allowed), granted_by, json.dumps(list(missing)),
+         json.dumps(list(warnings)), _now()),
+    )
+    return cursor.lastrowid  # type: ignore[return-value]
+
+
+def get_run_authorizations(conn: sqlite3.Connection, run_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM authorizations WHERE run_id = ? ORDER BY id", (run_id,)
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        row = dict(r)
+        row["allowed"] = bool(row["allowed"])
+        row["missing"] = json.loads(row["missing"] or "[]")
+        row["warnings"] = json.loads(row["warnings"] or "[]")
+        out.append(row)
+    return out
 
 
 def get_run_gates(conn: sqlite3.Connection, run_id: int) -> list[dict[str, Any]]:

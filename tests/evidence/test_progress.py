@@ -123,5 +123,21 @@ class TimelineTests(unittest.TestCase):
         self.assertIn("✓", render_timeline(events))
 
 
+    def test_boss_decisions_are_on_the_timeline(self) -> None:
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "US-0001", "S", "req")
+            rid = db.start_run(conn, "US-0001")
+            db.log_authorization(conn, rid, "architect-agent", True,
+                                 granted_by="gate-1-spec passed")
+            db.log_authorization(conn, rid, "coder-agent:T-2", False,
+                                 missing=["T-1 to be implemented first"])
+
+        boss = [e for e in run_timeline(self.db_path, rid) if e.kind == "boss"]
+        self.assertEqual([e.label for e in boss],
+                         ["authorize architect-agent", "authorize coder-agent:T-2"])
+        self.assertEqual([e.status for e in boss], ["done", "failed"])
+        self.assertEqual(boss[0].detail, "gate-1-spec passed")
+        self.assertIn("T-1 to be implemented first", boss[1].detail)
+
 if __name__ == "__main__":
     unittest.main()

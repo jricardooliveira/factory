@@ -155,7 +155,8 @@ def node_gate_1(state: PipelineState) -> dict[str, Any]:
 
 
 def node_gate_2(state: PipelineState) -> dict[str, Any]:
-    if state.get("status") == "failed":
+    # `blocked` arrives when the boss refused the architect: there is no design to judge.
+    if state.get("status") in ("failed", "blocked"):
         return state
 
     arch = ArchitectOutput.model_validate(state["architect"])

@@ -13,11 +13,13 @@ interface's call.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from factory.adapters.notify import notify
+from factory.evidence.pipeline_record import write_pipeline_record
 from factory.pipeline import (
     PipelineState,
     compile_architect_resume_pipeline,
@@ -56,7 +58,7 @@ from factory.state.db import (
     respond_to_gate,
     start_run,
 )
-from factory.workspace.git import git_head
+from factory.workspace.git import git_commit_paths, git_head
 from factory.workspace.projects import agents_link_problem, get_project
 from factory.workspace.sandbox import prepare_replay_sandbox
 
@@ -382,10 +384,31 @@ def _finish(
         human_questions=human_qs,
         final_state=final_state,
     )
+    _commit_pipeline_record(run_id, story_id, final_state, db_path)
     emit(RunFinished(outcome))
     if notify_operator:
         _notify_if_parked(run_id, story_id, status, outcome.current_stage)
     return outcome
+
+
+def _commit_pipeline_record(
+    run_id: int, story_id: str, final_state: dict[str, Any], db_path: Path
+) -> None:
+    """Commit the boss's PIPELINE.md for this stop into the product repo.
+
+    Every way a run stops — completed, failed, blocked, parked for the operator —
+    passes through `_finish`, so this is the one place the record is written.
+    Evidence must never fail a run; `git_commit_paths` is already best-effort.
+    """
+    project_dir = final_state.get("project_dir")
+    if not project_dir:
+        return
+    try:
+        path = write_pipeline_record(db_path, run_id, Path(project_dir))
+    except (OSError, sqlite3.Error):
+        return
+    if path:
+        git_commit_paths(Path(project_dir), [path], f"factory: {story_id} PIPELINE (run {run_id})")
 
 
 def _notify_if_parked(run_id: int, story_id: str, status: str, stage: str | None = None) -> None:

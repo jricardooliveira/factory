@@ -127,7 +127,7 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
 
         tracked = set(_git_out(self.work, "ls-files").split())
         work = artifacts.work_dir_for(self.work, "US-0001")
-        for name in ("INTENT.md", "SPEC.md", "PLAN.md"):
+        for name in ("INTENT.md", "SPEC.md", "PLAN.md", "PIPELINE.md"):
             self.assertIn(f"docs/work/US-0001/{name}", tracked)
             self.assertTrue((work / name).is_file())
         self.assertTrue(any(t.startswith("docs/architecture/adr/ADR-US-0001-") for t in tracked))
@@ -246,7 +246,8 @@ class EvidenceCommitMessagesTests(unittest.TestCase):
             work = replay_sandbox(outcome.run_id, db_path)
             log = _git_out(work, "log", "--reverse", "--format=%s").splitlines()
             joined = "\n".join(log)
-            for needle in ("scaffold", "INTENT", "SPEC", "PLAN", "ADR", "trust package"):
+            for needle in ("scaffold", "INTENT", "SPEC", "PLAN", "ADR", "trust package",
+                           "PIPELINE"):
                 self.assertIn(needle, joined)
             self.assertTrue(log[0].startswith("factory: scaffold"), log)
             self.assertEqual(layout.EVIDENCE_PATHS[0], "docs/work/")

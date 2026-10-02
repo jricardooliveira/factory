@@ -1,6 +1,6 @@
 {
-  "name": "task-dependency-cycle-still-executes-every-task",
-  "description": "A spec whose task dependencies form a cycle must not silently drop tasks: order_tasks falls back to the declared order and every task is still built and gated.",
+  "name": "task-dependency-cycle-is-rejected-at-gate-1",
+  "description": "A spec whose task dependencies form a cycle is rejected at gate 1, naming the cycle. It used to be built in declared order (T-1 before the T-2 it depends on) so that no task was dropped; with the boss authorizing every task from its dependencies, that order would be refused at the coder anyway \u2014 after paying for the architect. Rejecting the story while it is cheap keeps the original promise: nothing is dropped silently.",
   "git": true,
   "agent_outputs": {
     "spec-agent": {
@@ -93,10 +93,9 @@
     }
   },
   "expect": {
-    "status": "completed",
+    "status": "failed",
     "gates": {
-      "gate-build": true,
-      "gate-test": true
+      "gate-1-spec": false
     }
   }
 }

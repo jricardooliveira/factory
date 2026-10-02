@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
+from factory.pipeline.boss import authorized
 from factory.pipeline.nodes.architect import node_architect_agent
 from factory.pipeline.nodes.coder import node_coder_agent
 from factory.pipeline.nodes.gates import node_gate_1, node_gate_2, node_gate_test
@@ -28,7 +29,8 @@ def should_continue_after_gate_1(state: PipelineState) -> str:
 
 
 def should_continue_after_gate_2(state: PipelineState) -> str:
-    if state.get("status") in ("failed", "waiting_human"):
+    # `blocked` = the boss refused the architect: the line stops here too.
+    if state.get("status") in ("failed", "blocked", "waiting_human"):
         return END
     return "coder-agent"
 
@@ -61,33 +63,39 @@ def route_after_gate_test(state: PipelineState) -> str:
 
 # ── Build the graph ───────────────────────────────────────────────
 
+# Every agent stage runs behind the boss (pipeline.boss): authorized from the
+# recorded verdicts before it starts. The spec-agent is the line's entry — its
+# input is the operator's request itself, so there is nothing to authorize.
+_AGENT_NODES = {
+    "architect-agent": node_architect_agent,
+    "coder-agent": node_coder_agent,
+    "tester-agent": node_tester_agent,
+}
 
-def _wire_tester(graph: StateGraph) -> None:
-    """Attach the post-implementation tester gate (coder 'complete' routes here)."""
-    graph.add_node("tester-agent", node_tester_agent)
-    graph.add_node("gate-test", node_gate_test)
-    graph.add_edge("tester-agent", "gate-test")
-    graph.add_conditional_edges("gate-test", route_after_gate_test)
 
+def build_pipeline(entry: str = "spec-agent") -> StateGraph:
+    """The whole line, entered at `entry` (a resume re-enters mid-line).
 
-def build_pipeline() -> StateGraph:
+    One graph for every entry point: the resume graphs used to be four
+    hand-copied subsets of this wiring, and every copy had to be kept in step.
+    Nodes before the entry are simply never reached.
+    """
     graph = StateGraph(PipelineState)
-
     graph.add_node("spec-agent", node_spec_agent)
     graph.add_node("gate-1", node_gate_1)
-    graph.add_node("architect-agent", node_architect_agent)
     graph.add_node("gate-2", node_gate_2)
-    graph.add_node("coder-agent", node_coder_agent)
+    graph.add_node("gate-test", node_gate_test)
+    for stage, node in _AGENT_NODES.items():
+        graph.add_node(stage, authorized(stage, node))
 
-    graph.set_entry_point("spec-agent")
-
+    graph.set_entry_point(entry)
     graph.add_conditional_edges("spec-agent", should_continue_after_spec)
     graph.add_conditional_edges("gate-1", should_continue_after_gate_1)
-    graph.add_conditional_edges("gate-2", should_continue_after_gate_2)
     graph.add_edge("architect-agent", "gate-2")
+    graph.add_conditional_edges("gate-2", should_continue_after_gate_2)
     graph.add_conditional_edges("coder-agent", route_after_coder)
-    _wire_tester(graph)
-
+    graph.add_edge("tester-agent", "gate-test")
+    graph.add_conditional_edges("gate-test", route_after_gate_test)
     return graph
 
 
@@ -96,19 +104,9 @@ def compile_pipeline():
 
 
 def build_coder_only_pipeline() -> StateGraph:
-    """Mini-pipeline entered at the coder (resume after human approval). Includes
-    the architect + gate-2 nodes so the coder's infeasible-design feedback can
-    still route to a re-architecture; they're never entered on the happy path."""
-    graph = StateGraph(PipelineState)
-    graph.add_node("coder-agent", node_coder_agent)
-    graph.add_node("architect-agent", node_architect_agent)
-    graph.add_node("gate-2", node_gate_2)
-    graph.set_entry_point("coder-agent")
-    graph.add_conditional_edges("coder-agent", route_after_coder)
-    graph.add_edge("architect-agent", "gate-2")
-    graph.add_conditional_edges("gate-2", should_continue_after_gate_2)
-    _wire_tester(graph)
-    return graph
+    """Entered at the coder (resume after an approved design). The coder's
+    infeasible-design feedback can still route back to the architect."""
+    return build_pipeline(entry="coder-agent")
 
 
 def compile_coder_only_pipeline():
@@ -136,20 +134,7 @@ def build_spec_resume_pipeline() -> StateGraph:
     """Re-entry from the story itself: used when a human REJECTS Checkpoint 1.
     Re-runs the spec-agent (carrying the operator's answers as `prior_findings`)
     and then flows on through the normal line."""
-    graph = StateGraph(PipelineState)
-    graph.add_node("spec-agent", node_spec_agent)
-    graph.add_node("gate-1", node_gate_1)
-    graph.add_node("architect-agent", node_architect_agent)
-    graph.add_node("gate-2", node_gate_2)
-    graph.add_node("coder-agent", node_coder_agent)
-    graph.set_entry_point("spec-agent")
-    graph.add_conditional_edges("spec-agent", should_continue_after_spec)
-    graph.add_conditional_edges("gate-1", should_continue_after_gate_1)
-    graph.add_edge("architect-agent", "gate-2")
-    graph.add_conditional_edges("gate-2", should_continue_after_gate_2)
-    graph.add_conditional_edges("coder-agent", route_after_coder)
-    _wire_tester(graph)
-    return graph
+    return build_pipeline(entry="spec-agent")
 
 
 def compile_spec_resume_pipeline():
@@ -158,18 +143,9 @@ def compile_spec_resume_pipeline():
 
 def build_architect_resume_pipeline() -> StateGraph:
     """Re-entry from architecture: used when a human REJECTS the architecture
-    checkpoint. Re-runs the architect (with reviewer feedback) → gate-2 → coder.
+    checkpoint (or approves Checkpoint 1). Re-runs the architect → gate-2 → coder.
     """
-    graph = StateGraph(PipelineState)
-    graph.add_node("architect-agent", node_architect_agent)
-    graph.add_node("gate-2", node_gate_2)
-    graph.add_node("coder-agent", node_coder_agent)
-    graph.set_entry_point("architect-agent")
-    graph.add_edge("architect-agent", "gate-2")
-    graph.add_conditional_edges("gate-2", should_continue_after_gate_2)
-    graph.add_conditional_edges("coder-agent", route_after_coder)
-    _wire_tester(graph)
-    return graph
+    return build_pipeline(entry="architect-agent")
 
 
 def compile_architect_resume_pipeline():

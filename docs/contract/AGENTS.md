@@ -12,14 +12,21 @@ Agent definitions live in `agents/<name>.md` (resolved by opencode through one r
 |---|---|---|---|
 | `god` | factory | Request intake, classification, routing, cross-project state | ⛔ deferred (premature for solo) |
 | `spec-agent` | project | Intent → story + acceptance criteria + sliced tasks | ✅ built |
-| `boss` | project | Orchestration, context-pack assembly, gate authorization | ⛔ to build (as code, not an LLM) |
+| `boss` | project | Orchestration, context-pack assembly, gate authorization | ✅ built — as code, not an LLM (`domain/authorization.py`, `pipeline/boss.py`, `PIPELINE.md`) |
 | `architect-agent` | project | Technical approach, ADR, data/API impact, risks | ✅ built |
 | `boundary-agent` | project | Pre-impl gate: tenant/authz/API-contract/security sub-verdicts | ⛔ to build (Phase 5) |
 | `coder-agent` | project | Implement approved task within scope; write tests | ✅ built |
 | `tester-agent` | project | QA/security/performance verdicts; AC coverage | ✅ built (gate-test) |
 | `release-agent` | project | Assemble trust package, release readiness | ⛔ to build |
 
-**`boss` and `god` are intentionally not LLM agents.** Their real responsibilities are code: gate checks (`src/factory/domain/gates.py`), context-pack assembly (`src/factory/pipeline/prompts/context_pack.py`), and routing (`src/factory/pipeline/graph.py`). Build them only if multi-project coordination becomes a real need.
+**`boss` and `god` are intentionally not LLM agents.** Their real responsibilities are code. The boss is built as such:
+
+- **Stage order** — one LangGraph line (`pipeline/graph.build_pipeline(entry=…)`; every resume re-enters the same graph at a different node).
+- **Authorization** — before every agent stage, `pipeline/boss.authorized` reads the run's *recorded* gate verdicts (newest per gate, including the operator's checkpoint answers) and applies the pure rules in `domain/authorization.py` — the brief's "boss may call X only if…": the architect needs an accepted story; each coder task needs an approved design and its dependencies built; a remediation pass needs a failed gate-test with findings; the tester needs every task built and a green last build. A refusal **blocks** the run (persisted, agent never called) and names what is missing. Every decision is stored in the `authorizations` table — kept apart from `gate_results`, since a gate judges output and an authorization judges inputs.
+- **Context packs** — `pipeline/prompts/context_pack.py`; **gate checks** — `domain/gates.py`.
+- **The local pipeline file** — `docs/work/<story>/PIPELINE.md` in the product repo, rewritten and committed each time a run stops (`evidence/pipeline_record.py`, written from `runs.service._finish`): the trail of authorizations, agent and gate verdicts, the blockers, warnings and the next authorized step. A run that failed or parked no longer leaves the product repo silent about why.
+
+`god` stays deferred: it only earns its keep once multi-project coordination is a real need.
 
 ---
 
@@ -39,7 +46,7 @@ To-build agents (`boundary`, `release`) require new models with **separate sub-v
 
 ## Handoff contract
 
-Each stage produces a handoff that the next stage and the gates consume. Today this is the Pydantic output + `agent_logs` rows; the target machine contract is [`trust-package.schema.json`](../../src/factory/evidence/schemas/trust-package.schema.json). Required fields on any handoff: `work_id`, `parent_story`, `project_id`, `stage`, `verdict`, `input_artifacts`, `output_artifacts`, `blockers`, `next_authorization`. Allowed verdicts: `pass | warn | fail | blocked | complete | not_applicable`.
+Each stage produces a handoff that the next stage and the gates consume. Today this is the Pydantic output + `agent_logs` rows, plus the boss's `authorizations` (rendered for humans in each story's committed `PIPELINE.md`); the target machine contract is [`trust-package.schema.json`](../../src/factory/evidence/schemas/trust-package.schema.json). Required fields on any handoff: `work_id`, `parent_story`, `project_id`, `stage`, `verdict`, `input_artifacts`, `output_artifacts`, `blockers`, `next_authorization`. Allowed verdicts: `pass | warn | fail | blocked | complete | not_applicable`.
 
 **Replay:** because every agent's verbatim input/output is stored, any run can be re-driven through the orchestration with `factory replay <run_id>` at zero token cost — the basis for testing agent/gate interactions offline.
 

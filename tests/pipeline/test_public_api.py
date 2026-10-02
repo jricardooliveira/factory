@@ -5,7 +5,7 @@
 the submodules, so the internals can keep moving without breaking the CLI, the
 board or the self-tests. Inside the package the imports point one way:
 
-    graph -> nodes -> {prompts, agent_calls} -> state
+    graph -> {boss, nodes} -> {prompts, agent_calls} -> state
 
 (prompts never call an agent; agent_calls never builds a prompt; nodes never
 wire the graph). Tests may import internals — they patch where names are looked up.
@@ -29,7 +29,8 @@ ALLOWED: dict[str, set[str]] = {
     "evidence_writers": {"state"},
     "prompts": {"state", "prompts"},
     "nodes": {"state", "agent_calls", "evidence_writers", "prompts", "nodes"},
-    "graph": {"state", "nodes"},
+    "boss": {"state", "agent_calls"},
+    "graph": {"state", "nodes", "boss"},
 }
 
 

@@ -42,3 +42,42 @@ def order_tasks(tasks: list[TaskDef]) -> list[TaskDef]:
         ordered.extend(t.id for t in tasks if t.id not in seen)
 
     return [by_id[tid] for tid in ordered]
+
+
+def dependency_problems(tasks: list[TaskDef]) -> list[str]:
+    """Why this task graph cannot be executed in order ([] when it can).
+
+    `order_tasks` stays forgiving so a run never crashes on bad data; this is the
+    strict reading gate-1 applies, because forgiveness meant a task could be
+    implemented before the task it depends on with nothing recording it.
+    """
+    problems: list[str] = []
+    ids = [t.id for t in tasks]
+    duplicates = sorted({tid for tid in ids if ids.count(tid) > 1})
+    if duplicates:
+        problems.append(f"duplicate task id(s): {', '.join(duplicates)}")
+    known = set(ids)
+    for t in tasks:
+        if t.id in t.depends_on:
+            problems.append(f"{t.id} depends on itself")
+        unknown = [d for d in t.depends_on if d not in known]
+        if unknown:
+            problems.append(f"{t.id} depends on unknown task(s): {', '.join(unknown)}")
+
+    # Whatever Kahn's sort cannot place is in (or behind) a cycle. Self-loops are
+    # already reported above, so leave them out of the cycle message.
+    placed: set[str] = set()
+    pending = [t for t in tasks if t.id not in t.depends_on]
+    progressed = True
+    while progressed:
+        progressed = False
+        for t in list(pending):
+            if all(d in placed or d not in known for d in t.depends_on):
+                placed.add(t.id)
+                pending.remove(t)
+                progressed = True
+    if pending:
+        problems.append(
+            "dependency cycle among: " + ", ".join(t.id for t in pending)
+        )
+    return problems

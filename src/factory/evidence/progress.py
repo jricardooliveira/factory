@@ -1,7 +1,8 @@
 """Per-run progress, derived purely from the stored record.
 
 Where a run is in the pipeline (`run_pipeline_progress`) and what happened in it,
-in order (`run_timeline`), computed from `agent_logs` + `gate_results` alone, plus
+in order (`run_timeline`), computed from the stored record alone (`agent_logs`,
+`gate_results` and the boss's `authorizations`), plus
 plain-text forms of both. It is evidence of a run, not a view of one: the CLI
 review, the Textual board AND the offline scenario matrix (`selftest.simulate`)
 all read it, so it sits below `interfaces`. The rich-markup renderings live in
@@ -13,7 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from factory.state.db import get_db, get_run, get_run_gates, get_run_logs
+from factory.state.db import (
+    get_db,
+    get_run,
+    get_run_authorizations,
+    get_run_gates,
+    get_run_logs,
+)
 
 
 @dataclass
@@ -119,7 +126,7 @@ def plain_flow(stages: list[StageStatus]) -> str:
 @dataclass
 class TimelineEvent:
     when: str  # ISO timestamp
-    kind: str  # "run" | "agent" | "gate"
+    kind: str  # "run" | "agent" | "gate" | "boss" (an authorization decision)
     label: str
     detail: str = ""
     status: str = "info"  # done | failed | waiting | info — for styling
@@ -130,13 +137,14 @@ def hms(iso: str) -> str:
 
 
 def run_timeline(db_path: Path, run_id: int) -> list[TimelineEvent]:
-    """Chronological story of a run: start, each agent, each gate, finish."""
+    """Chronological story of a run: start, each boss authorization, agent and gate, finish."""
     with get_db(db_path) as conn:
         run = get_run(conn, run_id)
         if not run:
             return []
         logs = get_run_logs(conn, run_id)
         gates = get_run_gates(conn, run_id)
+        authorizations = get_run_authorizations(conn, run_id)
 
     events: list[TimelineEvent] = []
     if run["started_at"]:
@@ -164,6 +172,13 @@ def run_timeline(db_path: Path, run_id: int) -> list[TimelineEvent]:
             status = "done" if g["passed"] else "failed"
             detail = g.get("reason") or ""
         events.append(TimelineEvent(g["checked_at"], "gate", g["gate_name"], detail, status))
+
+    for a in authorizations:
+        detail = a["granted_by"] if a["allowed"] else "refused — missing: " + "; ".join(a["missing"])
+        events.append(TimelineEvent(
+            a["decided_at"], "boss", f"authorize {a['stage']}", detail or "",
+            "done" if a["allowed"] else "failed",
+        ))
 
     if run["finished_at"]:
         st = run["status"]

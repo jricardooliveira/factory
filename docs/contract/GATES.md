@@ -14,7 +14,7 @@ A gate passing is necessary but not sufficient to cross a checkpoint — the ope
 
 **Runs:** after `spec-agent`, before architecture. **Code:** `domain/gates.gate_after_spec()`, wired by `pipeline/nodes/gates.node_gate_1`.
 
-Passes only if: verdict is `pass`; story has a title; ≥2 acceptance criteria; ≥1 task; ≤ `MAX_TASKS_PER_STORY` (6) tasks. These are STRUCTURAL checks — a story failing any of them is rejected, because there is nothing coherent for the operator to sign off on.
+Passes only if: verdict is `pass`; story has a title; ≥2 acceptance criteria; ≥1 task; ≤ `MAX_TASKS_PER_STORY` (6) tasks; and the task graph is executable — no duplicate ids, no dependency on an unknown task, no cycle (`domain/task_order.dependency_problems`; `order_tasks` stays forgiving so a run never crashes, which is exactly why a cycle used to be built in declared order, a task before its own dependency). These are STRUCTURAL checks — a story failing any of them is rejected, because there is nothing coherent for the operator to sign off on.
 
 **Human-needs detection — two independent triggers**, combined into ONE park so the operator answers everything in a single interruption:
 
@@ -93,9 +93,26 @@ The package itself is built (`evidence/trust_package.assemble`) and now refuses 
 
 ---
 
+## Authorization — the boss `✅ built`
+
+**Runs:** before every agent stage except the spec-agent (whose input is the operator's request). **Code:** the rules in `domain/authorization.py` (pure), applied by `pipeline/boss.authorized`, which wraps each agent node in `pipeline/graph.py`.
+
+A gate judges a stage's **output** after it ran; authorization judges its **inputs** before a token is spent. It decides from the *recorded* verdicts — newest row per gate, plus the operator's answer if it parked — because a resumed run rebuilds its state from agent logs and carries no gate dicts.
+
+| Stage | Authorized only if |
+|---|---|
+| `architect-agent` | a usable story with acceptance criteria and tasks; gate-1 passed, and if it parked, the operator approved (not rejected) |
+| `coder-agent` (per task) | an architecture with notes and affected modules; gate-2 passed / approved at Checkpoint 2; the task has a purpose; every task it depends on is already built |
+| `coder-agent` (remediation) | the newest gate-test FAILED and there are findings to resolve |
+| `tester-agent` | every task of the story is built and the newest gate-build passed |
+
+A task with no allowed scope or no completion evidence is authorized with a **warning** (recorded, not blocking). A refusal **blocks** the run — `finish_run(..., "blocked")`, never left `running` — and the error names every missing prerequisite. Every decision, allowed or refused, is stored in the `authorizations` table and shown on the run timeline (`factory review`) and in the story's committed `docs/work/<story>/PIPELINE.md`.
+
+---
+
 ## Cross-gate policy
 
 - **Auto-remediation:** on `fail` between checkpoints, route back (implementation → coder, design → architect) carrying prior findings, up to **2 attempts or ~$1/task**, then stop and queue. `✅ built`
 - **Budget source:** `agent_logs.cost_usd` is summed per task to enforce the $ cap — **but that column is NULL in every row ever written**, so only the attempt cap actually binds. See EFFECTIVENESS.md §4; `factory metrics` reports it as NOT MEASURABLE.
 - **Thresholds** (`MAX_TASKS_PER_STORY`, `MAX_MODULES_PER_STORY`, attempt/cost caps) live as named constants in `src/factory/domain/gates.py`, not scattered in node logic.
-- **Every gate result is persisted** to `gate_results` (`state.db.log_gate`) (with `needs_human`, `human_questions`, `human_response`) and surfaced in `factory review`.
+- **Every gate result is persisted** to `gate_results` (`state.db.log_gate`) (with `needs_human`, `human_questions`, `human_response`) and surfaced in `factory review`; every boss authorization to `authorizations` (`state.db.log_authorization`).

@@ -170,6 +170,11 @@ CATALOG: list[Scenario] = [
         "failed",
     ),
     Scenario(
+        "task_cycle", "Tasks depend on each other in a cycle -> rejected at gate-1",
+        {"spec-agent": _spec("Cyclic", [_task("T-1", deps=["T-2"]), _task("T-2", deps=["T-1"])])},
+        "failed",
+    ),
+    Scenario(
         "sensitive_work", "Architect flags sensitivity/external dep -> parks at gate-2",
         {"spec-agent": _spec("Billing", [_task("T-1")]),
          "architect-agent": _arch(["pay.py"], sensitivity=["pii", "financial"],

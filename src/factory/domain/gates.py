@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from factory.domain.ambiguity import is_bound, unbound_criteria
 from factory.domain.contracts import ArchitectOutput, CoderOutput, SpecOutput, TesterOutput
+from factory.domain.task_order import dependency_problems
 
 
 @dataclass
@@ -85,6 +86,10 @@ def gate_after_spec(
             f"Story has {len(spec.tasks)} tasks (max {MAX_TASKS_PER_STORY}). "
             "Split into multiple stories."
         )
+
+    # An unexecutable task graph: the coder would build a task before the one it
+    # depends on (order_tasks forgives bad data so that a run never crashes).
+    failures.extend(f"Task graph: {p}" for p in dependency_problems(spec.tasks))
 
     # A STRUCTURAL problem is a rejection: there is nothing coherent for the
     # operator to sign off on, so it must not be laundered into a checkpoint.
