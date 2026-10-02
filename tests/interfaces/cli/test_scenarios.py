@@ -13,11 +13,15 @@ from pathlib import Path
 from rich.console import Console
 from rich.rule import Rule
 
-from factory.interfaces.cli.common import DB_PATH
 from factory.interfaces.cli.run import RunPrinter
 from factory.runs import run_pipeline
+from factory.workspace import home
 
 console = Console()
+
+# A throwaway DB beside — never instead of — $FACTORY_HOME/factory.db: main()
+# deletes it before each sweep, and that must never be the operator's history.
+DB_PATH = home() / "scenarios.db"
 
 # ── Test scenarios ────────────────────────────────────────────────
 

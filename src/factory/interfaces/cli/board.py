@@ -9,7 +9,7 @@ from rich.console import Group
 from rich.live import Live
 
 from factory.interfaces import render
-from factory.interfaces.cli.common import DB_PATH, fail
+from factory.interfaces.cli.common import db_path, fail
 from factory.state.db import (
     get_db,
     get_pending_human_gate,
@@ -34,7 +34,7 @@ def board_command(args: list[str]) -> None:
         try:
             from factory.interfaces.board.tui import run_board_tui
 
-            run_board_tui(DB_PATH)
+            run_board_tui(db_path())
         except ImportError:
             render.console.print("[yellow]textual not installed — falling back to plain board[/yellow]")
             show_board(once=False, interval=interval)
@@ -42,7 +42,7 @@ def board_command(args: list[str]) -> None:
 
 def board_snapshot() -> Group:
     """Read the factory's current state and build the plain board renderable."""
-    with get_db(DB_PATH) as conn:
+    with get_db(db_path()) as conn:
         running = get_runs_by_status(conn, ["running", "waiting_human"])
         attention = get_runs_by_status(conn, ["failed", "blocked"])
         active = [
@@ -56,7 +56,7 @@ def board_snapshot() -> Group:
 
 def show_board(once: bool = False, interval: float = 2.0) -> None:
     """Live status board. --once prints a single snapshot."""
-    init_db(DB_PATH)
+    init_db(db_path())
     console = render.console
     if once:
         console.print(board_snapshot())
@@ -84,5 +84,5 @@ def visualize_command(args: list[str]) -> None:
 
     from factory.interfaces.board.html_report import generate_factory_visualization
 
-    path = generate_factory_visualization(DB_PATH, output)
+    path = generate_factory_visualization(db_path(), output)
     render.print_created(path, "Factory Visualization Created")

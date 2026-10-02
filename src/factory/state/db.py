@@ -9,8 +9,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator
 
-DEFAULT_DB_PATH = Path("factory.db")
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
@@ -81,7 +79,12 @@ def _now() -> str:
 
 
 @contextmanager
-def get_db(path: Path = DEFAULT_DB_PATH) -> Generator[sqlite3.Connection, None, None]:
+def get_db(path: Path) -> Generator[sqlite3.Connection, None, None]:
+    # No default path, deliberately: a bare "factory.db" default resolved
+    # against the working directory and scattered the run history across stray
+    # databases. Callers pass factory.workspace.db_path() ($FACTORY_HOME).
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -96,7 +99,7 @@ def get_db(path: Path = DEFAULT_DB_PATH) -> Generator[sqlite3.Connection, None, 
         conn.close()
 
 
-def init_db(path: Path = DEFAULT_DB_PATH) -> None:
+def init_db(path: Path) -> None:
     with get_db(path) as conn:
         conn.executescript(SCHEMA)
         _ensure_column(conn, "stories", "project_id", "TEXT REFERENCES projects(id)")

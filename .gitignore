@@ -17,11 +17,11 @@ projects/*/.secrets/
 projects/*/.secrets/*
 
 # Factory-generated PROJECTS are the factory's OUTPUT, not part of the factory.
-# Each product owns its own lifecycle and must carry its whole artifact chain
-# (INTENT/SPEC/PLAN, ADRs, PROJECT_RULES, project-spec) together WITH its code —
-# tracking the docs here and the code in repo/ split every product's audit trail
-# across two repositories. Nothing under a projects/ folder is versioned here.
-# (`projects/` also covers the legacy mvp/projects/ until it is migrated to $FACTORY_HOME.)
+# They live in $FACTORY_HOME/projects/<slug>/ (default ~/.factory), OUTSIDE this
+# repo, and each product directory IS its own git repository carrying its whole
+# artifact chain (INTENT/SPEC/PLAN, ADRs, releases, PROJECT_RULES, project-spec)
+# together WITH its code. `projects/` stays ignored for the legacy in-repo layout
+# until `factory workspace import-legacy <dir>` has moved it.
 projects/
 # Default/scratch working tree the factory materializes into when no project is set.
 repo/

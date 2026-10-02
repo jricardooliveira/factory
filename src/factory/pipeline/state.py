@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from factory.workspace.layout import EVIDENCE_PATHS
+
 
 class PipelineState(TypedDict, total=False):
     request: str
@@ -12,7 +14,7 @@ class PipelineState(TypedDict, total=False):
     db_path: str
     opencode_cwd: str
     project_spec: str  # rendered project spec context for agents
-    project_dir: str  # project root (parent of repo/) — enables ADRs + decision memory
+    project_dir: str  # project root == its git repo (== opencode_cwd) — ADRs + decision memory
     replay_run_id: int  # if set, feed stored agent outputs instead of calling opencode
 
     # Agent outputs (raw + parsed)
@@ -53,3 +55,15 @@ class PipelineState(TypedDict, total=False):
     # Overall
     status: str
     error: str
+
+
+def factory_owned_paths(state: PipelineState) -> tuple[str, ...]:
+    """Repo paths the FACTORY owns in this run's working tree ('' off-project).
+
+    A project's evidence (docs/work, ADRs, releases, PROJECT_RULES.md,
+    project-spec.json) lives inside its repository and is committed by the
+    factory, so every code measurement — scope check, tester diff — looks past
+    it, and the coder may not write it. Off-project there is no evidence, so
+    nothing is excluded or reserved.
+    """
+    return EVIDENCE_PATHS if state.get("project_dir") else ()

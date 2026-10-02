@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from factory.interfaces import render
-from factory.interfaces.cli.common import DB_PATH, fail
+from factory.interfaces.cli.common import db_path, fail
 from factory.state.db import init_db
+from factory.workspace import home
 from factory.workspace.projects import create_project, get_project
 from factory.workspace.projects import list_projects as fetch_projects
 from factory.workspace.templates import create_project_spec, write_project_spec
@@ -21,7 +22,7 @@ def project_command(args: list[str]) -> None:
     if subcommand == "create":
         create_project_command(args[1:])
     elif subcommand == "list":
-        render.print_projects(fetch_projects(DB_PATH))
+        render.print_projects(fetch_projects(db_path()))
     elif subcommand == "show":
         if len(args) < 2:
             fail("Usage: factory project show <project-id-or-slug>")
@@ -53,11 +54,11 @@ def create_project_command(args: list[str]) -> None:
         else:
             fail(f"Unknown project create option: {args[i]}")
 
-    init_db(DB_PATH)
+    init_db(db_path())
     try:
         project = create_project(
-            DB_PATH,
-            factory_root=Path.cwd(),
+            db_path(),
+            home=home(),
             slug=slug,
             name=name,
             spec_path=spec_path,
@@ -71,7 +72,7 @@ def create_project_command(args: list[str]) -> None:
 def show_project_command(ref: str) -> None:
     """Print one registered project."""
     try:
-        project = get_project(DB_PATH, ref)
+        project = get_project(db_path(), ref)
     except ValueError as exc:
         fail(str(exc))
     render.print_project(project)

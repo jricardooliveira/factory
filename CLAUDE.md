@@ -16,14 +16,15 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `397 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `397 passed` (~40s, offline, zero tokens) |
+| `make check` | `469 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `469 passed` (~60s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 9/9 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 43/43 agent-configuration checks; exits non-zero below 100% |
 | `.venv/bin/factory evals capture <run_id> <name>` | freeze a real run (or incident) as a permanent eval case |
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
+| `.venv/bin/factory workspace` | resolved `$FACTORY_HOME` (default `~/.factory`), its `factory.db` and every project repo |
 | `.venv/bin/factory --help` | full CLI verb list |
 
 `ruff` is configured in `pyproject.toml` (line-length 100, `E,F,I,W`) but **is not installed** in
@@ -59,8 +60,11 @@ src/factory/
   evidence/             artifacts.py (INTENT → SPEC → PLAN chain), adr.py (decision memory),
                         trust_package.py (+ schemas/), metrics.py, progress.py (per-run stage
                         flow + timeline from the DB; shared by CLI, TUI and simulate).
-  workspace/            projects.py, templates.py, git.py (checkpoint commits, baseline, real diff),
-                        materialize.py, repo_map.py.
+  workspace/            layout.py ($FACTORY_HOME resolver: home/db_path/projects_dir, re-exported
+                        from `factory.workspace`; EVIDENCE_PATHS = what the factory owns in a
+                        product repo), projects.py, templates.py, git.py (checkpoint + evidence
+                        commits, baseline, real diff), materialize.py, repo_map.py, legacy.py
+                        (`factory workspace import-legacy`).
   adapters/             opencode.py (the only place a model is called), notify.py.
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
   selftest/             evals.py (agent-configuration regression), simulate.py (scenario matrix).
@@ -69,7 +73,7 @@ src/factory/
                         through an `on_event` callback (events.py) and refuses with `RunError`.
   interfaces/           render.py (every rich print helper; takes data, never reads the DB),
                         cli/ (main.py = argv dispatch + usage; run.py, review.py, project.py,
-                        selftest.py, board.py = one module per command group),
+                        selftest.py, board.py, workspace.py = one module per command group),
                         board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
 evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected outcome).
 examples/specs/         Sample project specs.
@@ -102,8 +106,19 @@ input/output is stored, so any run replays offline for free. Evidence is version
   replay-fixture pattern in `tests/pipeline/test_pipeline_replay.py` + `tests/fixtures/agent_outputs/`.
   Reaching for mocks to test the graph is the wrong instinct — seed `agent_logs` and set
   `replay_run_id`.
-- **`projects/*/repo/` is factory *output*, not source.** Never hand-edit it, never let pytest
-  collect it (`testpaths = ["tests"]` exists for this reason). It is gitignored.
+- **State lives in `$FACTORY_HOME` (default `~/.factory`), never the working directory.**
+  `factory.workspace.db_path()` is THE database; `state.db.get_db/init_db` deliberately have no
+  default path. Products are `$FACTORY_HOME/projects/<slug>/` — factory *output*, not source:
+  never hand-edit them. `tests/conftest.py` points `FACTORY_HOME` at a tmp dir for EVERY test
+  (autouse), so no test can touch the operator's real products.
+- **A project directory IS its git repository** (`projects.repo_path` == project dir ==
+  `opencode_cwd` == `state["project_dir"]`). Its evidence (`workspace.layout.EVIDENCE_PATHS`:
+  `docs/work/`, `docs/architecture/adr/`, `docs/releases/`, `PROJECT_RULES.md`,
+  `project-spec.json`) is committed by the factory as it is produced via `git.git_commit_paths`
+  (never `git add -A`, which would launder an out-of-band write), is refused as coder output
+  (`materialize_code_blocks(reserved=...)`), and is excluded from every CODE measurement — the
+  coder's scope check, the trust package's change set, the tester's diff. A new code
+  measurement must pass `exclude=` too, or the factory's own paperwork shows up as agent work.
 - **Never commit `*.db`.** All SQLite state is gitignored and regenerable.
 - **Don't overwrite `state["story_id"]` with the agent's `spec.story_id`** — the agent invents its
   own numbering; the DB row id is canonical, and clobbering it orphans later story updates.
@@ -114,7 +129,9 @@ input/output is stored, so any run replays offline for free. Evidence is version
   `tests/agent_config/test_tiers.py` fails on drift. Update both.
 - **The `factory:` commit-message prefix is load-bearing.** `workspace.git._factory_baseline()` finds the
   pre-factory baseline by locating the oldest commit whose subject starts with it.
-- Agents prefix paths with `repo/`; `materialize.normalize_block_path` strips it. Don't double-prefix.
+- Agents may prefix paths with `repo/` (old PROJECT_RULES said "Source root: repo/");
+  `materialize.normalize_block_path` strips it when the root is named `repo` or is a project
+  repo (`repo_root=True`). Don't double-prefix.
 - A gate may **pass and still need a human** (`GateResult.needs_human`). Passing ≠ crossing a checkpoint.
   Open questions from the spec-agent PARK the run (Checkpoint 1); they are not a failure.
 - **Run orchestration lives in `factory.runs`, never in an interface.** The CLI renders its

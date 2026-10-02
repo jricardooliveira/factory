@@ -11,7 +11,7 @@ import sys
 from collections.abc import Callable
 from typing import NoReturn
 
-from factory.interfaces.cli import board, project, review, run, selftest
+from factory.interfaces.cli import board, project, review, run, selftest, workspace
 from factory.interfaces.render import console
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
@@ -33,6 +33,7 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "tiers": selftest.tiers_command,
     "board": board.board_command,
     "visualize": board.visualize_command,
+    "workspace": workspace.workspace_command,
 }
 
 
@@ -61,6 +62,8 @@ def print_usage(exit_code: int = 1) -> NoReturn:
     console.print("  factory [bold cyan]reject <run_id> [reason][/bold cyan]      Reject paused run")
     console.print("  factory [bold cyan]retry <run_id>[/bold cyan]                Re-drive a run that died after you answered")
     console.print("  factory [bold cyan]tiers[/bold cyan]                          Show per-agent model tiers (leverage allocation)")
+    console.print("  factory [bold cyan]workspace[/bold cyan]                      Show $FACTORY_HOME (default ~/.factory): DB + projects")
+    console.print("  factory [bold cyan]workspace import-legacy <dir>[/bold cyan]  Move an old factory.db + projects/ into it ([dim]--dry-run[/dim])")
     sys.exit(exit_code)
 
 

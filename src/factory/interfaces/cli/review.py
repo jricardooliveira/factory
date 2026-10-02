@@ -11,7 +11,7 @@ from factory.evidence.progress import (
     run_timeline,
 )
 from factory.interfaces import render
-from factory.interfaces.cli.common import DB_PATH, fail, run_id_arg
+from factory.interfaces.cli.common import db_path, fail, run_id_arg
 from factory.state.db import (
     archive_run,
     get_db,
@@ -29,7 +29,7 @@ def review_command(args: list[str]) -> None:
     """`factory review <run_id> [--raw]`: everything a run did, agent by agent."""
     run_id = run_id_arg(args, "Usage: factory review <run_id> [--raw]")
     show_raw = "--raw" in args
-    with get_db(DB_PATH) as conn:
+    with get_db(db_path()) as conn:
         run = conn.execute(
             "SELECT pr.*, s.request, s.title as story_title FROM pipeline_runs pr "
             "JOIN stories s ON pr.story_id = s.id WHERE pr.id = ?",
@@ -42,13 +42,13 @@ def review_command(args: list[str]) -> None:
         logs = get_run_logs(conn, run_id)
         gates = get_run_gates(conn, run_id)
 
-    pkg = trust_package.assemble(DB_PATH, run_id)
+    pkg = trust_package.assemble(db_path(), run_id)
     render.print_run_review(
         run,
         logs,
         gates,
-        flow=render_flow(run_pipeline_progress(DB_PATH, run_id)),
-        timeline=render_timeline(run_timeline(DB_PATH, run_id)),
+        flow=render_flow(run_pipeline_progress(db_path(), run_id)),
+        timeline=render_timeline(run_timeline(db_path(), run_id)),
         trust_package=pkg,
         trust_issues=trust_package.validate(pkg) if pkg else [],
         parse_output=parse_agent_json,
@@ -58,8 +58,8 @@ def review_command(args: list[str]) -> None:
 
 def list_command(args: list[str]) -> None:
     """`factory list`: every pipeline run."""
-    init_db(DB_PATH)
-    with get_db(DB_PATH) as conn:
+    init_db(db_path())
+    with get_db(db_path()) as conn:
         rows = conn.execute("""
             SELECT pr.id, pr.story_id, s.request, pr.status, pr.current_stage, pr.started_at
             FROM pipeline_runs pr
@@ -71,8 +71,8 @@ def list_command(args: list[str]) -> None:
 
 def queue_command(args: list[str]) -> None:
     """`factory queue`: parked runs awaiting sign-off, plus runs needing attention."""
-    init_db(DB_PATH)
-    with get_db(DB_PATH) as conn:
+    init_db(db_path())
+    with get_db(db_path()) as conn:
         parked = get_runs_by_status(conn, ["waiting_human"])
         attention = get_runs_by_status(conn, ["failed", "blocked"])
         parked_ctx = []
@@ -86,8 +86,8 @@ def queue_command(args: list[str]) -> None:
 def dismiss_command(args: list[str]) -> None:
     """`factory dismiss <run_id>`: archive a run off the board (non-destructive)."""
     run_id = run_id_arg(args, "Usage: factory dismiss <run_id>")
-    init_db(DB_PATH)
-    with get_db(DB_PATH) as conn:
+    init_db(db_path())
+    with get_db(db_path()) as conn:
         row = conn.execute("SELECT id FROM pipeline_runs WHERE id = ?", (run_id,)).fetchone()
         if not row:
             fail(f"No run found with id #{run_id}")
@@ -105,8 +105,8 @@ def reconcile_command(args: list[str]) -> None:
                 older_than = float(args[idx + 1])
             except ValueError:
                 fail("--older-than expects seconds (a number)")
-    init_db(DB_PATH)
-    with get_db(DB_PATH) as conn:
+    init_db(db_path())
+    with get_db(db_path()) as conn:
         ids = reconcile_stale_runs(conn, older_than_secs=older_than)
     if ids:
         render.console.print(f"[yellow]Reconciled {len(ids)} stale run(s): {ids}[/yellow]")

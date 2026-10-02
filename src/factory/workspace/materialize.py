@@ -5,15 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from factory.workspace.layout import is_evidence_path
 
-def normalize_block_path(root: Path, relative: str) -> str:
-    """Strip a leading 'repo/' when the root dir is itself named 'repo'.
+
+def normalize_block_path(root: Path, relative: str, *, repo_root: bool = False) -> str:
+    """Strip a leading 'repo/' when the root dir is the repository itself.
 
     Agents emit repo-rooted paths (e.g. 'repo/app/main.py') while the working
     directory already IS the repo, which would nest files in 'repo/repo/...'.
+    That is the case when the root is named 'repo' (the old projects/<P>/repo/
+    layout, and ad-hoc runs) or when the caller says so (`repo_root=True`): a
+    project directory IS its repo, and its name is the project slug.
     Idempotent; only triggers for that doubled-repo case.
     """
-    if root.name == "repo":
+    if repo_root or root.name == "repo":
         for prefix in ("repo/", "./repo/"):
             if relative.startswith(prefix):
                 return relative[len(prefix):]
@@ -81,19 +86,39 @@ def _block_value(block: Any, key: str, default: str = "") -> str:
     return str(getattr(block, key, default))
 
 
-def materialize_code_blocks(code_blocks: list[Any], *, root: Path) -> list[Path]:
+def _reject_reserved(relative_path: str, reserved: tuple[str, ...]) -> None:
+    """Raise if a path is factory-owned evidence (see `layout.EVIDENCE_PATHS`).
+
+    The evidence lives in the product repo next to the code, so without this a
+    coder could forge its own SPEC/PLAN/trust package — or rewrite
+    PROJECT_RULES.md, which gate-1 reads as OPERATOR-authored and would let an
+    agent settle its own ambiguity questions.
+    """
+    if reserved and is_evidence_path(relative_path, reserved):
+        raise ValueError(
+            f"Refusing to materialize factory-owned evidence: {relative_path}. The "
+            f"artifact chain, ADRs, trust packages, PROJECT_RULES.md and "
+            f"project-spec.json are written by the factory, never by an agent."
+        )
+
+
+def materialize_code_blocks(
+    code_blocks: list[Any], *, root: Path, reserved: tuple[str, ...] = ()
+) -> list[Path]:
     """Write create/modify code blocks under root and return written paths.
 
     ALL-OR-NOTHING: every block is validated before any file is written. Writing
     as it went meant an invalid third block left the first two on disk, and the
     scope check then reported those two as undeclared out-of-band writes —
-    blaming the agent for the orchestrator's partial failure.
+    blaming the agent for the orchestrator's partial failure. `reserved` names the
+    factory-owned paths no block may target (a project's evidence).
     """
     planned: list[tuple[Path, str]] = []
     for block in code_blocks:
         action = _block_value(block, "action", "create")
         if action not in {"create", "modify"}:
             raise ValueError(f"Unsupported code block action: {action}")
+        _reject_reserved(_block_value(block, "path"), reserved)
         target = _safe_target(root, _block_value(block, "path"))
         planned.append((target, _block_value(block, "content")))
 

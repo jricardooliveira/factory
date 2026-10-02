@@ -147,7 +147,8 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | Resume rebuilds state from the LATEST agent output, so the operator cannot approve one design while the coder builds an earlier one (`build_resume_context`) | ✅ built |
 | The project's existing test suite runs after ANY Python change, not only when the task happened to write a test file | ✅ built |
 | Cost/token harvest from opencode (`agent_logs.cost_usd` is NULL in 100% of rows — see §4) | ⛔ to build |
-| Canonical DB path (four `factory.db` files exist; the path is CWD-relative) | ⛔ to build |
+| **Canonical workspace**: one resolver (`workspace.layout.home()`), `$FACTORY_HOME` default `~/.factory`, holds `factory.db` + `projects/<slug>/` — no CWD-relative path left (four stray `factory.db` files existed). `factory workspace` shows it; `factory workspace import-legacy` moves the old layout in | ✅ built |
+| **A product's evidence is versioned WITH its code**: the project directory IS its git repo; INTENT/SPEC/PLAN, ADRs, trust packages, rules and spec are committed as produced (`factory:`), refused as coder output, and excluded from every code measurement (scope check, trust-package diff, tester diff) | ✅ built |
 | Branch per story + PR-shaped review (the factory commits straight onto the current branch) | ⛔ to build |
 | tester-agent + gate-test (QA/AC-coverage, security, performance sub-verdicts) | ✅ built |
 | Run generated test bodies in the build gate (opt-in `FACTORY_RUN_TESTS`) | ✅ built (subprocess; hardened sandbox still ⛔) |

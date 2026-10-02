@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 
 from factory.interfaces import render
-from factory.interfaces.cli.common import DB_PATH, fail, report_path
+from factory.interfaces.cli.common import db_path, fail, report_path
 
 
 def tiers_command(args: list[str]) -> None:
@@ -69,7 +69,7 @@ def _capture(ev, args: list[str]) -> None:
     name = args[2]
     description = " ".join(args[3:]).strip()
     try:
-        path = ev.capture_case(DB_PATH, run_id, name, description=description)
+        path = ev.capture_case(db_path(), run_id, name, description=description)
     except ValueError as exc:
         fail(str(exc))
     render.print_eval_captured(run_id, path)
@@ -91,9 +91,9 @@ def metrics_command(args: list[str]) -> None:
     from factory.evidence import metrics as mx
     from factory.state.db import init_db
 
-    init_db(DB_PATH)
-    m = mx.compute(DB_PATH)
-    render.print_metrics(m, DB_PATH)
+    init_db(db_path())
+    m = mx.compute(db_path())
+    render.print_metrics(m, db_path())
 
     path = report_path(args, "metrics.md")
     if path is not None:

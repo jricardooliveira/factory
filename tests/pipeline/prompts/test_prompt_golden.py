@@ -110,7 +110,9 @@ class PromptGoldenTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.project = self.root / "project"
-        self.repo = self.project / "repo"
+        # A project directory IS its repository: the evidence (PROJECT_RULES.md,
+        # ADRs) sits beside the code, and the prompts must not change because of it.
+        self.repo = self.project
         self.repo.mkdir(parents=True)
         self.db_path = self.root / "factory.db"
         db.init_db(self.db_path)

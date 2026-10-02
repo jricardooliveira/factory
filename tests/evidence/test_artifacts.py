@@ -185,8 +185,9 @@ class ChainWiringTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            project_dir = root / "PROJ-001-demo"
-            repo = project_dir / "repo"
+            # A project directory IS its repository (evidence beside the code).
+            project_dir = root / "demo"
+            repo = project_dir
             repo.mkdir(parents=True)
             db_path = root / "f.db"
             db.init_db(db_path)
