@@ -1,0 +1,70 @@
+# Project: Ledger
+
+## Stack
+- python 3.12
+- sqlite
+
+## Forbidden
+- network calls at import time
+
+## NFRs
+- p95 latency under 200 ms
+
+
+## Project Rules (MUST follow)
+
+- Money is integer cents, never float.
+
+## Prior Architecture Decisions (stay consistent; do NOT re-litigate)
+
+# ADR US-0000: storage
+
+- Status: approved by operator
+
+Use sqlite.
+
+## Remediation pass — the QA / security / performance review FAILED
+
+The implementation already exists in the working directory. MODIFY the existing files to resolve every finding below. Do not rewrite unrelated code or add new features; return ONLY the changed files via code_blocks.
+
+### Findings to resolve
+- Missing test coverage: sorted order
+- Security: none
+
+## Current implementation under review (real diff)
+
+```diff
+diff --git a/ledger/overdue.py b/ledger/overdue.py
+new file mode 100644
+--- /dev/null
++++ b/ledger/overdue.py
+@@ -0,0 +1,2 @@
++def overdue():
++    return []
+```
+
+## Story
+
+**Problem:** Operators cannot see which invoices are late.
+
+**Acceptance criteria:**
+- An invoice unpaid 30 days after issue is listed as overdue
+- The overdue list is sorted oldest first
+
+## Agreed architecture (follow this design)
+
+```json
+{
+  "verdict": "pass",
+  "architecture_notes": "Add ledger/overdue.py with a pure query over invoices.",
+  "modules_affected": [
+    "ledger/overdue.py",
+    "ledger/cli.py"
+  ],
+  "risks": [
+    "clock skew"
+  ]
+}
+```
+
+Set verdict 'complete' once all findings are addressed.

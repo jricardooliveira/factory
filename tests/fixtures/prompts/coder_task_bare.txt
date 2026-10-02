@@ -1,0 +1,35 @@
+## Current task (1/2): T-0001 — Overdue query
+
+Implement ONLY this task. Other tasks are handled in separate calls.
+
+**Purpose:** find late invoices
+
+Allowed scope: (not restricted — stay within this task's purpose)
+
+**Done when:** the task purpose is satisfied and the code compiles
+
+## Story context
+
+**Problem:** Operators cannot see which invoices are late.
+
+**Acceptance criteria (whole story — implement the parts this task owns):**
+- An invoice unpaid 30 days after issue is listed as overdue
+- The overdue list is sorted oldest first
+
+## Agreed architecture (follow this design)
+
+```json
+{
+  "verdict": "pass",
+  "architecture_notes": "Add ledger/overdue.py with a pure query over invoices.",
+  "modules_affected": [
+    "ledger/overdue.py",
+    "ledger/cli.py"
+  ],
+  "risks": [
+    "clock skew"
+  ]
+}
+```
+
+Output only the files needed for THIS task. Do not reimplement already-implemented tasks. Keep changes within the allowed scope.

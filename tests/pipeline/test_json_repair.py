@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from factory import pipeline
+from factory.pipeline import agent_calls
 from factory.adapters.opencode import AgentResult
 
 
@@ -19,15 +19,15 @@ def _ar(output: str) -> AgentResult:
 
 class JsonRepairTests(unittest.TestCase):
     def test_valid_json_first_try_does_not_retry(self) -> None:
-        with patch.object(pipeline, "_run_or_replay", return_value=_ar('{"verdict": "pass"}')) as m:
-            _result, parsed = pipeline._run_agent_json({}, "spec-agent", "p")
+        with patch.object(agent_calls, "_run_or_replay", return_value=_ar('{"verdict": "pass"}')) as m:
+            _result, parsed = agent_calls._run_agent_json({}, "spec-agent", "p")
         self.assertEqual(parsed.get("verdict"), "pass")
         self.assertEqual(m.call_count, 1)
 
     def test_malformed_then_valid_on_repair(self) -> None:
         seq = [_ar("Sure! Here is the spec you asked for."), _ar('{"verdict": "pass"}')]
-        with patch.object(pipeline, "_run_or_replay", side_effect=seq) as m:
-            _result, parsed = pipeline._run_agent_json({}, "spec-agent", "p")
+        with patch.object(agent_calls, "_run_or_replay", side_effect=seq) as m:
+            _result, parsed = agent_calls._run_agent_json({}, "spec-agent", "p")
         self.assertEqual(parsed.get("verdict"), "pass")
         self.assertEqual(m.call_count, 2)
         # The retry prompt carried the repair instruction.
@@ -35,8 +35,8 @@ class JsonRepairTests(unittest.TestCase):
 
     def test_malformed_twice_returns_synthetic_blocked(self) -> None:
         seq = [_ar("no json here"), _ar("still no json")]
-        with patch.object(pipeline, "_run_or_replay", side_effect=seq) as m:
-            result, parsed = pipeline._run_agent_json({}, "spec-agent", "p")
+        with patch.object(agent_calls, "_run_or_replay", side_effect=seq) as m:
+            result, parsed = agent_calls._run_agent_json({}, "spec-agent", "p")
         self.assertEqual(parsed.get("error"), "Agent did not return valid JSON")
         self.assertEqual(m.call_count, 2)
         # The surfaced output is the latest attempt's, for diagnosis.
@@ -45,8 +45,8 @@ class JsonRepairTests(unittest.TestCase):
     def test_replay_mode_never_retries(self) -> None:
         # Replay outputs are frozen — a second call would be meaningless (and would
         # re-fetch the same stored text), so repair is skipped under replay.
-        with patch.object(pipeline, "_run_or_replay", return_value=_ar("no json")) as m:
-            _result, parsed = pipeline._run_agent_json({"replay_run_id": 7}, "spec-agent", "p")
+        with patch.object(agent_calls, "_run_or_replay", return_value=_ar("no json")) as m:
+            _result, parsed = agent_calls._run_agent_json({"replay_run_id": 7}, "spec-agent", "p")
         self.assertEqual(parsed.get("error"), "Agent did not return valid JSON")
         self.assertEqual(m.call_count, 1)
 

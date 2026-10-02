@@ -16,8 +16,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `365 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `365 passed` (~40s, offline, zero tokens) |
+| `make check` | `382 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `382 passed` (~40s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 9/9 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 43/43 agent-configuration checks; exits non-zero below 100% |
@@ -44,8 +44,16 @@ src/factory/
     traceability.py     Deterministic AC ↔ tester-claim cross-check (catches silently dropped criteria).
     agent_output.py     parse_agent_json & friends.   project_spec.py  ProjectSpec model.
   agent_config/         tiers.py (model tiers; must match agent frontmatter), review_policy.py.
-  pipeline/             LangGraph nodes + conditional edges. The orchestrator. Owns routing/remediation.
-    prompts/            context_pack.py (per-task prompt assembly).
+  pipeline/             The orchestrator (LangGraph). Owns routing/remediation. __init__ is the
+                        PUBLIC API — other packages import only from `factory.pipeline`.
+    state.py            PipelineState.
+    graph.py            Conditional edges, resume_entry_for, every build_*/compile_* graph.
+    agent_calls.py      The single agent-call boundary (_run_or_replay, JSON repair). Tests
+                        patch `factory.pipeline.agent_calls._run_or_replay` / `.run_agent`.
+    nodes/              spec.py, architect.py, coder.py (+ remediation, scope diff), tester.py,
+                        gates.py (gate-1/2/test, settled_threshold_terms), evidence.py.
+    prompts/            Every agent prompt: spec/architect/coder/tester.py, blocks.py,
+                        context_pack.py. Byte-pinned by tests/pipeline/prompts/test_prompt_golden.py.
   verification/         Non-LLM build verification: python.py, go.py, typescript.py, scope.py
                         (declared-scope check); verify_changes in __init__.
   evidence/             artifacts.py (INTENT → SPEC → PLAN chain), adr.py (decision memory),
@@ -115,6 +123,15 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - Editing anything in `agents/`, `domain/gates.py`, `domain/ambiguity.py`, `agent_config/`, or
   `pipeline/` (incl. `prompts/`) is an **agent-configuration change** — run `make evals`.
   `agents/*.md` and `agents/policies/REVIEW.md` are prompt TEXT: keep edits deliberate.
+- **Assembled prompts are golden-pinned.** `tests/pipeline/prompts/test_prompt_golden.py`
+  compares every agent's prompt byte-for-byte with `tests/fixtures/prompts/*.txt` (the tester's
+  embeds `agents/policies/REVIEW.md`). A refactor must leave them identical; a DELIBERATE prompt
+  change regenerates them with `FACTORY_UPDATE_GOLDEN=1 .venv/bin/python -m pytest
+  tests/pipeline/prompts/test_prompt_golden.py`, and the fixture diff is what gets reviewed.
+- **Patch where the name is looked up.** The agent boundary lives in `pipeline/agent_calls.py`,
+  so tests patch `factory.pipeline.agent_calls._run_or_replay` (or `.run_agent`), not
+  `factory.pipeline.*`. Outside `pipeline/`, import only names in `factory.pipeline.__all__`
+  (`tests/pipeline/test_public_api.py` enforces it, plus graph → nodes → prompts/agent_calls → state).
 - The trust package must never overstate evidence. `tests.passed` requires an executed
   suite; `diff.source` must be git-measured or `"unavailable"`.
 - **A verification check must earn its verdict.** Two bugs of this shape were shipped:

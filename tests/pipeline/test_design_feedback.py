@@ -10,7 +10,10 @@ from unittest.mock import patch
 
 from langgraph.graph import END
 
-from factory import pipeline
+from factory.pipeline import agent_calls
+from factory.pipeline.graph import route_after_coder
+from factory.pipeline.nodes.coder import node_coder_agent
+from factory.pipeline.prompts.blocks import _reviewer_feedback_block
 from factory.domain.gates import MAX_REARCHITECT_LOOPS
 from factory.adapters.opencode import AgentResult
 from factory.state import db
@@ -22,14 +25,14 @@ def _ar(output: str) -> AgentResult:
 
 class ReviewerFeedbackBlockTests(unittest.TestCase):
     def test_design_infeasible_renders_implementer_feedback(self) -> None:
-        block = pipeline._reviewer_feedback_block(
+        block = _reviewer_feedback_block(
             {"triggered_by": "design-infeasible", "prior_findings": ["needs a queue, not a cron"]}
         )
         self.assertIn("coder", block.lower())
         self.assertIn("needs a queue, not a cron", block)
 
     def test_architecture_rejected_still_renders(self) -> None:
-        block = pipeline._reviewer_feedback_block(
+        block = _reviewer_feedback_block(
             {"triggered_by": "architecture-rejected", "prior_findings": ["use Postgres"]}
         )
         self.assertIn("rejected", block.lower())
@@ -38,11 +41,11 @@ class ReviewerFeedbackBlockTests(unittest.TestCase):
 
 class RouteAfterCoderTests(unittest.TestCase):
     def test_rearchitect_routes_to_architect(self) -> None:
-        self.assertEqual(pipeline.route_after_coder({"next_action": "rearchitect"}), "architect-agent")
+        self.assertEqual(route_after_coder({"next_action": "rearchitect"}), "architect-agent")
 
     def test_other_actions_unchanged(self) -> None:
-        self.assertEqual(pipeline.route_after_coder({"next_action": "complete"}), "tester-agent")
-        self.assertEqual(pipeline.route_after_coder({}), END)
+        self.assertEqual(route_after_coder({"next_action": "complete"}), "tester-agent")
+        self.assertEqual(route_after_coder({}), END)
 
 
 class CoderDesignFeedbackTests(unittest.TestCase):
@@ -82,8 +85,8 @@ class CoderDesignFeedbackTests(unittest.TestCase):
             {"verdict": "blocked", "design_feedback": "The schema can't support this query pattern.",
              "code_blocks": []}
         )
-        with patch.object(pipeline, "_run_or_replay", return_value=_ar(out_json)):
-            out = pipeline.node_coder_agent(self._state())
+        with patch.object(agent_calls, "_run_or_replay", return_value=_ar(out_json)):
+            out = node_coder_agent(self._state())
 
         self.assertEqual(out.get("next_action"), "rearchitect")
         self.assertEqual(out.get("triggered_by"), "design-infeasible")
@@ -98,8 +101,8 @@ class CoderDesignFeedbackTests(unittest.TestCase):
             {"verdict": "blocked", "design_feedback": "Still infeasible.", "code_blocks": []}
         )
         state = self._state(rearchitect_count=MAX_REARCHITECT_LOOPS)
-        with patch.object(pipeline, "_run_or_replay", return_value=_ar(out_json)):
-            out = pipeline.node_coder_agent(state)
+        with patch.object(agent_calls, "_run_or_replay", return_value=_ar(out_json)):
+            out = node_coder_agent(state)
         self.assertEqual(out.get("status"), "failed")
         self.assertIn("infeasible", out.get("error", "").lower())
 
