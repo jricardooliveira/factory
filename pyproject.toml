@@ -10,6 +10,11 @@ dependencies = [
     "textual>=0.60",
 ]
 
+[project.optional-dependencies]
+# The interview's preferred engine (adapters/claude_sdk.py); without it the
+# interview-agent runs on opencode.
+claude = ["claude-agent-sdk>=0.2,<1"]
+
 [project.scripts]
 factory = "factory.interfaces.cli.main:main"
 

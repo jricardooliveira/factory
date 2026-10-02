@@ -15,7 +15,7 @@ mechanics and gotchas. Governing docs: `docs/ARCHITECTURE.md`,
 |---|---|
 | [`domain/`](domain/README.md) | Pure rules, no I/O: agent-output contracts, gate policy and budgets, ambiguity detection, task ordering, the boss's authorization rules, AC↔claim traceability. |
 | [`agent_config/`](agent_config/README.md) | Loads and validates the agent configuration: `agents/tiers.toml` (agent → tier → model) and the review policy injected into the tester prompt. |
-| [`adapters/`](adapters/README.md) | Outside-world edges: `opencode.py` is the only place a model is called; `notify.py` sends notifications. |
+| [`adapters/`](adapters/README.md) | Outside-world edges: `opencode.py` + `claude_sdk.py` (interview only) are the only places a model is called; `notify.py` sends notifications. |
 | [`state/`](state/README.md) | SQLite schema and every accessor (runs, stories, gates, agent logs, reports). The only place SQL lives. |
 | [`pipeline/`](pipeline/README.md) | The orchestrator: LangGraph graph, routing/remediation, the boss wrapper, the agent-call/replay boundary. Sub-packages [`nodes/`](pipeline/nodes/README.md) (one per stage) and [`prompts/`](pipeline/prompts/README.md) (prompt assembly, golden-pinned). |
 | [`verification/`](verification/README.md) | Non-LLM build checks per toolchain (Python, Go, TypeScript) and the declared-scope check. |

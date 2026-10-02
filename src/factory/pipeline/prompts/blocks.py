@@ -10,6 +10,7 @@ from pathlib import Path
 
 from factory.domain.gates import MAX_CODER_ATTEMPTS
 from factory.evidence.adr import load_project_memory
+from factory.evidence.brief import load_brief
 from factory.pipeline.state import PipelineState
 from factory.workspace.repo_map import build_repo_inventory
 
@@ -20,12 +21,23 @@ def project_context_block(state: PipelineState) -> str:
 
 
 def project_memory_block(state: PipelineState) -> str:
-    """Prior ADRs + PROJECT_RULES for this project, as a prompt block ('' if none)."""
+    """The approved product brief, then prior ADRs + PROJECT_RULES ('' if none).
+
+    The brief leads because it is the definition of the product; rules and ADRs
+    are how it has been built so far. Without a BRIEF.md the block is unchanged.
+    """
     project_dir = state.get("project_dir")
     if not project_dir:
         return ""
+    brief = load_brief(Path(project_dir)).strip()
+    brief_block = (
+        "## Product brief (approved by the operator — the definition of what to build; "
+        f"do not contradict it)\n\n{brief}\n\n"
+        if brief
+        else ""
+    )
     memory = load_project_memory(Path(project_dir), exclude_story=state.get("story_id"))
-    return f"{memory}\n\n" if memory else ""
+    return brief_block + (f"{memory}\n\n" if memory else "")
 
 
 def repo_inventory_block(state: PipelineState) -> str:

@@ -50,6 +50,24 @@ MAX_REARCHITECT_LOOPS = 1
 # (with the reviewer's required changes) before gate-2 rejects it.
 MAX_BOUNDARY_REDESIGNS = 1
 
+# How many answers the intake interview may collect before the interview-agent is
+# no longer called. Every agent turn must ask at least one question, so this also
+# bounds the model calls (and the spend) of an interview. Hitting the cap never
+# waives the required topics: the rest are asked from fixed fallback questions.
+MAX_INTERVIEW_QUESTIONS = 40
+
+# How many times the operator's feedback may send the backlog back to the
+# backlog-agent before the proposal is left unapproved (each one is a paid call).
+MAX_BACKLOG_REVISIONS = 5
+
+# Stack proposals per interview (the first one plus the operator's corrections);
+# past it the existing project-spec.json is kept. Each one is a paid call.
+MAX_STACK_PROPOSALS = 3
+
+# Questions a story-level interview may ask in total. It fills gaps the brief
+# leaves for ONE story; Checkpoint 1 still catches whatever it misses.
+MAX_STORY_INTERVIEW_QUESTIONS = 8
+
 
 # Ambiguity detection (THRESHOLD_TERMS, unbound_criteria, ...) lives in
 # factory.domain.ambiguity; gate 1 below applies it.

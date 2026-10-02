@@ -2,7 +2,8 @@
 
 ## Responsibility
 
-The boundary to the outside world. `opencode.py` is the only place a model is called (it shells
+The boundary to the outside world. `opencode.py` + `claude_sdk.py` (the interview only, optional `.[claude]` extra) are the only
+places a model is called (`opencode.py` shells
 out to the `opencode` CLI and turns the result into an `AgentResult`); `notify.py` is an opt-in,
 best-effort macOS desktop notification. Everything else in the factory stays pure Python and
 talks to models only through `run_agent`.

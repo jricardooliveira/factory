@@ -3,7 +3,7 @@
 Functions here take data and print it; they never open the DB or drive a run.
 The command modules in `interfaces/cli/` fetch (from `factory.runs`, `evidence`,
 ...) and hand the result here. One module per command group, mirroring `cli/`:
-`run`, `review`, `board`, `project`, `workspace`, `selftest`, plus `output` (the
+`run`, `review`, `board`, `project`, `interview`, `workspace`, `selftest`, plus `output` (the
 shared Console and the helpers they all use). This package re-exports them all, so
 callers write `render.print_queue(...)`.
 
@@ -53,6 +53,14 @@ from factory.interfaces.render.project import (
     print_project_created,
     print_projects,
 )
+from factory.interfaces.render.interview import (
+    APPROVE_PROMPT,
+    print_brief_for_approval,
+    print_interview_approved,
+    print_interview_paused,
+    print_interview_question,
+    print_topics_still_required,
+)
 from factory.interfaces.render.workspace import (
     print_legacy_import,
     print_workspace,
@@ -68,6 +76,7 @@ from factory.interfaces.render.selftest import (
 )
 
 __all__ = [
+    "APPROVE_PROMPT",
     "board_renderable",
     "console",
     "output",
@@ -81,9 +90,13 @@ __all__ = [
     "print_eval_captured",
     "print_eval_replayed",
     "print_evals",
+    "print_brief_for_approval",
     "print_final_status",
     "print_gate",
     "print_header",
+    "print_interview_approved",
+    "print_interview_paused",
+    "print_interview_question",
     "print_legacy_import",
     "print_metrics",
     "print_project",
@@ -103,6 +116,7 @@ __all__ = [
     "print_simulation",
     "print_spec_summary",
     "print_tiers",
+    "print_topics_still_required",
     "print_workspace",
     "render_flow",
     "render_timeline",

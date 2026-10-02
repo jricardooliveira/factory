@@ -15,6 +15,7 @@ from factory import runs
 from factory.domain.project_spec import ProjectSpec
 from factory.interfaces import render
 from factory.interfaces.cli.common import db_path, fail, run_id_arg
+from factory.interfaces.cli.interview import interview, story_interview
 from factory.runs import (
     NodeCompleted,
     ResumeEntered,
@@ -96,9 +97,11 @@ def request_command(args: list[str]) -> None:
 
 
 def run_command(args: list[str]) -> None:
-    """`factory run --project <id> "<request>"`: run against a registered project."""
+    """`factory run --project <id> [--no-interview] "<request>"`: run against a project."""
+    skip_interview = "--no-interview" in args
+    args = [a for a in args if a != "--no-interview"]
     if len(args) < 3 or args[0] != "--project":
-        fail('Usage: factory run --project <project-id-or-slug> "Your request here"')
+        fail('Usage: factory run --project <project-id-or-slug> [--no-interview] "Your request"')
 
     project_ref = args[1]
     request = " ".join(args[2:]).strip()
@@ -106,6 +109,20 @@ def run_command(args: list[str]) -> None:
         fail("Run request cannot be empty")
 
     try:
+        # A story written before the product is defined is a guess: no approved
+        # brief, no run — unless the operator explicitly opts out.
+        if not skip_interview:
+            tty = sys.stdin.isatty()
+            if not runs.has_brief(project_ref, db_path=db_path()):
+                if not tty:
+                    fail(
+                        f"Project '{project_ref}' has no approved product brief. Run "
+                        f"`factory interview {project_ref}` first, or pass --no-interview."
+                    )
+                if not interview(project_ref).approved:
+                    return
+            if tty:  # Checkpoint 1 stays the safety net for what this misses
+                request = story_interview(project_ref, request)
         runs.run_project_pipeline(project_ref, request, db_path=db_path(), on_event=RunPrinter())
     except ValueError as exc:
         fail(str(exc))

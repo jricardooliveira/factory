@@ -23,6 +23,7 @@ class TierMappingTests(unittest.TestCase):
         self.assertEqual(mt.tier_for_agent("tester-agent"), "review")
         self.assertEqual(mt.tier_for_agent("boundary-agent"), "check")
         self.assertEqual(mt.tier_for_agent("release-agent"), "notes")
+        self.assertEqual(mt.tier_for_agent("interview-agent"), "intake")
 
     def test_coder_builds_on_first_attempt(self) -> None:
         self.assertEqual(mt.tier_for_agent("coder-agent", attempt_number=1), "build")
@@ -139,6 +140,7 @@ class TiersTomlTests(unittest.TestCase):
                 "build": "openai/gpt-6.1-sol",
                 "notes": "openai/gpt-6-luna",
                 "review": "requesty/claude-opus-5-5",
+                "intake": "requesty/claude-opus-5-5",
                 "check": "requesty/claude-sonnet-5-5",
                 "special": "requesty/claude-fable-5.1",
                 "standard": "requesty/claude-haiku-4-5",

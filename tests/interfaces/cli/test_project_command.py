@@ -70,7 +70,10 @@ class FactoryProjectCliTests(unittest.TestCase):
         with patch("factory.runs.run_project_pipeline") as run_project_pipeline:
             with patch(
                 "sys.argv",
-                ["factory", "run", "--project", "PROJ-001", "Add a health endpoint"],
+                # --no-interview: PROJ-001 has no approved brief (not even a row);
+                # the brief requirement is pinned in test_interview_command.py.
+                ["factory", "run", "--project", "PROJ-001", "--no-interview",
+                 "Add a health endpoint"],
             ):
                 main()
 
