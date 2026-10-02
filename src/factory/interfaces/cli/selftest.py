@@ -27,7 +27,7 @@ def doctor_command(args: list[str]) -> None:
     unreachable), so a script can gate `factory run` on it. `--offline` skips the
     model probes and spends no tokens.
     """
-    from factory.selftest import doctor
+    from factory.preflight import doctor
 
     report = doctor.run_doctor(offline="--offline" in args)
     render.print_doctor(report)
@@ -105,10 +105,9 @@ def metrics_command(args: list[str]) -> None:
     healthy reading.
     """
     from factory.evidence import metrics as mx
-    from factory.state.db import init_db
+    from factory.runs import queries
 
-    init_db(db_path())
-    m = mx.compute(db_path())
+    m = queries.factory_metrics(db_path=db_path())
     render.print_metrics(m, db_path())
 
     path = report_path(args, "metrics.md")

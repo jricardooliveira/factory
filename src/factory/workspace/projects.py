@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from factory.agent_config.location import checkout_root
+from factory.state import projects as project_rows
 from factory.state.db import get_db, init_db
 from factory.workspace import layout
 from factory.workspace.git import git_commit_paths, git_init
@@ -25,19 +26,16 @@ RULES_FILENAME = "PROJECT_RULES.md"
 SPEC_FILENAME = "project-spec.json"
 
 
-def _next_project_id(conn: sqlite3.Connection) -> str:
-    rows = conn.execute("SELECT id FROM projects WHERE id LIKE 'PROJ-%'").fetchall()
-    max_seen = 0
-    for row in rows:
-        try:
-            max_seen = max(max_seen, int(row["id"].split("-", 1)[1]))
-        except (IndexError, ValueError):
-            continue
-    return f"PROJ-{max_seen + 1:03d}"
-
-
-def _row_to_project(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    return dict(row) if row else None
+def _resolved(row: dict[str, Any] | None, db_path: Path) -> dict[str, Any] | None:
+    """A projects row with its stored locations resolved for THIS database
+    (see `layout.resolve_location`): callers always get absolute paths."""
+    if row is None:
+        return None
+    project = dict(row)
+    for key in ("repo_path", "spec_path"):
+        location = layout.resolve_location(project.get(key), db_path)
+        project[key] = str(location) if location is not None else None
+    return project
 
 
 def factory_opencode_dir() -> Path:
@@ -66,6 +64,33 @@ def link_opencode_agents(repo_path: Path) -> None:
     except OSError:
         # The project can still be registered; users may copy/link agents manually.
         return
+
+
+def agents_link_problem(repo_path: Path) -> str | None:
+    """Why a LIVE run in `repo_path` would not drive this checkout's agents.
+
+    None when it would. A missing link is created (what `create_project` does); a
+    real ``.opencode`` directory is the operator's own choice and left alone; a
+    symlink into ANOTHER checkout (a clone, a worktree, a moved factory) is the
+    problem: opencode would load that checkout's agents, not the ones this
+    checkout's `make evals` validated.
+    """
+    agents = factory_opencode_dir()
+    link = Path(repo_path) / ".opencode"
+    if not agents.exists():
+        return None  # an installed wheel has no checkout agents to link (as before)
+    if link.is_symlink():
+        if link.resolve() == agents.resolve():
+            return None
+        return (
+            f"{Path(repo_path).name}/.opencode points at {link.resolve()}, not this "
+            f"factory's agents ({agents}): the run would drive another checkout's "
+            f"agents. Re-link it if this checkout should drive the project: "
+            f"ln -sfn {agents} {link}"
+        )
+    if not link.exists():
+        link_opencode_agents(Path(repo_path))
+    return None
 
 
 def render_project_rules(project_id: str, slug: str, name: str) -> str:
@@ -122,17 +147,14 @@ def create_project(
 
     with get_db(db_path) as conn:
         # Refuse BEFORE touching disk, so a refusal never leaves a half-made repo.
-        taken = conn.execute(
-            "SELECT 1 FROM projects WHERE slug = ?", (normalized_slug,)
-        ).fetchone()
-        if taken:
+        if project_rows.slug_taken(conn, normalized_slug):
             raise ValueError(f"Project slug already exists: {normalized_slug}")
         if project_dir.exists() and any(project_dir.iterdir()):
             raise ValueError(f"Project directory already exists and is not empty: {project_dir}")
         if spec_path is not None and not Path(spec_path).is_file():
             raise ValueError(f"Project spec not found: {spec_path}")
 
-        project_id = _next_project_id(conn)
+        project_id = project_rows.next_project_id(conn)
         project_dir.mkdir(parents=True, exist_ok=True)
 
         git_init(project_dir)
@@ -157,30 +179,23 @@ def create_project(
             f"factory: scaffold {project_id} {normalized_slug}",
         )
 
-        now = conn.execute("SELECT datetime('now') AS now").fetchone()["now"]
         try:
-            conn.execute(
-                """
-                INSERT INTO projects
-                    (id, slug, name, repo_path, spec_path, status, created_at, updated_at)
-                VALUES
-                    (?, ?, ?, ?, ?, 'active', ?, ?)
-                """,
-                (
-                    project_id,
-                    normalized_slug,
-                    project_name,
-                    str(project_dir),
-                    str(resolved_spec_path) if resolved_spec_path else None,
-                    now,
-                    now,
+            project_rows.insert_project(
+                conn,
+                project_id=project_id,
+                slug=normalized_slug,
+                name=project_name,
+                repo_path=layout.store_location(project_dir, db_path),
+                spec_path=(
+                    layout.store_location(resolved_spec_path, db_path)
+                    if resolved_spec_path
+                    else None
                 ),
             )
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"Project slug already exists: {normalized_slug}") from exc
 
-        row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-        project = _row_to_project(row)
+        project = _resolved(project_rows.get_project_row(conn, project_id), db_path)
         assert project is not None
         return project
 
@@ -191,11 +206,7 @@ def get_project(db_path: Path, ref: str) -> dict[str, Any]:
     init_db(db_path)
     normalized_ref = ref if ref.startswith("PROJ-") else normalize_slug(ref)
     with get_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM projects WHERE id = ? OR slug = ?",
-            (normalized_ref, normalized_ref),
-        ).fetchone()
-    project = _row_to_project(row)
+        project = _resolved(project_rows.get_project_row(conn, normalized_ref), db_path)
     if not project:
         raise ValueError(f"Unknown project: {ref}")
     return project
@@ -206,5 +217,10 @@ def list_projects(db_path: Path) -> list[dict[str, Any]]:
 
     init_db(db_path)
     with get_db(db_path) as conn:
-        rows = conn.execute("SELECT * FROM projects ORDER BY id").fetchall()
-    return [dict(row) for row in rows]
+        rows = project_rows.list_project_rows(conn)
+    return [p for row in rows if (p := _resolved(row, db_path)) is not None]
+
+
+def project_repository(project_row: dict[str, Any], db_path: Path) -> Path | None:
+    """The absolute repository of a stored projects row (or a run joined with one)."""
+    return layout.resolve_location(project_row.get("repo_path"), db_path)

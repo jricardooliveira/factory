@@ -16,10 +16,12 @@ from typing import Any
 from factory.domain.agent_output import parse_agent_json
 from factory.domain.traceability import trace_criteria
 from factory.evidence.adr import adr_dir_for
-from factory.state.db import get_db, get_run_gates, get_run_logs
+from factory.state.db import get_db, get_run, get_run_gates, get_run_logs
+from factory.state.reports import usage_totals
 from factory.verification import scope as scope_policy
 from factory.workspace import git
 from factory.workspace.layout import EVIDENCE_PATHS
+from factory.workspace.sandbox import run_repository
 
 # Package data (shipped in the wheel), not a repo doc: the code validates against it.
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "trust-package.schema.json"
@@ -97,102 +99,79 @@ def _test_execution(gates: list[dict]) -> tuple[bool, bool, str]:
     return executed, passed, " && ".join(commands)
 
 
-def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
-    """Build the trust package for a run from its stored artifacts."""
-    with get_db(db_path) as conn:
-        run = conn.execute(
-            "SELECT pr.*, s.title AS story_title, s.request, p.repo_path "
-            "FROM pipeline_runs pr JOIN stories s ON pr.story_id = s.id "
-            "LEFT JOIN projects p ON pr.project_id = p.id WHERE pr.id = ?",
-            (run_id,),
-        ).fetchone()
-        if not run:
-            return {}
-        run = dict(run)
-        logs = get_run_logs(conn, run_id)
-        gates = get_run_gates(conn, run_id)
-        cost_row = conn.execute(
-            "SELECT COALESCE(SUM(cost_usd),0) c, COALESCE(SUM(tokens_in),0) ti, "
-            "COALESCE(SUM(tokens_out),0) to_ FROM agent_logs WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()
+def _ac_traceability(
+    spec: dict, tester: dict
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """(tests.ac_coverage entries, ac_traceability block).
 
-    gate_pass = {g["gate_name"]: bool(g["passed"]) for g in gates}
-    tester = _latest(logs, "tester-agent") or {}
-    spec = _latest(logs, "spec-agent") or {}
-
-    # ── Evidence 1: tests. "Passed" must mean a suite RAN and passed (§5.1) ──
-    # It used to be derived from gate booleans, which pass on WARN and on a
-    # compile-only run — so the package asserted `pytest -q` had passed when no
-    # test body had ever been executed.
-    tests_executed, tests_really_passed, tests_command = _test_execution(gates)
-    tests_passed = (
-        tests_executed and tests_really_passed and gate_pass.get("gate-test", False)
-    )
-
-    # AC traceability: cross-check the spec's REAL acceptance criteria against what
-    # the tester claimed, instead of echoing the tester's self-report (§5.1). Falls
-    # back to the tester's list when the spec carried no criteria.
+    Cross-checks the spec's REAL acceptance criteria against what the tester
+    claimed, instead of echoing the tester's self-report (§5.1). Falls back to the
+    tester's list when the spec carried no criteria.
+    """
     real_acs = spec.get("acceptance_criteria") or []
     if real_acs:
         trace = trace_criteria(
             real_acs, tester.get("ac_coverage", []), tester.get("missing_coverage", [])
         )
-        ac_coverage_entries = [
+        entries = [
             {"criterion": e["criterion"], "covered_by": [], "status": e["status"]} for e in trace
         ]
     else:
         trace = []
-        ac_coverage_entries = [
-            {"criterion": c, "covered_by": []} for c in tester.get("ac_coverage", [])
-        ]
-    ac_traceability = {
+        entries = [{"criterion": c, "covered_by": []} for c in tester.get("ac_coverage", [])]
+    traceability = {
         "total": len(real_acs),
         "covered": sum(1 for e in trace if e["status"] == "covered"),
         "flagged_missing": [e["criterion"] for e in trace if e["status"] == "flagged_missing"],
         "unassessed": [e["criterion"] for e in trace if e["status"] == "unassessed"],
     }
+    return entries, traceability
 
-    # A registered project's directory IS its repository, with the factory's own
-    # evidence (ADRs, the artifact chain, earlier trust packages, rules, spec)
-    # committed inside it. None of that is code an agent changed.
-    adr_path = ""
-    if run.get("repo_path"):
-        adr_dir = adr_dir_for(Path(run["repo_path"]))
-        adrs = sorted(adr_dir.glob(f"ADR-{run['story_id']}-*.md")) if adr_dir.is_dir() else []
-        if adrs:
-            adr_path = str(adrs[0])
 
-    # ── Evidence 2: the change set, measured from git (§5.2) ──────────
-    # It used to be built from the coder's own `code_blocks` and labelled
-    # `source: "materialized"` — the exact self-report the schema's `const: git`
-    # exists to forbid. When git measurement is impossible the package says
-    # "unavailable" and fails `validate()`, rather than dressing a self-report
-    # up as measured evidence.
-    diff_files: list[dict[str, str]] | None = None
-    if run.get("repo_path"):
-        diff_files = git.git_changed_files(
-            Path(run["repo_path"]), run.get("base_commit"), exclude=EVIDENCE_PATHS
-        )
+def _adr_path(repo: Path | None, story_id: str) -> str:
+    if repo is None:
+        return ""
+    adr_dir = adr_dir_for(repo)
+    adrs = sorted(adr_dir.glob(f"ADR-{story_id}-*.md")) if adr_dir.is_dir() else []
+    return str(adrs[0]) if adrs else ""
+
+
+def _diff_block(repo: Path | None, base_commit: str | None, logs: list[dict]) -> dict[str, Any]:
+    """The change set, measured from git (§5.2).
+
+    It used to be built from the coder's own `code_blocks` and labelled
+    `source: "materialized"` — the exact self-report the schema's `const: git`
+    exists to forbid. When git measurement is impossible the package says
+    "unavailable" and fails `validate()`, rather than dressing a self-report up as
+    measured evidence. A project repository also holds the factory's own evidence
+    (ADRs, the artifact chain, earlier trust packages, rules, spec); none of that
+    is code an agent changed, so it is excluded.
+    """
+    diff_files = (
+        git.git_changed_files(repo, base_commit, exclude=EVIDENCE_PATHS) if repo else None
+    )
     if diff_files is None:
-        diff_block = {
+        return {
             "source": "unavailable",
             "files": [{"path": p, "change": "added"} for p in _coder_files(logs)],
             "scope_violations": [],
         }
-    else:
-        diff_block = {
-            "source": "git",
-            "files": diff_files,
-            "scope_violations": scope_policy.paths_outside_scope(
-                [f["path"] for f in diff_files], _declared_scope(logs)
-            ),
-        }
+    return {
+        "source": "git",
+        "files": diff_files,
+        "scope_violations": scope_policy.paths_outside_scope(
+            [f["path"] for f in diff_files], _declared_scope(logs)
+        ),
+    }
 
-    # ── Blockers: every unmet evidence bar is named, not silently absent ──
-    completed = run["status"] == "completed"
+
+def _blockers(
+    run: dict, tests_executed: bool, tests_really_passed: bool,
+    diff_block: dict[str, Any], traceability: dict[str, Any],
+) -> list[str]:
+    """Every unmet evidence bar, named rather than silently absent."""
     blockers: list[str] = []
-    if not completed:
+    if run["status"] != "completed":
         blockers.append(run.get("error") or run["status"])
     if not tests_executed:
         blockers.append(
@@ -211,11 +190,46 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
             f"Files changed outside the tasks' declared scope (§6): "
             f"{diff_block['scope_violations']}"
         )
-    if ac_traceability["unassessed"]:
+    if traceability["unassessed"]:
         blockers.append(
-            f"{len(ac_traceability['unassessed'])} acceptance criteria were never "
-            f"assessed by the tester (§5.1): {ac_traceability['unassessed']}"
+            f"{len(traceability['unassessed'])} acceptance criteria were never "
+            f"assessed by the tester (§5.1): {traceability['unassessed']}"
         )
+    return blockers
+
+
+def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
+    """Build the trust package for a run from its stored artifacts."""
+    with get_db(db_path) as conn:
+        run = get_run(conn, run_id)
+        if not run:
+            return {}
+        logs = get_run_logs(conn, run_id)
+        gates = get_run_gates(conn, run_id)
+        usage = usage_totals(conn, run_id)
+
+    gate_pass = {g["gate_name"]: bool(g["passed"]) for g in gates}
+    tester = _latest(logs, "tester-agent") or {}
+    spec = _latest(logs, "spec-agent") or {}
+
+    # ── Evidence 1: tests. "Passed" must mean a suite RAN and passed (§5.1) ──
+    # It used to be derived from gate booleans, which pass on WARN and on a
+    # compile-only run — so the package asserted `pytest -q` had passed when no
+    # test body had ever been executed.
+    tests_executed, tests_really_passed, tests_command = _test_execution(gates)
+    tests_passed = (
+        tests_executed and tests_really_passed and gate_pass.get("gate-test", False)
+    )
+    ac_coverage_entries, ac_traceability = _ac_traceability(spec, tester)
+
+    # Where this run's code lives: the project repository, or — for a replay —
+    # the scratch clone it was replayed in (see `workspace.sandbox`).
+    repo = run_repository(run, db_path)
+    adr_path = _adr_path(repo, run["story_id"])
+    diff_block = _diff_block(repo, run.get("base_commit"), logs)
+
+    completed = run["status"] == "completed"
+    blockers = _blockers(run, tests_executed, tests_really_passed, diff_block, ac_traceability)
 
     tests_block: dict[str, Any] = {
         "passed": tests_passed,
@@ -244,9 +258,9 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
             "findings": tester.get("security_findings", []),
         },
         "cost": {
-            "usd": round(float(cost_row["c"]), 6),
-            "tokens_in": int(cost_row["ti"]),
-            "tokens_out": int(cost_row["to_"]),
+            "usd": round(float(usage["cost_usd"]), 6),
+            "tokens_in": int(usage["tokens_in"]),
+            "tokens_out": int(usage["tokens_out"]),
         },
         "blockers": blockers,
         # Release sign-off is offered only when EVERY evidence bar is met — the

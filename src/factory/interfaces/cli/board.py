@@ -10,13 +10,7 @@ from rich.live import Live
 
 from factory.interfaces import render
 from factory.interfaces.cli.common import db_path, fail
-from factory.state.db import (
-    get_db,
-    get_pending_human_gate,
-    get_run_cost,
-    get_runs_by_status,
-    init_db,
-)
+from factory.runs import queries
 
 
 def board_command(args: list[str]) -> None:
@@ -42,21 +36,12 @@ def board_command(args: list[str]) -> None:
 
 def board_snapshot() -> Group:
     """Read the factory's current state and build the plain board renderable."""
-    with get_db(db_path()) as conn:
-        running = get_runs_by_status(conn, ["running", "waiting_human"])
-        attention = get_runs_by_status(conn, ["failed", "blocked"])
-        active = [
-            (r, get_pending_human_gate(conn, r["id"]) if r["status"] == "waiting_human" else None,
-             get_run_cost(conn, r["id"]))
-            for r in running
-        ]
-        attention_rows = [(r, get_run_cost(conn, r["id"])) for r in attention]
+    active, attention_rows = queries.board(db_path=db_path())
     return render.board_renderable(active, attention_rows)
 
 
 def show_board(once: bool = False, interval: float = 2.0) -> None:
     """Live status board. --once prints a single snapshot."""
-    init_db(db_path())
     console = render.console
     if once:
         console.print(board_snapshot())

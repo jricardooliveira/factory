@@ -41,6 +41,8 @@ from typing import Literal
 
 from factory.adapters.opencode import run_agent
 from factory.agent_config import tiers
+from factory.agent_config.location import checkout_root
+from factory.state.reports import read_only_summary
 from factory.workspace import layout
 
 Status = Literal["ok", "fail", "warn", "skip"]
@@ -85,9 +87,9 @@ class DoctorReport:
 
 
 def repo_root() -> Path:
-    # opencode resolves `.opencode/agents/<name>.md` from its cwd; that symlink
-    # lives at the repo root, next to agents/tiers.toml.
-    return tiers.default_tiers_path().parent.parent
+    # opencode resolves `.opencode/agents/<name>.md` from its cwd; that directory
+    # lives at the checkout root, next to agents/.
+    return checkout_root()
 
 
 def _probe_agent(model_tiers: list[str]) -> str:
@@ -127,20 +129,6 @@ def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
-def _read_home_db(db: Path) -> tuple[int, list[tuple[str, str]]]:
-    """(run count, [(slug, repo_path)]) from the home DB, opened READ-ONLY so the
-    doctor never creates or migrates it."""
-    conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
-    try:
-        runs = conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0]
-        projects = conn.execute(
-            "SELECT slug, repo_path FROM projects ORDER BY id"
-        ).fetchall()
-    finally:
-        conn.close()
-    return int(runs), [(str(slug), str(repo or "")) for slug, repo in projects]
-
-
 def _workspace_checks() -> list[Check]:
     home = layout.home()
     db = home / layout.DB_FILENAME
@@ -151,7 +139,7 @@ def _workspace_checks() -> list[Check]:
     if not db.exists():
         return [Check("workspace", "ok", f"{home} — no factory.db yet (created on first run)")]
     try:
-        runs, projects = _read_home_db(db)
+        runs, projects = read_only_summary(db)
     except sqlite3.Error as exc:
         return [Check("workspace", "fail", f"{db} is not a readable factory.db — {exc}")]
 
@@ -162,7 +150,10 @@ def _workspace_checks() -> list[Check]:
             f"{home} — {_plural(runs, 'run')}, {_plural(len(projects), 'project')}",
         )
     ]
-    checks.extend(_project_check(slug, Path(repo)) for slug, repo in projects)
+    checks.extend(
+        _project_check(slug, layout.resolve_location(repo, db) or Path(""))
+        for slug, repo in projects
+    )
     return checks
 
 
@@ -214,7 +205,18 @@ def run_doctor(
         else Check("opencode", "fail", "not on PATH — install it from https://opencode.ai")
     )
 
-    for model, model_tiers in tiers.distinct_models().items():
+    try:
+        tiers.config()
+    except (OSError, ValueError) as exc:  # tomllib.TOMLDecodeError is a ValueError
+        report.checks.append(
+            Check("tiers", "fail", f"{tiers.default_tiers_path()}: {exc}")
+        )
+        models: dict[str, list[str]] = {}
+    else:
+        report.checks.append(Check("tiers", "ok", str(tiers.default_tiers_path())))
+        models = tiers.distinct_models()
+
+    for model, model_tiers in models.items():
         backs = f"tiers: {', '.join(model_tiers)}"
         if offline:
             report.checks.append(Check(f"model {model}", "skip", f"{backs} — --offline"))

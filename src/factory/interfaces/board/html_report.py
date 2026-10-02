@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from html import escape
 from pathlib import Path
 from typing import Any
 
-from factory.state.db import get_db, init_db
+from factory.runs import queries
 
 
 PIPELINE_STAGES = (
@@ -28,69 +28,6 @@ def _status_class(status: str) -> str:
     if normalized in {"waiting_human", "running"}:
         return "warn"
     return "neutral"
-
-
-def _read_projects(db_path: Path) -> list[dict[str, Any]]:
-    with get_db(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT p.*, COUNT(pr.id) AS run_count
-            FROM projects p
-            LEFT JOIN pipeline_runs pr ON pr.project_id = p.id
-            GROUP BY p.id
-            ORDER BY p.id
-            """
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def _read_runs(db_path: Path) -> list[dict[str, Any]]:
-    with get_db(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                pr.id,
-                pr.story_id,
-                pr.project_id,
-                pr.status,
-                pr.current_stage,
-                pr.started_at,
-                pr.finished_at,
-                pr.error,
-                s.request,
-                COALESCE(p.name, 'Unassigned') AS project_name,
-                COALESCE(p.slug, '') AS project_slug
-            FROM pipeline_runs pr
-            JOIN stories s ON s.id = pr.story_id
-            LEFT JOIN projects p ON p.id = pr.project_id
-            ORDER BY pr.id DESC
-            """
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def _read_agent_logs(db_path: Path) -> dict[int, list[dict[str, Any]]]:
-    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    with get_db(db_path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM agent_logs ORDER BY run_id, id"
-        ).fetchall()
-    for row in rows:
-        data = dict(row)
-        grouped[data["run_id"]].append(data)
-    return grouped
-
-
-def _read_gate_results(db_path: Path) -> dict[int, list[dict[str, Any]]]:
-    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    with get_db(db_path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM gate_results ORDER BY run_id, id"
-        ).fetchall()
-    for row in rows:
-        data = dict(row)
-        grouped[data["run_id"]].append(data)
-    return grouped
 
 
 def _summary_cards(projects: list[dict[str, Any]], runs: list[dict[str, Any]]) -> str:
@@ -306,11 +243,9 @@ def _render_html(
 def generate_factory_visualization(db_path: Path, output_path: Path) -> Path:
     """Generate a self-contained static HTML visualization of factory state."""
 
-    init_db(db_path)
-    projects = _read_projects(db_path)
-    runs = _read_runs(db_path)
-    agent_logs = _read_agent_logs(db_path)
-    gate_results = _read_gate_results(db_path)
+    report = queries.factory_report(db_path=db_path)
+    projects, runs = report.projects, report.runs
+    agent_logs, gate_results = report.logs_by_run, report.gates_by_run
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(

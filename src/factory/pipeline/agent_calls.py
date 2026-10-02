@@ -14,7 +14,7 @@ from factory.adapters.opencode import AgentResult, run_agent
 from factory.agent_config.tiers import resolve_model
 from factory.domain.agent_output import parse_agent_json
 from factory.pipeline.state import PipelineState
-from factory.state.db import get_agent_log, get_agent_log_by_stage
+from factory.state.db import connect, get_agent_log, get_agent_log_by_stage
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -115,8 +115,5 @@ def usage_kwargs(result: AgentResult) -> dict[str, Any]:
 
 
 def db_conn(state: PipelineState) -> sqlite3.Connection:
-    """Get a DB connection from state."""
-    conn = sqlite3.connect(state["db_path"])
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    """Get a DB connection from state (the caller closes it)."""
+    return connect(state["db_path"])

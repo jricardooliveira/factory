@@ -2,13 +2,10 @@
 
 Where a run is in the pipeline (`run_pipeline_progress`) and what happened in it,
 in order (`run_timeline`), computed from `agent_logs` + `gate_results` alone, plus
-the one-line markup renderings every surface shares. It is evidence of a run, not
-a view of one: the CLI review, the Textual board AND the offline scenario matrix
-(`selftest.simulate`) all read it, so it must sit below `interfaces` — and below
-`runs` too, since `selftest` may not import the run service.
-
-The `render_*` helpers return rich-markup *strings* (no rich import): a caller
-that wants plain text strips the tags, as `selftest.simulate` does.
+plain-text forms of both. It is evidence of a run, not a view of one: the CLI
+review, the Textual board AND the offline scenario matrix (`selftest.simulate`)
+all read it, so it sits below `interfaces`. The rich-markup renderings live in
+`interfaces.render.review` (`render_flow`, `render_timeline`).
 """
 
 from __future__ import annotations
@@ -16,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from factory.state.db import get_db, get_run_gates, get_run_logs
+from factory.state.db import get_db, get_run, get_run_gates, get_run_logs
 
 
 @dataclass
@@ -46,9 +43,7 @@ _FAIL_VERDICTS = {"blocked", "error", "fail"}
 def run_pipeline_progress(db_path: Path, run_id: int) -> list[StageStatus]:
     """Per-stage status for one run, derived from its agent logs + gate results."""
     with get_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT status, current_stage FROM pipeline_runs WHERE id = ?", (run_id,)
-        ).fetchone()
+        row = get_run(conn, run_id)
         if not row:
             return []
         status, current = row["status"], (row["current_stage"] or "")
@@ -100,24 +95,25 @@ def run_pipeline_progress(db_path: Path, run_id: int) -> list[StageStatus]:
 
 
 _STAGE_ICON = {
-    "done": ("✓", "green"),
-    "failed": ("✗", "red"),
-    "waiting": ("⏸", "yellow"),
-    "current": ("▶", "cyan"),
-    "pending": ("○", "dim"),
+    "done": "✓",
+    "failed": "✗",
+    "waiting": "⏸",
+    "current": "▶",
+    "pending": "○",
 }
+FLOW_ARROW = "  →  "
 
 
-def render_flow(stages: list[StageStatus]) -> str:
-    """One-line agent pipeline flow with per-stage status icons (rich markup)."""
-    if not stages:
-        return ""
-    parts = []
-    for s in stages:
-        icon, style = _STAGE_ICON.get(s.status, ("○", "dim"))
-        label = s.label + (f" {s.detail}" if s.detail else "")
-        parts.append(f"[{style}]{icon} {label}[/{style}]")
-    return "  [dim]→[/dim]  ".join(parts)
+def stage_text(stage: StageStatus) -> str:
+    """One stage as icon + label (+ detail), e.g. ``✓ Coder 2/2 tasks``."""
+    label = stage.label + (f" {stage.detail}" if stage.detail else "")
+    return f"{_STAGE_ICON.get(stage.status, '○')} {label}"
+
+
+def plain_flow(stages: list[StageStatus]) -> str:
+    """One-line pipeline flow as plain text (the scenario matrix's "Flow" column).
+    Styled renderings live in `interfaces.render.review.render_flow`."""
+    return FLOW_ARROW.join(stage_text(s) for s in stages)
 
 
 @dataclass
@@ -129,20 +125,16 @@ class TimelineEvent:
     status: str = "info"  # done | failed | waiting | info — for styling
 
 
-def _hms(iso: str) -> str:
+def hms(iso: str) -> str:
     return iso[11:19] if iso and len(iso) >= 19 else (iso or "")
 
 
 def run_timeline(db_path: Path, run_id: int) -> list[TimelineEvent]:
     """Chronological story of a run: start, each agent, each gate, finish."""
     with get_db(db_path) as conn:
-        run = conn.execute(
-            "SELECT status, started_at, finished_at, error FROM pipeline_runs WHERE id = ?",
-            (run_id,),
-        ).fetchone()
+        run = get_run(conn, run_id)
         if not run:
             return []
-        run = dict(run)
         logs = get_run_logs(conn, run_id)
         gates = get_run_gates(conn, run_id)
 
@@ -180,17 +172,3 @@ def run_timeline(db_path: Path, run_id: int) -> list[TimelineEvent]:
 
     events.sort(key=lambda e: e.when)
     return events
-
-
-_TIMELINE_ICON = {"done": ("✓", "green"), "failed": ("✗", "red"),
-                  "waiting": ("⏸", "yellow"), "info": ("•", "cyan")}
-
-
-def render_timeline(events: list[TimelineEvent]) -> str:
-    """Render a timeline as multi-line rich markup."""
-    lines = []
-    for e in events:
-        icon, style = _TIMELINE_ICON.get(e.status, ("•", "dim"))
-        detail = f"  [dim]{e.detail}[/dim]" if e.detail else ""
-        lines.append(f"[dim]{_hms(e.when)}[/dim] [{style}]{icon}[/{style}] {e.label}{detail}")
-    return "\n".join(lines)

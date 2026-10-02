@@ -24,7 +24,7 @@ from factory.runs import (
     RunFinished,
     RunStarted,
 )
-from factory.state.db import get_db, get_run_gates, get_run_logs
+from factory.runs import queries
 
 
 class RunPrinter:
@@ -51,9 +51,7 @@ class RunPrinter:
             node_printer(event.node, event.output)
         elif isinstance(event, RunFinished):
             outcome = event.outcome
-            with get_db(outcome.db_path) as conn:
-                logs = get_run_logs(conn, outcome.run_id)
-                gates = get_run_gates(conn, outcome.run_id)
+            logs, gates = queries.run_record(outcome.run_id, db_path=outcome.db_path)
             render.print_run_finished(outcome, logs, gates)
 
 

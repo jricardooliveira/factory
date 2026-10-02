@@ -1,6 +1,7 @@
 """Data layer for the interactive board.
 
-Pure and TUI-free so it can be unit-tested without Textual. The Textual view
+TUI-free so it can be unit-tested without Textual; it reads through
+`runs.queries`, never the database directly. The Textual view
 (`interfaces/board/tui.py`) renders these dataclasses. Per-run stage progress and
 the timeline live in `factory.evidence.progress`, because surfaces below
 `interfaces` (the scenario matrix) need them too.
@@ -12,14 +13,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from factory.state.db import (
-    get_agent_log,
-    get_db,
-    get_pending_human_gate,
-    get_run_cost,
-    get_runs_by_status,
-    init_db,
-)
+from factory.runs.queries import board_entries
 
 # Order matters for display grouping.
 PARKED_STATUSES = ["waiting_human"]
@@ -85,38 +79,32 @@ def load_board_runs(db_path: Path, include_done: bool = False) -> list[BoardRun]
     `include_done` adds recently-completed runs (for the kanban 'Done' column);
     the table view omits them to stay focused on actionable work.
     """
-    init_db(db_path)
     groups = [PARKED_STATUSES, ACTIVE_STATUSES, ATTENTION_STATUSES]
     if include_done:
         groups.append(DONE_STATUSES)
     out: list[BoardRun] = []
-    with get_db(db_path) as conn:
-        for status_group in groups:
-            for run in get_runs_by_status(conn, status_group):
-                parked = run["status"] == "waiting_human"
-                gate = get_pending_human_gate(conn, run["id"]) if parked else None
-                arch_notes, modules = "", []
-                if parked:  # show the design being decided
-                    alog = get_agent_log(conn, run["id"], "architect-agent")
-                    if alog and alog.get("output_text"):
-                        arch_notes, modules = _summarize_architecture(alog["output_text"])
-                out.append(
-                    BoardRun(
-                        id=run["id"],
-                        story_id=run["story_id"],
-                        title=run.get("story_title") or run["story_id"],
-                        status=run["status"],
-                        stage=run.get("current_stage") or "?",
-                        cost=get_run_cost(conn, run["id"]),
-                        started_at=run.get("started_at") or "",
-                        project=run.get("project_slug") or "—",
-                        request=run.get("request") or "",
-                        questions=_split_questions(gate.get("human_questions") if gate else None),
-                        architecture=arch_notes,
-                        modules=modules,
-                        error=run.get("error"),
-                    )
-                )
+    for entry in board_entries(groups, db_path=db_path):
+        run, gate = entry.run, entry.gate
+        arch_notes, modules = "", []
+        if entry.architect_output:  # a parked run: show the design being decided
+            arch_notes, modules = _summarize_architecture(entry.architect_output)
+        out.append(
+            BoardRun(
+                id=run["id"],
+                story_id=run["story_id"],
+                title=run.get("story_title") or run["story_id"],
+                status=run["status"],
+                stage=run.get("current_stage") or "?",
+                cost=entry.cost,
+                started_at=run.get("started_at") or "",
+                project=run.get("project_slug") or "—",
+                request=run.get("request") or "",
+                questions=_split_questions(gate.get("human_questions") if gate else None),
+                architecture=arch_notes,
+                modules=modules,
+                error=run.get("error"),
+            )
+        )
     return out
 
 

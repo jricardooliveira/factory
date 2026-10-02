@@ -1,4 +1,10 @@
-"""SQLite state management for the factory pipeline."""
+"""SQLite state management for the factory pipeline.
+
+`factory.state` owns every SQL statement the factory runs: this module (schema,
+connections, runs / stories / logs / gates), `state.projects` (the projects table)
+and `state.reports` (read-only aggregates). Nothing outside the package calls
+`.execute` — `tests/integration/test_layout.py` enforces it.
+"""
 
 from __future__ import annotations
 
@@ -99,6 +105,15 @@ def get_db(path: Path) -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
+def connect(path: Path | str) -> sqlite3.Connection:
+    """A plain connection the caller closes (the graph nodes' per-call handle).
+    Prefer `get_db`, which commits/rolls back and closes for you."""
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
 def init_db(path: Path) -> None:
     with get_db(path) as conn:
         conn.executescript(SCHEMA)
@@ -117,6 +132,10 @@ def init_db(path: Path) -> None:
         # north-star metric ("trust per interruption") is not just uncomputed
         # but unrecordable — there is no time to measure the interruption from.
         _ensure_column(conn, "gate_results", "responded_at", "TEXT")
+        # The run whose frozen outputs this run replays (NULL for a live run).
+        # Persisted so a resume of a parked replay keeps replaying instead of
+        # calling live agents.
+        _ensure_column(conn, "pipeline_runs", "replay_of", "INTEGER")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -142,21 +161,68 @@ def create_story(
     )
 
 
+def next_story_id(conn: sqlite3.Connection) -> str:
+    """The id a new story gets: US-<count+1>, zero-padded."""
+    row = conn.execute("SELECT COUNT(*) as c FROM stories").fetchone()
+    return f"US-{row['c'] + 1:04d}"
+
+
 def start_run(
     conn: sqlite3.Connection,
     story_id: str,
     project_id: str | None = None,
     base_commit: str | None = None,
+    replay_of: int | None = None,
 ) -> int:
     """Open a run. `base_commit` is the target repo's HEAD at start, so the run's
-    change set can later be measured from git against its own baseline."""
+    change set can later be measured from git against its own baseline.
+    `replay_of` marks a run that re-drives another run's frozen agent outputs."""
     now = _now()
     cursor = conn.execute(
-        "INSERT INTO pipeline_runs (story_id, project_id, status, current_stage, started_at, base_commit)"
-        " VALUES (?, ?, 'running', 'spec-agent', ?, ?)",
-        (story_id, project_id, now, base_commit),
+        "INSERT INTO pipeline_runs"
+        " (story_id, project_id, status, current_stage, started_at, base_commit, replay_of)"
+        " VALUES (?, ?, 'running', 'spec-agent', ?, ?, ?)",
+        (story_id, project_id, now, base_commit, replay_of),
     )
     return cursor.lastrowid  # type: ignore[return-value]
+
+
+def get_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any] | None:
+    """One run with its story's request/title and its project's slug/location."""
+    row = conn.execute(
+        "SELECT pr.*, s.request, s.title AS story_title, "
+        "p.slug AS project_slug, p.repo_path "
+        "FROM pipeline_runs pr JOIN stories s ON pr.story_id = s.id "
+        "LEFT JOIN projects p ON pr.project_id = p.id WHERE pr.id = ?",
+        (run_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every run, oldest first, with its request (the `factory list` table)."""
+    rows = conn.execute("""
+        SELECT pr.id, pr.story_id, s.request, pr.status, pr.current_stage, pr.started_at
+        FROM pipeline_runs pr
+        JOIN stories s ON pr.story_id = s.id
+        ORDER BY pr.id
+    """).fetchall()
+    return [dict(row) for row in rows]
+
+
+def reopen_run(conn: sqlite3.Connection, run_id: int) -> None:
+    """A parked run's decision is recorded: it is running again."""
+    conn.execute("UPDATE pipeline_runs SET status = 'running' WHERE id = ?", (run_id,))
+
+
+def requeue_answered_gate(conn: sqlite3.Connection, run_id: int, gate_id: int) -> None:
+    """Put a dead run back at its answered checkpoint: the answer is cleared so the
+    resume can consume it again, and the run is waiting_human with no error."""
+    conn.execute("UPDATE gate_results SET human_response = NULL WHERE id = ?", (gate_id,))
+    conn.execute(
+        "UPDATE pipeline_runs SET status = 'waiting_human', error = NULL WHERE id = ?",
+        (run_id,),
+    )
 
 
 def log_agent(
@@ -231,6 +297,16 @@ def get_answered_human_gate(conn: sqlite3.Connection, run_id: int) -> dict[str, 
         (run_id,),
     ).fetchone()
     return dict(row) if row else None
+
+
+def get_human_responses(conn: sqlite3.Connection, run_id: int) -> list[str]:
+    """Every answer the operator gave at this run's checkpoints, oldest first."""
+    rows = conn.execute(
+        "SELECT human_response FROM gate_results WHERE run_id = ? "
+        "AND human_response IS NOT NULL ORDER BY id",
+        (run_id,),
+    ).fetchall()
+    return [r["human_response"] or "" for r in rows]
 
 
 def get_pending_human_gate(conn: sqlite3.Connection, run_id: int) -> dict[str, Any] | None:

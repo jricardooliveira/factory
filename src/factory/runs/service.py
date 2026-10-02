@@ -13,6 +13,7 @@ interface's call.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -47,12 +48,17 @@ from factory.state.db import (
     get_answered_human_gate,
     get_db,
     get_pending_human_gate,
+    get_run,
     init_db,
+    next_story_id,
+    reopen_run,
+    requeue_answered_gate,
     respond_to_gate,
     start_run,
 )
 from factory.workspace.git import git_head
-from factory.workspace.projects import get_project
+from factory.workspace.projects import agents_link_problem, get_project
+from factory.workspace.sandbox import prepare_replay_sandbox
 
 
 def run_pipeline(
@@ -64,31 +70,53 @@ def run_pipeline(
     project_id: str | None = None,
     replay_run_id: int | None = None,
     on_event: OnEvent | None = None,
+    notify_operator: bool = True,
+    prepare_workdir: Callable[[Path], None] | None = None,
 ) -> RunOutcome:
-    """Start a run (or replay one on frozen outputs) and stream it to the end."""
+    """Start a run (or replay one on frozen outputs) and stream it to the end.
+
+    A replay never works in `opencode_cwd` itself: it gets a scratch clone of it
+    (see `workspace.sandbox`), so re-driving a past run cannot touch the product.
+    `prepare_workdir` is called on the working directory before the graph runs
+    (the scenario matrix seeds its fixture repository this way);
+    `notify_operator=False` keeps a run that nobody waits on from pinging anyone.
+    """
     emit = on_event or ignore_events
+    cwd = Path(opencode_cwd) if opencode_cwd else Path.cwd()
 
     # Init DB; create a new story (fresh run) or reuse the replayed run's story
     init_db(db_path)
     with get_db(db_path) as conn:
         if replay_run_id:
-            orig = conn.execute(
-                "SELECT story_id FROM pipeline_runs WHERE id = ?", (replay_run_id,)
-            ).fetchone()
+            orig = get_run(conn, replay_run_id)
+            if not orig:
+                raise RunError(f"No run found with id #{replay_run_id}")
             story_id = orig["story_id"]
+            # The replay starts where the replayed run started (its sandbox is
+            # checked out there); never at whatever repo the process sits in.
+            base_commit = orig.get("base_commit") or (
+                git_head(Path(opencode_cwd)) if opencode_cwd else None
+            )
         else:
-            # Auto-increment story ID
-            row = conn.execute("SELECT COUNT(*) as c FROM stories").fetchone()
-            n = row["c"] + 1
-            story_id = f"US-{n:04d}"
+            story_id = next_story_id(conn)
             create_story(conn, story_id, "Pending", request, project_id=project_id)
-        # Pin the target repo's HEAD as THIS run's baseline, so the trust package
-        # can measure this run's change set from git rather than lumping in every
-        # factory commit ever made to the repo.
-        base_commit = git_head(Path(opencode_cwd or Path.cwd()))
+            # Pin the target repo's HEAD as THIS run's baseline, so the trust package
+            # can measure this run's change set from git rather than lumping in every
+            # factory commit ever made to the repo.
+            base_commit = git_head(cwd)
         run_id = start_run(
-            conn, story_id, project_id=project_id, base_commit=base_commit
+            conn, story_id, project_id=project_id, base_commit=base_commit,
+            replay_of=replay_run_id,
         )
+
+    if replay_run_id:
+        cwd = prepare_replay_sandbox(
+            run_id, db_path,
+            source=Path(opencode_cwd) if opencode_cwd else None,
+            commit=base_commit,
+        )
+    if prepare_workdir is not None:
+        prepare_workdir(cwd)
 
     emit(RunStarted(run_id, story_id, request, project_spec_text, replay_run_id))
 
@@ -98,14 +126,14 @@ def run_pipeline(
         "story_id": story_id,
         "run_id": run_id,
         "db_path": str(db_path),
-        "opencode_cwd": opencode_cwd or str(Path.cwd()),
+        "opencode_cwd": str(cwd),
     }
     if project_spec_text:
         initial_state["project_spec"] = project_spec_text
     # Project runs get a project_dir so ADRs + decision memory work. The project
     # directory IS the repository (evidence under its docs/), so it is the cwd.
-    if project_id and opencode_cwd:
-        initial_state["project_dir"] = str(opencode_cwd)
+    if project_id and (opencode_cwd or replay_run_id):
+        initial_state["project_dir"] = str(cwd)
     if replay_run_id:
         initial_state["replay_run_id"] = replay_run_id
 
@@ -115,7 +143,7 @@ def run_pipeline(
             final_state.update(node_output)
             emit(NodeCompleted(node_name, node_output))
 
-    return _finish(run_id, story_id, final_state, db_path, emit)
+    return _finish(run_id, story_id, final_state, db_path, emit, notify_operator)
 
 
 def run_project_pipeline(
@@ -127,6 +155,7 @@ def run_project_pipeline(
 ) -> RunOutcome:
     """Run the pipeline for a registered project (ValueError if it is unknown)."""
     project = get_project(db_path, project_ref)
+    _require_agents_link(Path(project["repo_path"]))
     return run_pipeline(
         request,
         opencode_cwd=project["repo_path"],
@@ -141,20 +170,16 @@ def replay_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) -
     """Re-run the orchestration against a past run's frozen agent outputs."""
     init_db(db_path)
     with get_db(db_path) as conn:
-        orig = conn.execute(
-            "SELECT pr.*, s.request FROM pipeline_runs pr "
-            "JOIN stories s ON pr.story_id = s.id WHERE pr.id = ?",
-            (run_id,),
-        ).fetchone()
-        if not orig:
-            raise RunError(f"No run found with id #{run_id}")
-        orig = dict(orig)
+        orig = get_run(conn, run_id)
+    if not orig:
+        raise RunError(f"No run found with id #{run_id}")
 
     project_spec_text = None
     opencode_cwd = None
     if orig.get("project_id"):
         project = get_project(db_path, orig["project_id"])
         if project:
+            # The SOURCE of the replay's scratch clone, never its working directory.
             opencode_cwd = project["repo_path"]
             project_spec_text = load_project_spec_text(project)
 
@@ -177,18 +202,17 @@ def resume_run(
     db_path: Path,
     on_event: OnEvent | None = None,
 ) -> RunOutcome:
-    """Resume a paused pipeline run after human approval/rejection."""
+    """Resume a paused pipeline run after human approval/rejection.
+
+    A parked REPLAY resumes as a replay: the same frozen outputs, in the same
+    scratch clone. Resuming it live would spend tokens and write into the product.
+    """
     emit = on_event or ignore_events
     init_db(db_path)
     with get_db(db_path) as conn:
-        run = conn.execute(
-            "SELECT pr.*, s.request FROM pipeline_runs pr "
-            "JOIN stories s ON pr.story_id = s.id WHERE pr.id = ?",
-            (run_id,),
-        ).fetchone()
+        run = get_run(conn, run_id)
         if not run:
             raise RunError(f"No run found with id #{run_id}")
-        run = dict(run)
 
         if run["status"] != "waiting_human":
             raise RunError(
@@ -205,7 +229,7 @@ def resume_run(
         )
         verdict_word = "REJECTED" if action == "reject" else "APPROVED"
         respond_to_gate(conn, pending["id"], f"{verdict_word}: {decision}")
-        conn.execute("UPDATE pipeline_runs SET status = 'running' WHERE id = ?", (run_id,))
+        reopen_run(conn, run_id)
         conn.commit()
 
     # Reconstruct context from the LATEST output of each stage — see
@@ -215,28 +239,7 @@ def resume_run(
     if spec_parsed is None:
         _unresumable(run_id, "missing spec log", db_path)
 
-    opencode_cwd = str(Path.cwd())
-    project_spec_text = None
-    project_dir = None
-    if run.get("project_id"):
-        project = get_project(db_path, run["project_id"])
-        opencode_cwd = project["repo_path"]
-        project_spec_text = load_project_spec_text(project)
-        project_dir = opencode_cwd
-
-    state: dict[str, Any] = {
-        "request": run["request"],
-        "story_id": run["story_id"],
-        "run_id": run_id,
-        "db_path": str(db_path),
-        "opencode_cwd": opencode_cwd,
-        "spec": spec_parsed,
-        "status": "running",
-    }
-    if project_spec_text:
-        state["project_spec"] = project_spec_text
-    if project_dir:
-        state["project_dir"] = project_dir
+    state = _resume_state(run, spec_parsed, db_path)
 
     # Which stage to re-enter depends on WHICH checkpoint parked the run — a
     # Checkpoint-1 park has no architecture yet, so the old always-resume-at-
@@ -268,6 +271,44 @@ def resume_run(
     return _finish(run_id, run["story_id"], final_state, db_path, emit)
 
 
+def _resume_state(run: dict[str, Any], spec: dict, db_path: Path) -> dict[str, Any]:
+    """The graph state a resume starts from: where it works, what it knows."""
+    run_id = run["id"]
+    opencode_cwd = str(Path.cwd())
+    project_spec_text = None
+    project_dir = None
+    project = get_project(db_path, run["project_id"]) if run.get("project_id") else None
+    if project:
+        opencode_cwd = project["repo_path"]
+        project_spec_text = load_project_spec_text(project)
+        project_dir = opencode_cwd
+    if run.get("replay_of"):
+        sandbox = prepare_replay_sandbox(
+            run_id, db_path,
+            source=Path(project["repo_path"]) if project else None,
+            commit=run.get("base_commit"),
+        )
+        opencode_cwd = str(sandbox)
+        project_dir = opencode_cwd if project else None
+
+    state: dict[str, Any] = {
+        "request": run["request"],
+        "story_id": run["story_id"],
+        "run_id": run_id,
+        "db_path": str(db_path),
+        "opencode_cwd": opencode_cwd,
+        "spec": spec,
+        "status": "running",
+    }
+    if project_spec_text:
+        state["project_spec"] = project_spec_text
+    if project_dir:
+        state["project_dir"] = project_dir
+    if run.get("replay_of"):
+        state["replay_run_id"] = run["replay_of"]
+    return state
+
+
 def retry_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) -> RunOutcome:
     """Re-drive a run that died after the operator answered a checkpoint.
 
@@ -279,9 +320,7 @@ def retry_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) ->
     emit = on_event or ignore_events
     init_db(db_path)
     with get_db(db_path) as conn:
-        run = conn.execute(
-            "SELECT status FROM pipeline_runs WHERE id = ?", (run_id,)
-        ).fetchone()
+        run = get_run(conn, run_id)
         if not run:
             raise RunError(f"No run found with id #{run_id}")
         if run["status"] not in ("blocked", "failed"):
@@ -297,17 +336,23 @@ def retry_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) ->
             )
         action, feedback = decision_from_response(gate["human_response"])
         # Re-open the decision so resume_run can consume it exactly as before.
-        conn.execute(
-            "UPDATE gate_results SET human_response = NULL WHERE id = ?", (gate["id"],)
-        )
-        conn.execute(
-            "UPDATE pipeline_runs SET status = 'waiting_human', error = NULL WHERE id = ?",
-            (run_id,),
-        )
+        requeue_answered_gate(conn, run_id, gate["id"])
         conn.commit()
 
     emit(RetryStarted(run_id, gate["gate_name"], action, feedback))
     return resume_run(run_id, action, reason=feedback or None, db_path=db_path, on_event=on_event)
+
+
+def _require_agents_link(repo: Path) -> None:
+    """Refuse a live project run whose agents are not THIS checkout's.
+
+    Each product's `.opencode` is a symlink into one factory checkout. Launched
+    from another checkout (a clone, a worktree), the run would silently drive the
+    first checkout's agents — not the ones `make evals` just validated here.
+    """
+    problem = agents_link_problem(repo)
+    if problem:
+        raise RunError(problem)
 
 
 def _unresumable(run_id: int, reason: str, db_path: Path) -> None:
@@ -318,7 +363,8 @@ def _unresumable(run_id: int, reason: str, db_path: Path) -> None:
 
 
 def _finish(
-    run_id: int, story_id: str, final_state: dict[str, Any], db_path: Path, emit: OnEvent
+    run_id: int, story_id: str, final_state: dict[str, Any], db_path: Path, emit: OnEvent,
+    notify_operator: bool = True,
 ) -> RunOutcome:
     status = final_state.get("status", "unknown")
     human_qs = (
@@ -337,7 +383,8 @@ def _finish(
         final_state=final_state,
     )
     emit(RunFinished(outcome))
-    _notify_if_parked(run_id, story_id, status, outcome.current_stage)
+    if notify_operator:
+        _notify_if_parked(run_id, story_id, status, outcome.current_stage)
     return outcome
 
 

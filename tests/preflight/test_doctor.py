@@ -1,6 +1,6 @@
 """`factory doctor`: the preflight that runs before any tokens are spent.
 
-Every model probe goes through `factory.selftest.doctor.run_agent`, which these
+Every model probe goes through `factory.preflight.doctor.run_agent`, which these
 tests patch — a live opencode call from a test is never acceptable.
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from factory.adapters.opencode import AgentResult
-from factory.selftest import doctor
+from factory.preflight import doctor
 from factory.workspace import db_path
 from factory.workspace.projects import create_project
 
@@ -45,7 +45,7 @@ class DoctorTests(unittest.TestCase):
         os.environ.update(self._saved)
 
     def test_all_green_passes_and_probes_each_distinct_model_once(self) -> None:
-        with patch("factory.selftest.doctor.run_agent", side_effect=_ok) as probe:
+        with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
             report = doctor.run_doctor(which=_which(ALL_TOOLS))
         self.assertTrue(report.passed)
         probed = sorted(call.kwargs["model"] for call in probe.call_args_list)
@@ -59,7 +59,7 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(checks[tool].status, "ok")
 
     def test_probe_uses_a_short_timeout_and_the_repo_cwd(self) -> None:
-        with patch("factory.selftest.doctor.run_agent", side_effect=_ok) as probe:
+        with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
             doctor.run_doctor(which=_which(ALL_TOOLS))
         kwargs = probe.call_args.kwargs
         self.assertEqual(kwargs["timeout"], doctor.PROBE_TIMEOUT_SECS)
@@ -79,7 +79,7 @@ class DoctorTests(unittest.TestCase):
                 )
             return _ok(agent, prompt)
 
-        with patch("factory.selftest.doctor.run_agent", side_effect=probe):
+        with patch("factory.preflight.doctor.run_agent", side_effect=probe):
             report = doctor.run_doctor(which=_which(ALL_TOOLS))
         self.assertFalse(report.passed)
         bad = _by_name(report)["model openai/gpt-5.5-fast"]
@@ -90,14 +90,14 @@ class DoctorTests(unittest.TestCase):
         # opencode can exit 0 having streamed only an error event: an empty answer
         # is not proof the model works.
         silent = AgentResult(agent="x", output="", duration_secs=0.1, returncode=0)
-        with patch("factory.selftest.doctor.run_agent", return_value=silent):
+        with patch("factory.preflight.doctor.run_agent", return_value=silent):
             report = doctor.run_doctor(which=_which(ALL_TOOLS))
         self.assertFalse(report.passed)
 
     def test_env_override_is_what_gets_probed(self) -> None:
         os.environ["FACTORY_TIER_FAST"] = "openai/override-model"
         try:
-            with patch("factory.selftest.doctor.run_agent", side_effect=_ok) as probe:
+            with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
                 doctor.run_doctor(which=_which(ALL_TOOLS))
         finally:
             del os.environ["FACTORY_TIER_FAST"]
@@ -106,7 +106,7 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn("openai/gpt-5.5-fast", probed)
 
     def test_offline_skips_every_model_probe(self) -> None:
-        with patch("factory.selftest.doctor.run_agent") as probe:
+        with patch("factory.preflight.doctor.run_agent") as probe:
             report = doctor.run_doctor(offline=True, which=_which(ALL_TOOLS))
         probe.assert_not_called()
         self.assertTrue(report.passed)
@@ -115,7 +115,7 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(all(c.status == "skip" for c in models))
 
     def test_missing_opencode_fails_without_probing(self) -> None:
-        with patch("factory.selftest.doctor.run_agent") as probe:
+        with patch("factory.preflight.doctor.run_agent") as probe:
             report = doctor.run_doctor(which=_which({"go", "node", "tsc"}))
         probe.assert_not_called()
         self.assertFalse(report.passed)
@@ -126,7 +126,7 @@ class DoctorTests(unittest.TestCase):
     def test_missing_toolchains_warn_but_do_not_fail(self) -> None:
         # A missing go/node/tsc only matters for projects in that stack, so it is
         # reported, not fatal.
-        with patch("factory.selftest.doctor.run_agent", side_effect=_ok):
+        with patch("factory.preflight.doctor.run_agent", side_effect=_ok):
             report = doctor.run_doctor(which=_which({"opencode"}))
         self.assertTrue(report.passed)
         checks = _by_name(report)
@@ -140,7 +140,7 @@ class DoctorWorkspaceTests(unittest.TestCase):
     repairs anything. ($FACTORY_HOME is a per-test temp dir, see conftest.)"""
 
     def _run(self, **kwargs) -> doctor.DoctorReport:
-        with patch("factory.selftest.doctor.run_agent") as probe:
+        with patch("factory.preflight.doctor.run_agent") as probe:
             report = doctor.run_doctor(offline=True, which=_which(ALL_TOOLS), **kwargs)
         probe.assert_not_called()
         return report
@@ -231,3 +231,42 @@ class DoctorWorkspaceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrokenTierConfigTests(unittest.TestCase):
+    """The doctor exists to diagnose a broken setup — it must REPORT a missing or
+    invalid tiers.toml as a failed check, not die on it like every other verb did."""
+
+    def setUp(self) -> None:
+        from factory.agent_config import location, tiers
+
+        self._tmp = Path(__import__("tempfile").mkdtemp())
+        self._env = patch.dict(os.environ, {location.AGENTS_DIR_ENV: str(self._tmp)})
+        self._env.start()
+        tiers.config.cache_clear()
+
+    def tearDown(self) -> None:
+        from factory.agent_config import tiers
+
+        self._env.stop()
+        tiers.config.cache_clear()
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _run(self) -> doctor.DoctorReport:
+        with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
+            report = doctor.run_doctor(which=_which(ALL_TOOLS))
+        probe.assert_not_called()
+        return report
+
+    def test_a_missing_tiers_file_is_a_failed_check(self) -> None:
+        report = self._run()
+        self.assertFalse(report.passed)
+        check = _by_name(report)["tiers"]
+        self.assertEqual(check.status, "fail")
+        self.assertIn("tiers.toml", check.detail)
+
+    def test_an_invalid_tiers_file_is_a_failed_check(self) -> None:
+        (self._tmp / "tiers.toml").write_text('default_tier = "nope"\n[tiers]\nfast = "a/b"\n[agents]\n')
+        check = _by_name(self._run())["tiers"]
+        self.assertEqual(check.status, "fail")
+        self.assertIn("default_tier", check.detail)

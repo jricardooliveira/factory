@@ -28,7 +28,6 @@ from textual.widgets import (
     TextArea,
 )
 
-from factory.evidence.progress import render_flow, run_pipeline_progress
 from factory.interfaces.board.data import (
     KANBAN_COLUMNS,
     BoardRun,
@@ -36,8 +35,9 @@ from factory.interfaces.board.data import (
     list_projects_on_board,
     load_board_runs,
 )
-from factory.runs import resume_run
-from factory.state.db import archive_run, get_db
+from factory.interfaces.render.review import render_flow
+from factory.runs import RunError, dismiss_run, resume_run
+from factory.runs.queries import run_stages
 
 
 def _col_slug(name: str) -> str:
@@ -207,7 +207,7 @@ class FactoryBoard(App):
             f"[b]#{run.id} {escape(run.story_id)}[/b] — {escape(run.title)}  "
             f"[{state_style}]{escape(run.state_label)}[/]"
         )
-        flow = render_flow(run_pipeline_progress(self.db_path, run.id))
+        flow = render_flow(run_stages(run.id, db_path=self.db_path))
         self.query_one("#pipeline", Static).update(flow)
 
         lines: list[str] = []
@@ -315,11 +315,13 @@ class FactoryBoard(App):
         if not run:
             self.notify("Select a run first.", severity="warning")
             return
-        if run.needs_input:
-            self.notify("This run is awaiting your decision — approve or reject it.", severity="warning")
+        # One dismiss policy for every surface: `runs.dismiss_run` refuses a run
+        # awaiting a decision or still running, exactly as `factory dismiss` does.
+        try:
+            dismiss_run(run.id, db_path=self.db_path)
+        except RunError as exc:
+            self.notify(str(exc), severity="warning")
             return
-        with get_db(self.db_path) as conn:
-            archive_run(conn, run.id)
         self.notify(f"Run #{run.id} dismissed.")
         self.selected_id = None
         self._last_sig = None

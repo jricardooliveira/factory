@@ -130,14 +130,14 @@ class LegacyImportTests(unittest.TestCase):
         with db.get_db(new_db) as conn:
             rows = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM projects")}
             runs = conn.execute("SELECT COUNT(*) c FROM pipeline_runs").fetchone()["c"]
-        alpha = self.home / "projects" / "alpha"
-        self.assertEqual(rows["PROJ-001"]["repo_path"], str(alpha))
-        self.assertEqual(rows["PROJ-001"]["spec_path"], str(alpha / "project-spec.json"))
+        # Stored relative to the home, so the home stays self-contained.
+        self.assertEqual(rows["PROJ-001"]["repo_path"], "projects/alpha")
+        self.assertEqual(rows["PROJ-001"]["spec_path"], "projects/alpha/project-spec.json")
         beta = self.home / "projects" / "beta"
-        self.assertEqual(rows["PROJ-002"]["repo_path"], str(beta))
+        self.assertEqual(rows["PROJ-002"]["repo_path"], "projects/beta")
         # An external spec is COPIED into the repo — the product carries the spec it
         # was designed against — and the operator's original is left untouched.
-        self.assertEqual(rows["PROJ-002"]["spec_path"], str(beta / "project-spec.json"))
+        self.assertEqual(rows["PROJ-002"]["spec_path"], "projects/beta/project-spec.json")
         self.assertEqual(json.loads((beta / "project-spec.json").read_text())["name"], "Beta")
         self.assertIn("project-spec.json", _git(beta, "ls-files").split())
         self.assertTrue(Path(self.fx["external_spec"]).is_file())
@@ -299,9 +299,8 @@ class LegacyImportTests(unittest.TestCase):
         self._import()
         with db.get_db(self.home / "factory.db") as conn:
             row = conn.execute("SELECT * FROM projects WHERE id = 'PROJ-001'").fetchone()
-        alpha = self.home / "projects" / "alpha"
-        self.assertEqual(row["repo_path"], str(alpha))
-        self.assertEqual(row["spec_path"], str(alpha / "project-spec.json"))
+        self.assertEqual(row["repo_path"], "projects/alpha")
+        self.assertEqual(row["spec_path"], "projects/alpha/project-spec.json")
 
 
 class LegacyImportCliTests(unittest.TestCase):

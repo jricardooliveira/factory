@@ -26,6 +26,7 @@ from factory.pipeline.evidence_writers import write_trust_package
 from factory.pipeline.state import PipelineState
 from factory.state.db import (
     finish_run,
+    get_human_responses,
     get_run_cost,
     log_gate,
     update_run_stage,
@@ -65,14 +66,9 @@ def settled_threshold_terms(state: PipelineState) -> frozenset[str]:
         try:
             conn = db_conn(state)
             try:
-                rows = conn.execute(
-                    "SELECT human_response FROM gate_results WHERE run_id = ? "
-                    "AND human_response IS NOT NULL",
-                    (run_id,),
-                ).fetchall()
+                parts.extend(get_human_responses(conn, run_id))
             finally:
                 conn.close()
-            parts.extend(r["human_response"] or "" for r in rows)
         except sqlite3.Error:
             pass  # evidence is best-effort; never let it break the gate
 

@@ -1,0 +1,41 @@
+"""Curating runs: dismiss and reconcile, with ONE policy for every surface.
+
+The CLI and the Textual board used to carry their own copies — and they
+disagreed: the board refused to dismiss a run awaiting a decision, while
+`factory dismiss` archived anything, a parked or a still-running run included.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from factory.runs.events import RunError
+from factory.state.db import archive_run, get_db, get_run, init_db, reconcile_stale_runs
+
+# Statuses a run may NOT be dismissed from, and what the operator should do instead.
+_NOT_DISMISSIBLE = {
+    "waiting_human": "is awaiting your decision — approve or reject it",
+    "running": "is still running — let it finish, or `factory reconcile` it if its process died",
+}
+
+DEFAULT_STALE_SECS = 3600.0
+
+
+def dismiss_run(run_id: int, *, db_path: Path) -> None:
+    """Archive a finished run off the board (non-destructive). Raises RunError."""
+    init_db(db_path)
+    with get_db(db_path) as conn:
+        run = get_run(conn, run_id)
+        if not run:
+            raise RunError(f"No run found with id #{run_id}")
+        why = _NOT_DISMISSIBLE.get(run["status"])
+        if why:
+            raise RunError(f"Run #{run_id} {why}.")
+        archive_run(conn, run_id)
+
+
+def reconcile_stale(older_than_secs: float = DEFAULT_STALE_SECS, *, db_path: Path) -> list[int]:
+    """Mark runs stuck 'running' longer than the cutoff as failed (their process died)."""
+    init_db(db_path)
+    with get_db(db_path) as conn:
+        return reconcile_stale_runs(conn, older_than_secs=older_than_secs)

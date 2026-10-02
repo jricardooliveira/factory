@@ -14,7 +14,9 @@ and project-spec.json beside the code. That move is only safe if the factory:
      settle its own ambiguity questions);
   4. still lands an agent's legacy ``repo/``-prefixed path at the repo root.
 
-Driven offline through the real run service on frozen agent outputs.
+Driven offline through the real run service on frozen agent outputs. A replay
+works in a scratch clone of the product (`workspace.sandbox`), so the assertions
+read that clone — `self.work` — which is a project repository like any other.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from factory.evidence import trust_package as tp
 from factory.state import db
 from factory.workspace import git, layout
 from factory.workspace.projects import create_project
+from factory.workspace.sandbox import replay_sandbox
 
 
 def _blocked(*_a, **_k):
@@ -99,9 +102,22 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
             db.log_agent(conn, orig, "tester-agent", "in", json.dumps(TESTER), verdict="pass")
         return orig
 
-    def _replay(self, coder_out: str, arch: dict | None = None) -> runs.RunOutcome:
+    def _replay(
+        self, coder_out: str, arch: dict | None = None, setup=None
+    ) -> runs.RunOutcome:
+        """Replay the seeded run through the run service; `setup` prepares the
+        working repository first (as an operator's uncommitted edit would be)."""
         orig = self._seed(coder_out, arch)
-        return runs.replay_run(orig, db_path=self.db_path)
+        outcome = runs.run_pipeline(
+            "let me search my bookmarks",
+            opencode_cwd=str(self.repo),
+            db_path=self.db_path,
+            project_id=self.project["id"],
+            replay_run_id=orig,
+            prepare_workdir=setup,
+        )
+        self.work = replay_sandbox(outcome.run_id, self.db_path)
+        return outcome
 
     # ── 1. the happy path: evidence committed, code measured alone ───────
 
@@ -109,8 +125,8 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
         outcome = self._replay(_coder(("src/search.py", "def s():\n    return []\n")))
         self.assertEqual(outcome.status, "completed", outcome.error)
 
-        tracked = set(_git_out(self.repo, "ls-files").split())
-        work = artifacts.work_dir_for(self.repo, "US-0001")
+        tracked = set(_git_out(self.work, "ls-files").split())
+        work = artifacts.work_dir_for(self.work, "US-0001")
         for name in ("INTENT.md", "SPEC.md", "PLAN.md"):
             self.assertIn(f"docs/work/US-0001/{name}", tracked)
             self.assertTrue((work / name).is_file())
@@ -118,8 +134,8 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
         self.assertIn(f"docs/releases/run-{outcome.run_id}-trust-package.json", tracked)
         self.assertIn("src/search.py", tracked)
         # Nothing the factory wrote was left uncommitted.
-        self.assertEqual(git.git_changed_paths(self.repo), [])
-        subjects = _git_out(self.repo, "log", "--format=%s").splitlines()
+        self.assertEqual(git.git_changed_paths(self.work), [])
+        subjects = _git_out(self.work, "log", "--format=%s").splitlines()
         self.assertTrue(all(s.startswith("factory:") for s in subjects), subjects)
 
     def test_trust_package_measures_only_code_changes(self) -> None:
@@ -128,10 +144,10 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
         self.assertEqual(pkg["diff"]["source"], "git")
         self.assertEqual(pkg["diff"]["files"], [{"path": "src/search.py", "change": "added"}])
         self.assertEqual(pkg["diff"]["scope_violations"], [])
-        self.assertTrue(pkg["adr"]["path"].startswith(str(self.repo / "docs" / "architecture")))
+        self.assertTrue(pkg["adr"]["path"].startswith(str(self.work / "docs" / "architecture")))
         # The copy written to docs/releases/ says the same thing.
         saved = json.loads(
-            (self.repo / "docs" / "releases" / f"run-{outcome.run_id}-trust-package.json")
+            (self.work / "docs" / "releases" / f"run-{outcome.run_id}-trust-package.json")
             .read_text(encoding="utf-8")
         )
         self.assertEqual(saved["diff"]["files"], [{"path": "src/search.py", "change": "added"}])
@@ -147,34 +163,37 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
 
     def test_run_state_uses_the_repo_as_the_project_dir(self) -> None:
         outcome = self._replay(_coder(("src/search.py", "X = 1\n")))
-        self.assertEqual(outcome.final_state["project_dir"], str(self.repo))
-        self.assertEqual(outcome.final_state["opencode_cwd"], str(self.repo))
+        self.assertEqual(outcome.final_state["project_dir"], str(self.work))
+        self.assertEqual(outcome.final_state["opencode_cwd"], str(self.work))
 
     def test_a_resumed_run_also_uses_the_repo_as_the_project_dir(self) -> None:
         # Checkpoint 2 parks on a breaking change; resuming re-enters at the coder.
         parked = self._replay(_coder(("src/search.py", "X = 1\n")),
                               {**ARCH, "breaking_changes": ["drops the v1 endpoint"]})
         self.assertEqual(parked.status, "waiting_human", parked.error)
-        # Resume has no replay mode: the coder hits the blocked live boundary, which
-        # is fine — what matters is the state the resumed graph was handed.
+        # A resumed replay keeps replaying, in the same scratch clone.
         resumed = runs.resume_run(parked.run_id, "approve", db_path=self.db_path)
-        self.assertEqual(resumed.final_state["project_dir"], str(self.repo))
-        self.assertEqual(resumed.final_state["opencode_cwd"], str(self.repo))
+        self.assertEqual(resumed.final_state["project_dir"], str(self.work))
+        self.assertEqual(resumed.final_state["opencode_cwd"], str(self.work))
 
     # ── 2. evidence never trips the coder's governance check ─────────────
 
     def test_uncommitted_evidence_is_not_an_out_of_band_write(self) -> None:
         # Evidence written but (say) not yet committed — e.g. an operator note in
         # the work folder — must not block the coder as an undeclared write.
-        notes = self.repo / "docs" / "work" / "US-0000" / "NOTES.md"
-        notes.parent.mkdir(parents=True)
-        notes.write_text("operator notes\n", encoding="utf-8")
-        outcome = self._replay(_coder(("src/search.py", "X = 1\n")))
+        def notes(work: Path) -> None:
+            path = work / "docs" / "work" / "US-0000" / "NOTES.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("operator notes\n", encoding="utf-8")
+
+        outcome = self._replay(_coder(("src/search.py", "X = 1\n")), setup=notes)
         self.assertEqual(outcome.status, "completed", outcome.error)
 
     def test_a_real_undeclared_write_still_blocks(self) -> None:
-        (self.repo / "rogue.py").write_text("print('out of band')\n", encoding="utf-8")
-        outcome = self._replay(_coder(("src/search.py", "X = 1\n")))
+        def rogue(work: Path) -> None:
+            (work / "rogue.py").write_text("print('out of band')\n", encoding="utf-8")
+
+        outcome = self._replay(_coder(("src/search.py", "X = 1\n")), setup=rogue)
         self.assertEqual(outcome.status, "blocked")
         self.assertIn("GOVERNANCE", outcome.error or "")
         self.assertIn("rogue.py", outcome.error or "")
@@ -189,9 +208,9 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
         ))
         self.assertIn(outcome.status, ("failed", "blocked"))
         self.assertIn("factory-owned", outcome.error or "")
-        self.assertEqual((self.repo / "PROJECT_RULES.md").read_text(encoding="utf-8"),
+        self.assertEqual((self.work / "PROJECT_RULES.md").read_text(encoding="utf-8"),
                          rules_before)
-        self.assertFalse((self.repo / "src" / "search.py").exists(), "all-or-nothing")
+        self.assertFalse((self.work / "src" / "search.py").exists(), "all-or-nothing")
 
     def test_coder_may_not_write_into_the_work_folder(self) -> None:
         outcome = self._replay(_coder(("docs/work/US-0001/SPEC.md", "forged\n")))
@@ -203,8 +222,8 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
     def test_repo_prefixed_paths_land_at_the_repo_root(self) -> None:
         outcome = self._replay(_coder(("repo/src/search.py", "X = 1\n")))
         self.assertEqual(outcome.status, "completed", outcome.error)
-        self.assertTrue((self.repo / "src" / "search.py").is_file())
-        self.assertFalse((self.repo / "repo").exists())
+        self.assertTrue((self.work / "src" / "search.py").is_file())
+        self.assertFalse((self.work / "repo").exists())
 
 
 class EvidenceCommitMessagesTests(unittest.TestCase):
@@ -223,7 +242,9 @@ class EvidenceCommitMessagesTests(unittest.TestCase):
                 orig = case._seed(_coder(("src/a.py", "A = 1\n")))
                 outcome = runs.replay_run(orig, db_path=db_path)
             self.assertEqual(outcome.status, "completed", outcome.error)
-            log = _git_out(repo, "log", "--reverse", "--format=%s").splitlines()
+            # The replay committed into its scratch clone of the product.
+            work = replay_sandbox(outcome.run_id, db_path)
+            log = _git_out(work, "log", "--reverse", "--format=%s").splitlines()
             joined = "\n".join(log)
             for needle in ("scaffold", "INTENT", "SPEC", "PLAN", "ADR", "trust package"):
                 self.assertIn(needle, joined)

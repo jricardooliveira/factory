@@ -58,7 +58,10 @@ class FactoryProjectCliTests(unittest.TestCase):
         with get_db(layout.db_path()) as conn:
             row = conn.execute("SELECT spec_path FROM projects WHERE id = 'PROJ-001'").fetchone()
 
-        self.assertEqual(Path(row["spec_path"]).resolve(), spec_path.resolve())
+        # Stored relative to the home (self-contained), resolved on the way out.
+        self.assertEqual(row["spec_path"], "projects/cli-app/project-spec.json")
+        resolved = layout.resolve_location(row["spec_path"], layout.db_path())
+        self.assertEqual(resolved.resolve(), spec_path.resolve())
         self.assertEqual(json.loads(spec_path.read_text())["framework"], "FastAPI")
 
     def test_run_command_dispatches_to_project_pipeline(self) -> None:

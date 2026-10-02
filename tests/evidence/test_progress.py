@@ -6,12 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from factory.evidence.progress import (
-    render_flow,
-    render_timeline,
-    run_pipeline_progress,
-    run_timeline,
-)
+import re
+
+from factory.evidence.progress import plain_flow, run_pipeline_progress, run_timeline
+from factory.interfaces.render.review import render_flow, render_timeline
 from factory.state import db
 
 
@@ -79,6 +77,20 @@ class PipelineProgressTests(unittest.TestCase):
         self.assertIn("○", flow)   # later stages pending
         self.assertIn("Spec", flow)
         self.assertIn("→", flow)   # arrows between stages
+
+    def test_plain_flow_is_the_markup_flow_without_its_tags(self) -> None:
+        """The scenario matrix prints plain_flow where it used to strip render_flow's
+        tags; the two must stay the same text."""
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "US-0004", "S", "req")
+            rid = db.start_run(conn, "US-0004")
+            db.log_agent(conn, rid, "spec-agent", "p", "{}", verdict="pass")
+            db.log_agent(conn, rid, "coder-agent", "p", "{}", verdict="complete", stage_type="T-1")
+            db.log_gate(conn, rid, "gate-1-spec", False, "nope")
+            db.finish_run(conn, rid, "failed")
+        stages = run_pipeline_progress(self.db_path, rid)
+        stripped = re.sub(r"\[/?[a-z0-9 #]*\]", "", render_flow(stages))
+        self.assertEqual(plain_flow(stages), stripped)
 
 
 class TimelineTests(unittest.TestCase):

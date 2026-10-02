@@ -60,6 +60,61 @@ def project_dir_for(slug: str) -> Path:
     return projects_dir() / slug
 
 
+def replays_dir(base: Path | None = None) -> Path:
+    """Where replays run: scratch clones under <home>/replays/, never the product."""
+    return (base if base is not None else home()) / "replays"
+
+
+def replay_dir(run_id: int, base: Path | None = None) -> Path:
+    """The scratch repository a replay run (and any resume of it) works in."""
+    return replays_dir(base) / f"run-{run_id}"
+
+
+def store_location(path: Path | str, db: Path) -> str:
+    """How a product path is written to factory.db.
+
+    Relative to the directory holding the DB (the home) when it lives inside it,
+    absolute otherwise. A home is then self-contained: copy or move it and its
+    database still points at ITS products — with absolute paths, a run in a copied
+    home silently wrote into the original's repositories.
+    """
+    base = Path(db).resolve().parent
+    target = Path(path).expanduser().resolve()
+    try:
+        return target.relative_to(base).as_posix()
+    except ValueError:
+        return str(target)
+
+
+def resolve_location(stored: str | None, db: Path) -> Path | None:
+    """The absolute path a stored product location means for THIS database.
+
+    Relative paths resolve against the DB's directory. An absolute path recorded
+    before locations were stored relatively is re-anchored when it names a
+    ``projects/<slug>`` that this home also has: the DB was copied or moved along
+    with its products, and the copy's repositories are the ones it governs.
+    """
+    if not stored:
+        return None
+    # Anchor on the DB path as the caller spelled it (no symlink resolution), so
+    # a relative location comes back in the same form the caller uses.
+    base = Path(db).expanduser().absolute().parent
+    path = Path(stored)
+    if not path.is_absolute():
+        return base / path
+    for anchor in (base, base.resolve()):
+        if path.is_relative_to(anchor):
+            return path
+    parts = path.parts
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i] == "projects":
+            local = base.joinpath(*parts[i:])
+            if (base / "projects" / parts[i + 1]).is_dir():
+                return local
+            break
+    return path
+
+
 def normalize_slug(value: str) -> str:
     """Return a filesystem and CLI friendly project slug (the ``projects/<slug>`` name)."""
 

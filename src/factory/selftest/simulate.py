@@ -1,7 +1,8 @@
 """Offline scenario simulation.
 
-Drives a catalog of representative stories through the REAL pipeline using the
-replay mechanism (frozen agent outputs) — zero tokens, deterministic. Verifies
+Drives a catalog of representative stories through the REAL run service
+(`runs.run_pipeline`, the path the CLI and TUI take) using the replay mechanism
+(frozen agent outputs) — zero tokens, deterministic. Verifies
 each scenario reaches its expected outcome and renders a "what works / what's
 broken" report. Doubles as a living, executable spec of factory behavior.
 """
@@ -15,8 +16,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from factory.domain.agent_output import parse_agent_json
-from factory.evidence.progress import render_flow, run_pipeline_progress
-from factory.pipeline import compile_pipeline
+from factory.evidence.progress import plain_flow, run_pipeline_progress
+from factory.runs import run_pipeline
 from factory.state import db
 from factory.workspace.git import git_init
 
@@ -100,33 +101,32 @@ def _seed_original(conn, outputs: dict[str, Any]) -> int:
 
 
 def run_scenario(scenario: Scenario) -> ScenarioResult:
+    """Replay one scenario through the run service — the same entry path the CLI
+    and the TUI use (replay sandbox, base-commit pin, finish/outcome) — in a
+    throwaway home. Nothing is notified: no operator is waiting on a scenario."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         db_path = root / "factory.db"
-        cwd = root / "repo"
-        cwd.mkdir()
         db.init_db(db_path)
         try:
             with db.get_db(db_path) as conn:
                 orig = _seed_original(conn, scenario.outputs)
-                new_rid = db.start_run(conn, "US-0001")
-            if scenario.setup:
-                scenario.setup(cwd)
-            state = {
-                "request": "do the thing", "story_id": "US-0001", "run_id": new_rid,
-                "db_path": str(db_path), "opencode_cwd": str(cwd), "replay_run_id": orig,
-            }
-            final: dict = dict(state)
-            for event in compile_pipeline().stream(state):
-                for _, out in event.items():
-                    final.update(out)
+            outcome = run_pipeline(
+                "do the thing",
+                db_path=db_path,
+                replay_run_id=orig,
+                notify_operator=False,
+                prepare_workdir=scenario.setup,
+            )
             with db.get_db(db_path) as conn:
-                gates = [(g["gate_name"], bool(g["passed"])) for g in db.get_run_gates(conn, new_rid)]
-                row = conn.execute(
-                    "SELECT status FROM pipeline_runs WHERE id = ?", (new_rid,)
-                ).fetchone()
-            actual = final.get("status") or (row["status"] if row else "unknown")
-            flow = render_flow(run_pipeline_progress(db_path, new_rid))
+                gates = [
+                    (g["gate_name"], bool(g["passed"]))
+                    for g in db.get_run_gates(conn, outcome.run_id)
+                ]
+                row = db.get_run(conn, outcome.run_id)
+            status = outcome.final_state.get("status")
+            actual = status or (row["status"] if row else "unknown")
+            flow = plain_flow(run_pipeline_progress(db_path, outcome.run_id))
             return ScenarioResult(scenario, actual, gates, flow)
         except Exception as exc:  # a crash is itself a failed scenario
             return ScenarioResult(scenario, "ERROR", error=str(exc))
@@ -236,9 +236,7 @@ def render_markdown(results: list[ScenarioResult]) -> str:
     lines.append("")
     lines.append("## Pipeline flow per scenario")
     lines.append("")
-    import re
-
     for r in results:
-        flow = re.sub(r"\[/?[a-z0-9 #]*\]", "", r.flow_text) or "(no flow)"
+        flow = r.flow_text or "(no flow)"
         lines.append(f"- **{r.scenario.name}**: {flow}")
     return "\n".join(lines) + "\n"

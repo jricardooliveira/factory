@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from factory.state.db import get_db
+from factory.state.projects import relocate_project
+from factory.state.reports import copy_database, has_history, read_only_projects
 from factory.workspace import layout
 from factory.workspace.git import git_commit_paths, git_init, is_git_repo
 from factory.agent_config.location import checkout_root
@@ -148,25 +150,6 @@ def _left_behind(folder: Path) -> list[str]:
     )
 
 
-def _home_db_has_history(db_path: Path) -> bool:
-    if not db_path.is_file():
-        return False
-    try:
-        conn = sqlite3.connect(str(db_path))
-        try:
-            for table in ("projects", "stories", "pipeline_runs"):
-                try:
-                    if conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
-                        return True
-                except sqlite3.OperationalError:
-                    continue  # table not created yet
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        return True  # unreadable: refuse rather than overwrite it
-    return False
-
-
 def _same_bytes(a: Path, b: Path) -> bool:
     try:
         return a.read_bytes() == b.read_bytes()
@@ -186,7 +169,7 @@ def plan_legacy_import(old_dir: Path, *, home: Path | None = None) -> LegacyImpo
     if not plan.db_source.is_file():
         plan.problems.append(f"no legacy factory.db in {old_dir}")
         return plan
-    if _home_db_has_history(plan.db_target):
+    if has_history(plan.db_target):
         plan.problems.append(
             f"{plan.db_target} already has run history; refusing to merge two databases"
         )
@@ -194,12 +177,7 @@ def plan_legacy_import(old_dir: Path, *, home: Path | None = None) -> LegacyImpo
     # Read-only: planning (and so --dry-run) must not so much as checkpoint the WAL.
     rows: list[dict] = []
     try:
-        conn = sqlite3.connect(f"{plan.db_source.as_uri()}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = [dict(r) for r in conn.execute("SELECT * FROM projects ORDER BY id")]
-        finally:
-            conn.close()
+        rows = read_only_projects(plan.db_source)
     except sqlite3.Error as exc:
         plan.problems.append(f"cannot read projects from {plan.db_source}: {exc}")
 
@@ -361,21 +339,18 @@ def _move_database(plan: LegacyImport) -> None:
         stale = Path(f"{plan.db_target}{suffix}")
         if stale.exists():
             stale.unlink()  # an EMPTY home DB (checked in planning)
-    src = sqlite3.connect(str(plan.db_source))
-    try:
-        dst = sqlite3.connect(str(plan.db_target))
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    finally:
-        src.close()
+    copy_database(plan.db_source, plan.db_target)
     with get_db(plan.db_target) as conn:
         for move in plan.projects:
-            conn.execute(
-                "UPDATE projects SET repo_path = ?, spec_path = ?, updated_at = datetime('now') "
-                "WHERE id = ?",
-                (str(move.target), move.spec_path, move.project_id),
+            relocate_project(
+                conn,
+                move.project_id,
+                layout.store_location(move.target, plan.db_target),
+                (
+                    layout.store_location(Path(move.spec_path), plan.db_target)
+                    if move.spec_path
+                    else None
+                ),
             )
     for suffix in ("", *_DB_SIDECARS):
         old = Path(f"{plan.db_source}{suffix}")

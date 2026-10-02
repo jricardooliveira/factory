@@ -25,6 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from factory.domain.gates import MAX_TASK_COST_USD
+from factory.state import reports
 from factory.state.db import get_db
 
 
@@ -66,62 +68,46 @@ def compute(db_path: Path) -> FactoryMetrics:
     """Aggregate the factory's history. Read-only; safe to run any time."""
     m = FactoryMetrics()
     with get_db(db_path) as conn:
-        rows = conn.execute(
-            "SELECT status, COUNT(*) n FROM pipeline_runs GROUP BY status"
-        ).fetchall()
-        m.by_status = {r["status"]: r["n"] for r in rows}
+        m.by_status = reports.run_status_counts(conn)
         m.total_runs = sum(m.by_status.values())
         m.completion_rate = _rate(m.by_status.get("completed", 0), m.total_runs)
 
         # ── Gate pass rate per gate ───────────────────────────────
-        for r in conn.execute(
-            "SELECT gate_name, COUNT(*) n, SUM(passed) p FROM gate_results GROUP BY gate_name"
-        ).fetchall():
-            m.gate_counts[r["gate_name"]] = r["n"]
-            m.gate_pass_rate[r["gate_name"]] = _rate(r["p"] or 0, r["n"])
+        for gate_name, runs, passes in reports.gate_tallies(conn):
+            m.gate_counts[gate_name] = runs
+            m.gate_pass_rate[gate_name] = _rate(passes, runs)
 
         # ── First-pass rate: a run where no coder task was attempted twice.
         # One row per (run, task) is a clean first pass; extras are retries.
-        attempts = conn.execute(
-            "SELECT run_id, stage_type, COUNT(*) n FROM agent_logs "
-            "WHERE agent = 'coder-agent' GROUP BY run_id, stage_type"
-        ).fetchall()
-        runs_with_coder = {a["run_id"] for a in attempts}
-        retried_runs = {a["run_id"] for a in attempts if a["n"] > 1}
-        m.total_coder_retries = sum(max(0, a["n"] - 1) for a in attempts)
+        attempts = reports.coder_attempts(conn)
+        runs_with_coder = {run for run, _slot, _n in attempts}
+        retried_runs = {run for run, _slot, n in attempts if n > 1}
+        m.total_coder_retries = sum(max(0, n - 1) for _run, _slot, n in attempts)
         m.first_pass_rate = _rate(
             len(runs_with_coder - retried_runs), len(runs_with_coder)
         )
 
         # ── Checkpoints: how often the operator was interrupted ───
-        cp = conn.execute(
-            "SELECT COUNT(*) n, SUM(CASE WHEN human_response IS NULL THEN 1 ELSE 0 END) pending "
-            "FROM gate_results WHERE needs_human = 1"
-        ).fetchone()
-        m.checkpoints_reached = cp["n"] or 0
-        m.checkpoints_pending = cp["pending"] or 0
+        m.checkpoints_reached, m.checkpoints_pending = reports.checkpoint_counts(conn)
         m.checkpoints_answered = m.checkpoints_reached - m.checkpoints_pending
         m.runs_per_checkpoint = _rate(m.total_runs, m.checkpoints_reached)
 
         # ── Cost, and whether it is real ──────────────────────────
-        usage = conn.execute(
-            "SELECT COUNT(*) n, COUNT(cost_usd) with_cost, "
-            "COALESCE(SUM(cost_usd),0) cost, COALESCE(SUM(tokens_in),0) ti, "
-            "COALESCE(SUM(tokens_out),0) to_ FROM agent_logs"
-        ).fetchone()
-        total_calls = usage["n"] or 0
-        m.cost_coverage = _rate(usage["with_cost"] or 0, total_calls)
-        m.cost_measurable = (usage["with_cost"] or 0) > 0
-        m.total_cost_usd = round(float(usage["cost"]), 6)
-        m.total_tokens_in = int(usage["ti"])
-        m.total_tokens_out = int(usage["to_"])
+        usage = reports.usage_totals(conn)
+        total_calls = usage["calls"]
+        m.cost_coverage = _rate(usage["calls_with_cost"], total_calls)
+        m.cost_measurable = usage["calls_with_cost"] > 0
+        m.total_cost_usd = round(float(usage["cost_usd"]), 6)
+        m.total_tokens_in = int(usage["tokens_in"])
+        m.total_tokens_out = int(usage["tokens_out"])
 
     if not m.cost_measurable:
         m.not_measurable.append(
             f"cost / tokens — 0 of {total_calls} agent calls recorded a cost. "
             "opencode's usage events are not being harvested "
-            "(opencode_client._extract_usage_from_json_stream), so the $"
-            f"{'%.2f' % 1.0} per-task remediation budget in gates.py has never bound: "
+            "(adapters.opencode._extract_usage_from_json_stream), so the $"
+            f"{MAX_TASK_COST_USD:.2f} per-task remediation budget in domain/gates.py has never "
+            "bound: "
             "get_run_cost() always returns 0.0 and the comparison is always true. "
             "Only MAX_CODER_ATTEMPTS is actually limiting the loop."
         )

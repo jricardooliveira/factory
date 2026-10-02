@@ -18,7 +18,7 @@ def _run(*argv: str) -> str:
     from factory.interfaces.cli.main import main
 
     buf = io.StringIO()
-    with patch("factory.interfaces.render.console", Console(file=buf, width=200)):
+    with patch("factory.interfaces.render.output.console", Console(file=buf, width=200)):
         with patch("sys.argv", ["factory", *argv]):
             main()
     return buf.getvalue()

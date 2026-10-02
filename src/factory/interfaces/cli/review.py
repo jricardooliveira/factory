@@ -2,55 +2,31 @@
 
 from __future__ import annotations
 
+from factory import runs
 from factory.domain.agent_output import parse_agent_json
-from factory.evidence import trust_package
-from factory.evidence.progress import (
-    render_flow,
-    render_timeline,
-    run_pipeline_progress,
-    run_timeline,
-)
 from factory.interfaces import render
 from factory.interfaces.cli.common import db_path, fail, run_id_arg
-from factory.state.db import (
-    archive_run,
-    get_db,
-    get_pending_human_gate,
-    get_run_cost,
-    get_run_gates,
-    get_run_logs,
-    get_runs_by_status,
-    init_db,
-    reconcile_stale_runs,
-)
+from factory.interfaces.render.review import render_flow, render_timeline
+from factory.runs import queries
+from factory.runs.lifecycle import DEFAULT_STALE_SECS
 
 
 def review_command(args: list[str]) -> None:
     """`factory review <run_id> [--raw]`: everything a run did, agent by agent."""
     run_id = run_id_arg(args, "Usage: factory review <run_id> [--raw]")
     show_raw = "--raw" in args
-    with get_db(db_path()) as conn:
-        run = conn.execute(
-            "SELECT pr.*, s.request, s.title as story_title FROM pipeline_runs pr "
-            "JOIN stories s ON pr.story_id = s.id WHERE pr.id = ?",
-            (run_id,),
-        ).fetchone()
-        if not run:
-            render.print_error(f"No run found with id #{run_id}")
-            return
-        run = dict(run)
-        logs = get_run_logs(conn, run_id)
-        gates = get_run_gates(conn, run_id)
-
-    pkg = trust_package.assemble(db_path(), run_id)
+    review = queries.review_bundle(run_id, db_path=db_path())
+    if review is None:
+        render.print_error(f"No run found with id #{run_id}")
+        return
     render.print_run_review(
-        run,
-        logs,
-        gates,
-        flow=render_flow(run_pipeline_progress(db_path(), run_id)),
-        timeline=render_timeline(run_timeline(db_path(), run_id)),
-        trust_package=pkg,
-        trust_issues=trust_package.validate(pkg) if pkg else [],
+        review.run,
+        review.logs,
+        review.gates,
+        flow=render_flow(review.stages),
+        timeline=render_timeline(review.timeline),
+        trust_package=review.trust_package,
+        trust_issues=review.trust_issues,
         parse_output=parse_agent_json,
         show_raw=show_raw,
     )
@@ -58,46 +34,32 @@ def review_command(args: list[str]) -> None:
 
 def list_command(args: list[str]) -> None:
     """`factory list`: every pipeline run."""
-    init_db(db_path())
-    with get_db(db_path()) as conn:
-        rows = conn.execute("""
-            SELECT pr.id, pr.story_id, s.request, pr.status, pr.current_stage, pr.started_at
-            FROM pipeline_runs pr
-            JOIN stories s ON pr.story_id = s.id
-            ORDER BY pr.id
-        """).fetchall()
-    render.print_runs([dict(row) for row in rows])
+    render.print_runs(queries.all_runs(db_path=db_path()))
 
 
 def queue_command(args: list[str]) -> None:
     """`factory queue`: parked runs awaiting sign-off, plus runs needing attention."""
-    init_db(db_path())
-    with get_db(db_path()) as conn:
-        parked = get_runs_by_status(conn, ["waiting_human"])
-        attention = get_runs_by_status(conn, ["failed", "blocked"])
-        parked_ctx = []
-        for run in parked:
-            gate = get_pending_human_gate(conn, run["id"])
-            parked_ctx.append((run, gate, get_run_cost(conn, run["id"])))
-        attention_ctx = [(run, get_run_cost(conn, run["id"])) for run in attention]
+    parked_ctx, attention_ctx = queries.queue(db_path=db_path())
     render.print_queue(parked_ctx, attention_ctx)
 
 
 def dismiss_command(args: list[str]) -> None:
-    """`factory dismiss <run_id>`: archive a run off the board (non-destructive)."""
+    """`factory dismiss <run_id>`: archive a finished run off the board (non-destructive).
+
+    The policy (which runs may be dismissed) is `runs.dismiss_run`'s, shared with
+    the board.
+    """
     run_id = run_id_arg(args, "Usage: factory dismiss <run_id>")
-    init_db(db_path())
-    with get_db(db_path()) as conn:
-        row = conn.execute("SELECT id FROM pipeline_runs WHERE id = ?", (run_id,)).fetchone()
-        if not row:
-            fail(f"No run found with id #{run_id}")
-        archive_run(conn, run_id)
+    try:
+        runs.dismiss_run(run_id, db_path=db_path())
+    except runs.RunError as exc:
+        fail(str(exc))
     render.console.print(f"[green]Run #{run_id} dismissed (archived).[/green]")
 
 
 def reconcile_command(args: list[str]) -> None:
     """`factory reconcile [--older-than S]`: mark stale 'running' runs (process died) failed."""
-    older_than = 3600.0
+    older_than = DEFAULT_STALE_SECS
     if "--older-than" in args:
         idx = args.index("--older-than")
         if idx + 1 < len(args):
@@ -105,9 +67,7 @@ def reconcile_command(args: list[str]) -> None:
                 older_than = float(args[idx + 1])
             except ValueError:
                 fail("--older-than expects seconds (a number)")
-    init_db(db_path())
-    with get_db(db_path()) as conn:
-        ids = reconcile_stale_runs(conn, older_than_secs=older_than)
+    ids = runs.reconcile_stale(older_than, db_path=db_path())
     if ids:
         render.console.print(f"[yellow]Reconciled {len(ids)} stale run(s): {ids}[/yellow]")
     else:

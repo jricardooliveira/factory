@@ -6,7 +6,6 @@ from pathlib import Path
 
 from factory.interfaces import render
 from factory.interfaces.cli.common import db_path, fail
-from factory.state.db import init_db
 from factory.workspace import home
 from factory.workspace.projects import create_project, get_project
 from factory.workspace.projects import list_projects as fetch_projects
@@ -54,7 +53,6 @@ def create_project_command(args: list[str]) -> None:
         else:
             fail(f"Unknown project create option: {args[i]}")
 
-    init_db(db_path())
     try:
         project = create_project(
             db_path(),
