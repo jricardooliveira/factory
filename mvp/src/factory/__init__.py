@@ -1,1 +1,1 @@
-"""Factory MVP — minimal 3-agent pipeline."""
+"""AI software factory: a governed, agent-driven SDLC pipeline."""
