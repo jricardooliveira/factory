@@ -6,45 +6,99 @@ high-volume rote work (implementation). A failed implementation that re-enters
 the coder is *escalated* to a frontier model — a retry is exactly the case where
 cheap reasoning already proved insufficient.
 
-Two source-of-truth maps, both env-overridable so the operator can re-point a
-tier without editing code:
+The policy is DATA: ``agents/tiers.toml`` (next to the agent definitions it
+governs) is the single source of truth, loaded once at import into:
 
-- ``AGENT_TIERS``  — which tier each stage runs at.
-- ``TIER_DEFAULTS`` — which concrete opencode model backs each tier.
+- ``AGENT_TIERS``       — which tier each stage runs at.
+- ``TIER_DEFAULTS``     — which concrete opencode model backs each tier.
+- ``ESCALATE_ON_RETRY`` — which agents move up a tier on attempt 2+.
+- ``DEFAULT_TIER``      — the tier of any agent the file does not list.
 
-Each agent's ``agents/<name>.md`` frontmatter carries a ``model_tier``
-line that MUST match ``AGENT_TIERS`` (enforced by ``test_model_tiers``), so the
-declared intent in the agent file and the orchestrator's behaviour can't drift.
+A ``FACTORY_TIER_<TIER>`` environment variable still wins over the file, so the
+operator can re-point a tier for one run without editing anything.
+
+Each agent's ``agents/<name>.md`` frontmatter carries a ``model_tier`` line that
+MUST match ``AGENT_TIERS`` (enforced by ``test_tiers`` and ``factory evals``), so
+the declared intent in the agent file and the orchestrator's behaviour can't drift.
 """
 
 from __future__ import annotations
 
 import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
 
-# Tier → concrete opencode model id (provider/model). Mixed best-of-breed:
-# Anthropic frontier for thinking, cheap OpenAI for typing.
-TIER_DEFAULTS: dict[str, str] = {
-    "frontier": "anthropic/claude-opus-4-8",
-    "standard": "anthropic/claude-sonnet-4-6",
-    "fast": "openai/gpt-5.4-mini",
-}
 
-# Which tier each agent runs at by default. The high-leverage thinking stages
-# (planning, design trade-offs, risk/security review) get the frontier tier;
-# implementation — the highest-volume call — gets the cheap tier.
-AGENT_TIERS: dict[str, str] = {
-    "spec-agent": "frontier",       # planning / decomposition — "is this the right work?"
-    "architect-agent": "frontier",  # design trade-offs, risk, ADRs
-    "tester-agent": "frontier",     # risk analysis + security / QA review (≈ PR review)
-    "coder-agent": "fast",          # implementation — highest call volume
-}
+@dataclass(frozen=True)
+class TierConfig:
+    """The parsed, validated contents of a tiers.toml."""
 
-# Agents whose retry is escalated. A failed cheap attempt is the signal that the
-# task needs more reasoning, not another cheap pass.
-ESCALATE_ON_RETRY: dict[str, str] = {"coder-agent": "frontier"}
+    tier_models: dict[str, str]
+    agent_tiers: dict[str, str]
+    default_tier: str
+    escalate_on_retry: dict[str, str] = field(default_factory=dict)
 
-# Tier used for any agent not listed in AGENT_TIERS.
-DEFAULT_TIER = "standard"
+
+def default_tiers_path() -> Path:
+    # src/factory/agent_config/tiers.py -> <repo>/agents/tiers.toml.
+    return Path(__file__).resolve().parents[3] / "agents" / "tiers.toml"
+
+
+def _str_table(data: dict, key: str, path: Path, *, required: bool = True) -> dict[str, str]:
+    table = data.get(key)
+    if table is None and not required:
+        return {}
+    if not isinstance(table, dict):
+        raise ValueError(f"{path}: missing [{key}] table")
+    for name, value in table.items():
+        if not isinstance(value, str):
+            raise ValueError(f"{path}: [{key}] {name} must be a string, got {value!r}")
+    return dict(table)
+
+
+def load_tiers(path: Path | None = None) -> TierConfig:
+    """Parse and validate a tiers.toml.
+
+    Validation is strict on purpose: an agent pointed at a tier that does not
+    exist would otherwise surface as a ``ValueError`` mid-run, after earlier
+    agents had already been paid for.
+    """
+    path = path or default_tiers_path()
+    with path.open("rb") as fh:
+        data = tomllib.load(fh)
+
+    tier_models = _str_table(data, "tiers", path)
+    agent_tiers = _str_table(data, "agents", path)
+    escalate = _str_table(data, "escalate_on_retry", path, required=False)
+    default_tier = data.get("default_tier")
+
+    for tier, model in tier_models.items():
+        if "/" not in model:
+            raise ValueError(
+                f"{path}: tier {tier!r} model {model!r} is not a provider/model id"
+            )
+    for section, mapping in (("agents", agent_tiers), ("escalate_on_retry", escalate)):
+        for agent, tier in mapping.items():
+            if tier not in tier_models:
+                raise ValueError(f"{path}: [{section}] {agent} uses undefined tier {tier!r}")
+    if default_tier not in tier_models:
+        raise ValueError(f"{path}: default_tier {default_tier!r} is not a defined tier")
+
+    return TierConfig(
+        tier_models=tier_models,
+        agent_tiers=agent_tiers,
+        default_tier=default_tier,
+        escalate_on_retry=escalate,
+    )
+
+
+_CONFIG = load_tiers()
+
+TIER_DEFAULTS: dict[str, str] = _CONFIG.tier_models
+AGENT_TIERS: dict[str, str] = _CONFIG.agent_tiers
+ESCALATE_ON_RETRY: dict[str, str] = _CONFIG.escalate_on_retry
+DEFAULT_TIER: str = _CONFIG.default_tier
 
 
 def model_for_tier(tier: str) -> str:
@@ -69,3 +123,15 @@ def resolve_model(agent_name: str, attempt_number: int = 1) -> tuple[str, str]:
     """Return ``(model_id, tier)`` for an agent call (attempt 1-based)."""
     tier = tier_for_agent(agent_name, attempt_number)
     return model_for_tier(tier), tier
+
+
+def distinct_models() -> dict[str, list[str]]:
+    """Every model a run could call (env overrides applied) -> the tiers it backs.
+
+    Two tiers backed by one model share an entry, so a preflight probes each
+    model once.
+    """
+    models: dict[str, list[str]] = {}
+    for tier in TIER_DEFAULTS:
+        models.setdefault(model_for_tier(tier), []).append(tier)
+    return models

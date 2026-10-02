@@ -898,6 +898,30 @@ def print_evals(report: Any, threshold: float) -> None:
     )
 
 
+_DOCTOR_ICON = {
+    "ok": "[green]✅[/green]",
+    "fail": "[red]❌[/red]",
+    "warn": "[yellow]⚠️[/yellow]",
+    "skip": "[dim]–[/dim]",
+}
+
+
+def print_doctor(report: Any) -> None:
+    """The preflight report (`selftest.doctor.DoctorReport`), one line per check."""
+    console.print("[bold]factory doctor[/bold] — preflight before a run spends tokens")
+    for c in report.checks:
+        icon = _DOCTOR_ICON.get(c.status, c.status)
+        console.print(f"  {icon} [bold]{c.name}[/bold]  [dim]{c.detail}[/dim]")
+    if report.passed:
+        console.print("  [green]Ready: every blocking check passed.[/green]")
+    else:
+        console.print(
+            "  [red]Not ready: fix the ❌ lines above before `factory run` "
+            "(re-point a tier with FACTORY_TIER_<TIER>=provider/model or edit "
+            "agents/tiers.toml).[/red]"
+        )
+
+
 def print_metrics(m: Any, db_path: Path) -> None:
     """The playbook's SDLC indicators (`evidence.metrics.Metrics`), NOT MEASURABLE last."""
     console.print()

@@ -56,9 +56,12 @@ uv sync --dev
 
 # 3. confirm it works — costs nothing, calls no model
 make check
+
+# 4. preflight before your first run: opencode, one probe per tier model, toolchains
+factory doctor                     # `--offline` skips the (tiny, paid) model probes
 ```
 
-`make check` should print `469 passed`, `9/9 scenarios behaving as expected` and
+`make check` should print `493 passed`, `9/9 scenarios behaving as expected` and
 `43/43 checks green`. That is the whole verification loop in one command.
 
 ---
@@ -154,6 +157,13 @@ Everything here is offline, deterministic and free — no model calls:
 | `factory metrics` | how the factory has actually been performing |
 | `factory tiers` | which model each agent runs at |
 | `factory workspace` | where the state lives: `$FACTORY_HOME`, its `factory.db`, every product repo |
+| `factory doctor --offline` | preflight: opencode + go/node/tsc on PATH (drop `--offline` to also probe each tier model — one tiny paid call per model) |
+
+**Which model runs where is data, not code:** `agents/tiers.toml` maps each agent to a
+tier, each tier to an opencode `provider/model`, and names the agents that escalate a
+tier on retry. `FACTORY_TIER_<TIER>=provider/model` overrides a tier for one run. Run
+`factory doctor` after changing either, so an unsupported model fails in seconds instead
+of after a spec and an architect call have been paid for.
 
 **`factory evals` is worth understanding.** The factory *is* an agent configuration
 — the agent markdown files, the gate policy, the model tiers, the prompt assembly —

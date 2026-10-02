@@ -75,6 +75,14 @@ class OpencodeClientTests(unittest.TestCase):
             run_agent("spec-agent", "hi")
         self.assertEqual(run.call_args.kwargs["timeout"], 600)
 
+    def test_run_agent_accepts_an_explicit_timeout(self) -> None:
+        # `factory doctor` probes with a short timeout instead of the 10-minute
+        # agent default, so an unreachable model cannot stall the preflight.
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("factory.adapters.opencode.subprocess.run", return_value=completed) as run:
+            run_agent("spec-agent", "hi", timeout=30)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
 
 class UsageExtractionTests(unittest.TestCase):
     """Token/cost/model provenance is scanned out of the event stream."""

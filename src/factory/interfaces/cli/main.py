@@ -31,6 +31,7 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "evals": selftest.evals_command,
     "metrics": selftest.metrics_command,
     "tiers": selftest.tiers_command,
+    "doctor": selftest.doctor_command,
     "board": board.board_command,
     "visualize": board.visualize_command,
     "workspace": workspace.workspace_command,
@@ -64,6 +65,7 @@ def print_usage(exit_code: int = 1) -> NoReturn:
     console.print("  factory [bold cyan]tiers[/bold cyan]                          Show per-agent model tiers (leverage allocation)")
     console.print("  factory [bold cyan]workspace[/bold cyan]                      Show $FACTORY_HOME (default ~/.factory): DB + projects")
     console.print("  factory [bold cyan]workspace import-legacy <dir>[/bold cyan]  Move an old factory.db + projects/ into it ([dim]--dry-run[/dim])")
+    console.print("  factory [bold cyan]doctor [--offline][/bold cyan]             Preflight: opencode, tier models reachable, toolchains")
     sys.exit(exit_code)
 
 

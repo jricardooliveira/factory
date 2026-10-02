@@ -84,5 +84,111 @@ class FrontmatterDriftTests(unittest.TestCase):
             self.assertEqual(fm.get("model"), mt.TIER_DEFAULTS[tier], agent)
 
 
+class TiersTomlTests(unittest.TestCase):
+    """agents/tiers.toml is the single source of truth for the tier policy."""
+
+    TOML = Path(__file__).resolve().parents[2] / "agents" / "tiers.toml"
+
+    def _write(self, text: str) -> Path:
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp()) / "tiers.toml"
+        tmp.write_text(text, encoding="utf-8")
+        return tmp
+
+    def test_registry_is_loaded_from_agents_tiers_toml(self) -> None:
+        import tomllib
+
+        data = tomllib.loads(self.TOML.read_text(encoding="utf-8"))
+        self.assertEqual(mt.default_tiers_path(), self.TOML)
+        self.assertEqual(mt.TIER_DEFAULTS, data["tiers"])
+        self.assertEqual(mt.AGENT_TIERS, data["agents"])
+        self.assertEqual(mt.ESCALATE_ON_RETRY, data["escalate_on_retry"])
+        self.assertEqual(mt.DEFAULT_TIER, data["default_tier"])
+
+    def test_defaults_are_models_this_machine_can_reach(self) -> None:
+        # The account is a ChatGPT/Codex login: gpt-5.4-mini is rejected and the
+        # anthropic/* ids are not a configured provider (live-loop finding).
+        self.assertEqual(
+            mt.TIER_DEFAULTS,
+            {
+                "frontier": "openai/gpt-5.5",
+                "standard": "openai/gpt-5.5",
+                "fast": "openai/gpt-5.5-fast",
+            },
+        )
+
+    def test_load_tiers_reads_an_arbitrary_file(self) -> None:
+        path = self._write(
+            'default_tier = "cheap"\n'
+            "[tiers]\n"
+            'cheap = "openai/x"\n'
+            'big = "openai/y"\n'
+            "[agents]\n"
+            'coder-agent = "cheap"\n'
+            "[escalate_on_retry]\n"
+            'coder-agent = "big"\n'
+        )
+        cfg = mt.load_tiers(path)
+        self.assertEqual(cfg.tier_models, {"cheap": "openai/x", "big": "openai/y"})
+        self.assertEqual(cfg.agent_tiers, {"coder-agent": "cheap"})
+        self.assertEqual(cfg.escalate_on_retry, {"coder-agent": "big"})
+        self.assertEqual(cfg.default_tier, "cheap")
+
+    def test_escalation_section_is_optional(self) -> None:
+        path = self._write(
+            'default_tier = "a"\n[tiers]\na = "p/m"\n[agents]\nspec-agent = "a"\n'
+        )
+        self.assertEqual(mt.load_tiers(path).escalate_on_retry, {})
+
+    def test_agent_on_an_undefined_tier_is_rejected(self) -> None:
+        path = self._write(
+            'default_tier = "a"\n[tiers]\na = "p/m"\n[agents]\nspec-agent = "zzz"\n'
+        )
+        with self.assertRaisesRegex(ValueError, "zzz"):
+            mt.load_tiers(path)
+
+    def test_escalation_to_an_undefined_tier_is_rejected(self) -> None:
+        path = self._write(
+            'default_tier = "a"\n[tiers]\na = "p/m"\n[agents]\ncoder-agent = "a"\n'
+            '[escalate_on_retry]\ncoder-agent = "zzz"\n'
+        )
+        with self.assertRaisesRegex(ValueError, "zzz"):
+            mt.load_tiers(path)
+
+    def test_undefined_default_tier_is_rejected(self) -> None:
+        path = self._write('default_tier = "zzz"\n[tiers]\na = "p/m"\n[agents]\n')
+        with self.assertRaisesRegex(ValueError, "zzz"):
+            mt.load_tiers(path)
+
+    def test_missing_tiers_table_is_rejected(self) -> None:
+        path = self._write('default_tier = "a"\n[agents]\n')
+        with self.assertRaisesRegex(ValueError, "tiers"):
+            mt.load_tiers(path)
+
+    def test_model_ids_must_be_provider_slash_model(self) -> None:
+        path = self._write('default_tier = "a"\n[tiers]\na = "nomodel"\n[agents]\n')
+        with self.assertRaisesRegex(ValueError, "provider/model"):
+            mt.load_tiers(path)
+
+    def test_distinct_models_groups_tiers_by_model(self) -> None:
+        # frontier and standard share a model: doctor probes it once, not twice.
+        self.assertEqual(
+            mt.distinct_models(),
+            {"openai/gpt-5.5": ["frontier", "standard"], "openai/gpt-5.5-fast": ["fast"]},
+        )
+
+    def test_distinct_models_honors_env_overrides(self) -> None:
+        import os
+
+        os.environ["FACTORY_TIER_STANDARD"] = "openai/other"
+        try:
+            models = mt.distinct_models()
+        finally:
+            del os.environ["FACTORY_TIER_STANDARD"]
+        self.assertEqual(models["openai/other"], ["standard"])
+        self.assertEqual(models["openai/gpt-5.5"], ["frontier"])
+
+
 if __name__ == "__main__":
     unittest.main()
