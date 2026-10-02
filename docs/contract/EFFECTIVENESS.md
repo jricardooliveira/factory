@@ -66,8 +66,8 @@ Attempt counting and routing are built (the Phase-3 remediation loop).
 
 > **⚠️ The $ cap is NOT enforced today.** `agent_logs.cost_usd` is NULL in every row
 > ever written — opencode's usage events are not being harvested by
-> `opencode_client._extract_usage_from_json_stream` — so `get_run_cost()` always
-> returns `0.0` and the `cost_so_far < MAX_TASK_COST_USD` comparison is always true.
+> `adapters.opencode._extract_usage_from_json_stream` — so `get_run_cost()` always
+> returns `0.0` and the `cost_so_far < MAX_TASK_COST_USD` comparison (`domain/gates.py`) is always true.
 > **Only `MAX_CODER_ATTEMPTS` is actually bounding the loop.** `factory metrics`
 > reports this under *NOT MEASURABLE* rather than printing a reassuring `$0.00`.
 > Fixing the harvest requires inspecting a live opencode event stream.
@@ -83,7 +83,7 @@ At the release checkpoint, the operator must be able to trust the work **without
 3. **ADR / design rationale** — a short record of the design decisions and why, written to `docs/architecture/adr/`.
 4. **Security / boundary verdict** — explicit findings on tenant isolation, authorization, secrets-not-logged, and any breaking API changes.
 
-A release sign-off is offered only when all four are present and green. Anything missing keeps the task in the queue with the gap named. The machine-readable shape is [`trust-package.schema.json`](./trust-package.schema.json).
+A release sign-off is offered only when all four are present and green. Anything missing keeps the task in the queue with the gap named. The machine-readable shape is [`trust-package.schema.json`](../../src/factory/evidence/schemas/trust-package.schema.json) (package data, shipped in `src/factory/evidence/schemas/`).
 
 ---
 
@@ -92,7 +92,7 @@ A release sign-off is offered only when all four are present and green. Anything
 Because the factory works on existing repos and protects trust, agents must **not** receive the whole repo (expensive, scope-leaky). The orchestrator assembles a **minimal, task-scoped context pack** per agent containing only: the task, relevant acceptance criteria, the files in scope, applicable prior ADRs + `PROJECT_RULES.md`, and explicit allowed/forbidden scope.
 
 Scope is checked after the fact: the real git diff (§5.2) is compared against the
-union of the tasks' declared `scope` (`verify.paths_outside_scope`), and violations
+union of the tasks' declared `scope` (`verification.scope.paths_outside_scope`), and violations
 are reported as `diff.scope_violations` in the trust package **and** named as a
 blocker, so a release sign-off is not offered while any exists. Test files never
 count as a violation — the coder is required to add tests.
@@ -101,7 +101,7 @@ count as a violation — the coder is required to add tests.
 trigger a retry. Hard-blocking is a policy decision for the operator (a coder
 legitimately touching an adjacent file would dead-end the run), so it is
 deliberately left as a checkpoint-3 concern. The declared scope is committed in
-`PLAN.md` → *Files that change* (`artifacts.planned_scope`), so the plan and the
+`PLAN.md` → *Files that change* (`evidence.artifacts.planned_scope`), so the plan and the
 check read the same list. Template: [`context-pack.template.md`](./context-pack.template.md).
 
 ---
@@ -133,18 +133,18 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | Trust-package assembly + schema validation + surfacing (`factory review`, saved to docs/releases) | ✅ built |
 | Checkpoint 1 (spec sign-off): open questions PARK the run for the operator instead of failing it; approve → architect, reject → re-specify with the answers (`gate_after_spec` needs_human, `resume_entry_for`, `compile_spec_resume_pipeline`) | ✅ built |
 | Checkpoint 3 (release sign-off) + `gate-release` | ⛔ to build |
-| **Deterministic ambiguity detection**: an acceptance criterion needing a threshold it was never given parks at Checkpoint 1 (`gates.unbound_criteria`), with terms already settled in committed project memory exempted. Built because agent-reported ambiguity proved non-deterministic across two identical live runs | ✅ built |
+| **Deterministic ambiguity detection**: an acceptance criterion needing a threshold it was never given parks at Checkpoint 1 (`domain.ambiguity.unbound_criteria`), with terms a human already settled exempted (project spec, `PROJECT_RULES.md`, the operator's checkpoint answers, an approved ADR — never an agent-authored `proposed` one). Built because agent-reported ambiguity proved non-deterministic across two identical live runs | ✅ built |
 | **Go verification** in `gate-build`: `go build` → `go vet` → `go test` per module, with `gofmt -e` as a module-less parse fallback so Go can never pass unverified | ✅ built |
 | **Continuous evals of the agent configuration** (`factory evals`): tools-disabled governance invariant, `model_tier` ↔ registry, each agent's JSON contract diffed against its Pydantic model, review-policy coverage, plus a behavioural corpus driven through the real pipeline. Gated at 100% by `make evals`; an empty suite never passes. `factory evals capture <run_id>` freezes any real run (or incident) as a permanent case | ✅ built |
-| **Committed artifact chain** INTENT → SPEC → PLAN (→ ADR → diff), written to `docs/work/<story>/` (`artifacts.py`) — the requirements are no longer trapped in a gitignored DB | ✅ built |
+| **Committed artifact chain** INTENT → SPEC → PLAN (→ ADR → diff), written to `docs/work/<story>/` (`evidence/artifacts.py`) — the requirements are no longer trapped in a gitignored DB | ✅ built |
 | **Trust package tells the truth**: `tests.passed` requires a test body to have actually run (`pytest_run:pass`), not merely a green gate; `diff` is measured from git against the run's own `base_commit` and is `"unavailable"` (and fails `validate()`) when it cannot be; every unmet evidence bar is named in `blockers` and release sign-off is withheld | ✅ built |
-| **Versioned review policy** (`agents/policies/REVIEW.md`) injected into the tester prompt — passes, severity ladder, skip list and nit cap in one committed file instead of split between agent prose and `gates.py` | ✅ built |
+| **Versioned review policy** (`agents/policies/REVIEW.md`) injected into the tester prompt — passes, severity ladder, skip list and nit cap in one committed file instead of split between agent prose and `domain/gates.py` | ✅ built |
 | **`factory metrics`**: the playbook's indicators over the factory's own history, with an explicit NOT MEASURABLE section | ✅ built |
 | Single verification command (`make check` = tests + scenarios + evals) | ✅ built |
 | Repo `CLAUDE.md` + deterministic Claude Code hooks (protected paths, credential paths, post-edit compile check, agent-config change reminder) | ✅ built |
 | Materialization is all-or-nothing and refuses credential-shaped paths (`.env*`, `.git/`, key material) at the single write chokepoint | ✅ built |
 | A failed gate-1 / architect PERSISTS the failure (`finish_run`) instead of leaving the run `running` until `reconcile` mislabels it a dead process | ✅ built |
-| Resume rebuilds state from the LATEST agent output, so the operator cannot approve one design while the coder builds an earlier one (`build_resume_context`) | ✅ built |
+| Resume rebuilds state from the LATEST agent output, so the operator cannot approve one design while the coder builds an earlier one (`runs.build_resume_context`) | ✅ built |
 | The project's existing test suite runs after ANY Python change, not only when the task happened to write a test file | ✅ built |
 | Cost/token harvest from opencode (`agent_logs.cost_usd` is NULL in 100% of rows — see §4) | ⛔ to build |
 | **Canonical workspace**: one resolver (`workspace.layout.home()`), `$FACTORY_HOME` default `~/.factory`, holds `factory.db` + `projects/<slug>/` — no CWD-relative path left (four stray `factory.db` files existed). `factory workspace` shows it; `factory workspace import-legacy` moves the old layout in | ✅ built |
@@ -153,24 +153,24 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | tester-agent + gate-test (QA/AC-coverage, security, performance sub-verdicts) | ✅ built |
 | Run generated test bodies in the build gate (opt-in `FACTORY_RUN_TESTS`) | ✅ built (subprocess; hardened sandbox still ⛔) |
 | Per-agent model tiers — frontier for thinking (spec/architect/tester), cheap for coder, escalate-on-retry (`factory tiers`, policy in `agents/tiers.toml`; `factory doctor` probes every tier model before a run) | ✅ built |
-| Tester reviews the **real cumulative git diff** of every task (not the last task's self-report) | ✅ built (`verify.collect_repo_diff`) |
+| Tester reviews the **real cumulative git diff** of every task (not the last task's self-report) | ✅ built (`workspace.git.collect_repo_diff`) |
 | Tester failure routes back to the coder for a bounded remediation pass (`MAX_TESTER_REMEDIATIONS`), findings carried, coder escalated to frontier | ✅ built |
 | Malformed-JSON agent output gets one repair retry before `blocked` (live runs) | ✅ built |
-| Build gate FAILS on a real import error (vs WARN for a merely-absent third-party dep) | ✅ built (`verify._classify_collect_failure`) |
-| Brownfield awareness: architect + coder receive a real interface map of the existing repo | ✅ built (`repo_map.build_repo_inventory`) |
+| Build gate FAILS on a real import error (vs WARN for a merely-absent third-party dep) | ✅ built (`verification.python._classify_collect_failure`) |
+| Brownfield awareness: architect + coder receive a real interface map of the existing repo | ✅ built (`workspace.repo_map.build_repo_inventory`) |
 | Coder → architect feedback: an infeasible design routes back for a bounded re-design (`MAX_REARCHITECT_LOOPS`) | ✅ built |
-| AC traceability: spec's real acceptance criteria cross-checked (deterministically) against the tester's claims; `unassessed` criteria surfaced in the trust package + gate-test reason (`traceability.py`) | ✅ built (evidence; hard-enforce at release checkpoint ⛔) |
+| AC traceability: spec's real acceptance criteria cross-checked (deterministically) against the tester's claims; `unassessed` criteria surfaced in the trust package + gate-test reason (`domain/traceability.py`) | ✅ built (evidence; hard-enforce at release checkpoint ⛔) |
 
-The build order that turns this contract into reality is the phased workflow in `docs/design/plans/2026-06-02-factory-improvements-workflow.md`.
+The build order that turns this contract into reality is the phased workflow in [`docs/design/plans/2026-06-02-factory-improvements-workflow.md`](../design/plans/2026-06-02-factory-improvements-workflow.md). How the code is laid out to deliver it: [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ---
 
 ## 9. Open questions (deliberately deferred)
 
-- **Brownfield stacks:** `verify.py` covers Python, **Go** (build + vet + test) and JS/TS. Java, Rust, C# etc. still need their own verification commands before the factory can be trusted on those repos — until then `gate-build` reports "no verifiable files" and passes, which is a silent false PASS.
+- **Brownfield stacks:** `src/factory/verification/` covers Python, **Go** (build + vet + test) and JS/TS. Java, Rust, C# etc. still need their own verification commands (see [ARCHITECTURE.md → a new toolchain](../ARCHITECTURE.md#a-new-toolchain-eg-java-rust)) before the factory can be trusted on those repos — until then `gate-build` reports "no verifiable files" and passes, which is a silent false PASS.
 - **Sandbox:** running agent-generated *test bodies* executes untrusted code; required before `gate-test` runs tests for real (today `gate-build` is compile/collect-only).
-- **Notification mechanism:** the macOS desktop-ping implementation (`osascript`) is
-  implemented but opt-in via `FACTORY_NOTIFY=1`.
+- **Notification mechanism:** the macOS desktop-ping implementation (`osascript`,
+  `src/factory/adapters/notify.py`) is implemented but opt-in via `FACTORY_NOTIFY=1`.
 
 ### Deliberately rejected (decisions, not omissions)
 
@@ -195,13 +195,13 @@ would add places for policy to drift without adding trust:
 - **Concurrent coder tasks.** The serial design is load-bearing for two
   non-negotiable controls: scope is measured from whole-repo `git status`, so two
   concurrent coders each see the other's files as undeclared and each blocks the
-  run; and `git_commit_all` is `git add -A`, so the first task to finish commits the
+  run; and `git_commit_all` (`workspace/git.py`) is `git add -A`, so the first task to finish commits the
   other's partial output under its own message, poisoning the diff the tester
   reviews. It would also make `factory replay` non-deterministic, costing the
   factory its cheapest regression harness.
 
 **The half of Stage 6 that DOES transfer — "every incident becomes a permanent
-eval" — is built**: `factory evals capture <run_id>` + `evals/cases/` + a 100%
+eval" — is built**: `factory evals capture <run_id>` + [`evals/cases/`](../../evals/cases/) + a 100%
 gate in `make evals`.
 
 ---

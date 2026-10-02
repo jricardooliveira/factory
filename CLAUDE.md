@@ -7,7 +7,8 @@ changes to `agents/*.md`, `agents/policies/REVIEW.md`, `domain/gates.py` + `doma
 regression-tested like code.
 
 Governing contract: `docs/contract/EFFECTIVENESS.md`. When code and that doc disagree, one of
-them is wrong — fix the mismatch, don't ignore it.
+them is wrong — fix the mismatch, don't ignore it. Code layout, the layering rule and where a new
+toolchain / gate / agent / command goes: `docs/ARCHITECTURE.md`.
 
 ## Commands
 
@@ -82,8 +83,13 @@ src/factory/
                         board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
 evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected outcome).
 examples/specs/         Sample project specs.
-docs/contract/          EFFECTIVENESS.md (contract), GATES.md, AGENTS.md, REVIEW_QUEUE.md.
+docs/ARCHITECTURE.md    One page: layer diagram, package ownership, the one-way rule, where to add things.
+docs/contract/          EFFECTIVENESS.md (contract), GATES.md, AGENTS.md, REVIEW_QUEUE.md,
+                        context-pack.template.md.
 docs/design/            Historical plans/specs + the original brief.
+docs/challenges/        Challenge briefs (supportflow.md).
+$FACTORY_HOME/          NOT in the repo (default ~/.factory): factory.db + projects/<slug>/,
+                        each product its own git repo. `factory workspace` prints it.
 tests/                  Mirrors src/factory/: tests/<area>/ tests src/factory/<area>/ (state/,
                         domain/, pipeline/prompts/, interfaces/{cli,board}/ ...). Cross-cutting
                         suites live in tests/integration/ (replay, project-workspace runs, the
@@ -91,8 +97,17 @@ tests/                  Mirrors src/factory/: tests/<area>/ tests src/factory/<a
                         conftest.py + fixtures/ stay at tests/ root. Test basenames are unique.
 ```
 
-**Layering** (enforced by `tests/integration/test_layout.py`): `interfaces → runs → {pipeline, verification,
-evidence, workspace, selftest, agent_config} → domain`; adapters and state serve the middle layers.
+**Layering** (enforced by `tests/integration/test_layout.py`; arrows point one way only):
+
+```
+interfaces -> runs -> {pipeline, verification, evidence, workspace, selftest, agent_config} -> domain
+```
+
+`domain` imports nothing from factory. `adapters` and `state` serve the middle layers and depend
+only on `domain`. Middle layers never import `runs`. NOTHING imports `interfaces` except the
+console script (`factory.interfaces.cli.main:main`); `runs` and `selftest` report through return
+values and callbacks. `interfaces/render.py` may not reach state/pipeline/adapters/workspace. The test's
+`KNOWN_VIOLATIONS` allowlist is empty and may only shrink.
 
 **Design principles.** Policy is deterministic Python, never delegated to an LLM. Agents are
 replaceable executors; the pipeline and gates own the governance. Every agent's verbatim
@@ -185,6 +200,8 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **A verification check must earn its verdict.** Two bugs of this shape were shipped:
   `tsc --noEmit` with no `-p` printed its HELP TEXT and exited 1 (a false FAIL on every
   monorepo), and Go was unknown to verification entirely (a false PASS on any Go repo).
-  A new toolchain needs three things together: a `verification/<toolchain>.py` check, its
-  `<name>_run` marker in `trust_package._TEST_RUN_MARKERS`, and any structurally
+  A new toolchain needs three things together: a `verification/<toolchain>.py` check wired
+  into `verify_changes`, its test-run marker (`pytest_run`, `go_test`, …) in
+  `evidence.trust_package._TEST_RUN_MARKERS` + `_TEST_RUN_COMMANDS`, and any structurally
   required manifest in `verification.scope._MANIFEST_NAMES` — or the scope check cries wolf.
+  See `docs/ARCHITECTURE.md` → "A new toolchain".

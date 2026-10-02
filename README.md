@@ -57,9 +57,13 @@ uv sync --dev
 # 3. confirm it works — costs nothing, calls no model
 make check
 
-# 4. preflight before your first run: opencode, one probe per tier model, toolchains
-factory doctor                     # `--offline` skips the (tiny, paid) model probes
+# 4. preflight before your first run: opencode, one probe per tier model, toolchains,
+#    $FACTORY_HOME and its DB
+.venv/bin/factory doctor           # `--offline` skips the (tiny, paid) model probes
 ```
+
+Every command below is `.venv/bin/factory …` (or plain `factory …` with the venv
+activated: `source .venv/bin/activate`). `factory --help` lists every verb.
 
 `make check` should print `502 passed`, `9/9 scenarios behaving as expected` and
 `43/43 checks green`. That is the whole verification loop in one command.
@@ -67,10 +71,6 @@ factory doctor                     # `--offline` skips the (tiny, paid) model pr
 ---
 
 ## Your first project
-
-The factory keeps its state in **`$FACTORY_HOME`** (default `~/.factory`), never in
-the directory you run it from: `factory.db` (every run, gate and agent output) and
-`projects/<slug>/` (every product). `factory workspace` shows where that is.
 
 ```bash
 # Register a project. Creates ~/.factory/projects/bookmarks/ — a git repository —
@@ -99,6 +99,33 @@ The run streams its progress. It will either finish, or **park** and tell you.
 **Rejection is not a dead end.** Your feedback re-enters the pipeline as a new
 attempt: reject at Checkpoint 1 and the story is re-specified with your answers;
 reject at Checkpoint 2 and the design is redone with your objections.
+
+---
+
+## Where products live
+
+Not in this repository. The factory keeps its state in **`$FACTORY_HOME`** (default
+`~/.factory`), never in the directory you run it from:
+
+```
+$FACTORY_HOME/                 default ~/.factory
+├── factory.db                 every run, gate and verbatim agent input/output (SQLite)
+└── projects/<slug>/           one product = one git repository (code + evidence)
+```
+
+```bash
+.venv/bin/factory workspace                 # the resolved home, its DB, every product repo
+FACTORY_HOME=~/scratch-factory .venv/bin/factory project create demo   # a separate home
+```
+
+The checkout holds only the factory itself: the agent configuration in
+[`agents/`](agents/) (definitions, review policy, model tiers), the code in
+`src/factory/`, the eval corpus and the docs. Deleting a product is deleting its
+directory; deleting `$FACTORY_HOME` resets the factory's history.
+
+`factory doctor` checks the home is usable, its DB opens, and each product's
+`.opencode` link resolves to this checkout's `.opencode/` (and so its `agents/`) — a product created from another
+checkout would otherwise run with that checkout's agent definitions.
 
 ---
 
@@ -242,6 +269,7 @@ ceremony for a one-person team, are in
 | [AGENTS.md](docs/contract/AGENTS.md) | the agent roster and output contracts |
 | [REVIEW.md](agents/policies/REVIEW.md) | the versioned review policy the tester applies |
 | [REVIEW_QUEUE.md](docs/contract/REVIEW_QUEUE.md) | how work parks, how you are notified, resume semantics |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | the code layout, the one-way layering rule, where a new toolchain / gate / agent / command goes |
 | [CLAUDE.md](CLAUDE.md) | for Claude Code working **on** the factory (not using it) |
 
 ---
