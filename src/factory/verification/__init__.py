@@ -47,16 +47,16 @@ def verify_changes(written_paths: list[Path], *, root: Path) -> VerifyResult:
         # that happened to write a test file. Gating on "this task wrote a test"
         # meant a source-only change never executed the existing tests — exactly
         # the case where a regression is invisible.
+        # Static: catches a coder referencing a module or name it never wrote,
+        # without importing — i.e. without executing — anything it wrote.
+        result.checks.append(python.static_import_check(py_files, root))
         if tests_enabled():
             if python.has_tests(root):
                 result.checks.append(python.run_tests(root))
-        else:
-            # Collect-only is safe without a sandbox; it still catches a coder
-            # referencing a module it never wrote.
-            if any(python.is_py_test(p) for p in py_files) or python.has_tests(root):
-                collect = python.pytest_collect(root)
-                if collect is not None:
-                    result.checks.append(collect)
+        # No `pytest --collect-only` by default: collection imports conftest.py and
+        # every test module, so it EXECUTED agent-written code on the operator's
+        # machine with FACTORY_RUN_TESTS off (review task T03). Opting in to tests
+        # is opting in to running that code.
 
     if go_files:
         module_dirs = go.go_module_dirs(root, go_files)

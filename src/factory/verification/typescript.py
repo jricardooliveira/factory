@@ -9,9 +9,13 @@ from pathlib import Path
 from factory.verification.base import BUILD_TIMEOUT, VerifyCheck, run_command
 
 
+# A missing toolchain cannot let its files pass unverified (review task T04).
+_NOT_INSTALLED = "{tool} not installed — these files cannot be verified (see `factory doctor`)"
+
+
 def node_check(js_files: list[Path], root: Path) -> VerifyCheck:
     if shutil.which("node") is None:
-        return VerifyCheck("node_check", "skip", "node not installed")
+        return VerifyCheck("node_check", "fail", _NOT_INSTALLED.format(tool="node"))
     for f in js_files:
         try:
             proc = run_command(["node", "--check", str(f)], root)
@@ -77,7 +81,7 @@ def tsc_check(root: Path, ts_files: list[Path]) -> VerifyCheck:
     for project_dir in project_dirs:
         tsc = _resolve_tsc(project_dir, root)
         if tsc is None:
-            return VerifyCheck("tsc", "skip", "tsc not installed")
+            return VerifyCheck("tsc", "fail", _NOT_INSTALLED.format(tool="tsc"))
         try:
             proc = run_command([*tsc, "--noEmit", "-p", str(project_dir)], root, timeout=BUILD_TIMEOUT)
         except subprocess.TimeoutExpired:

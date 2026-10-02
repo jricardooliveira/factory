@@ -84,9 +84,14 @@ def _classify_go_failure(output: str, module_path: str) -> str:
     return "fail"
 
 
+# A check that cannot run cannot earn a pass: a missing toolchain used to report
+# `skip`, and gate-build passed the files it never looked at (review task T04).
+_NOT_INSTALLED = "{tool} not installed — these files cannot be verified (see `factory doctor`)"
+
+
 def go_build(module_dirs: list[Path]) -> VerifyCheck:
     if shutil.which("go") is None:
-        return VerifyCheck("go_build", "skip", "go not installed")
+        return VerifyCheck("go_build", "fail", _NOT_INSTALLED.format(tool="go"))
     if not module_dirs:
         # A first task may legitimately write a .go file before go.mod exists.
         return VerifyCheck("go_build", "warn", "no go.mod found for the changed .go files")
@@ -120,7 +125,7 @@ def go_parse(go_files: list[Path], root: Path) -> VerifyCheck:
     no module, so there is no excuse for skipping the syntax check.
     """
     if shutil.which("gofmt") is None:
-        return VerifyCheck("go_parse", "skip", "gofmt not installed")
+        return VerifyCheck("go_parse", "fail", _NOT_INSTALLED.format(tool="gofmt"))
     targets = [str((root / p) if not p.is_absolute() else p) for p in go_files]
     try:
         proc = run_command(["gofmt", "-e", "-l", *targets], root)
