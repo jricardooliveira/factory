@@ -137,6 +137,48 @@ class UsageExtractionTests(unittest.TestCase):
         self.assertIsNone(_extract_usage_from_json_stream(stream))
 
 
+# Captured from a live `opencode run --format json` (2026-10-02, openai/gpt-5.5-fast on a
+# ChatGPT login). Usage arrives on `step_finish` parts with NO modelID — the shape the
+# parser required — so every agent_logs row ever stored NULL tokens and cost.
+_REAL_STEP_FINISH = {
+    "type": "step_finish", "timestamp": 1790972054805, "sessionID": "ses_x",
+    "part": {"id": "prt_x", "reason": "stop", "messageID": "msg_x", "sessionID": "ses_x",
+             "type": "step-finish",
+             "tokens": {"total": 12382, "input": 12347, "output": 12, "reasoning": 23,
+                        "cache": {"write": 0, "read": 0}},
+             "cost": 0},
+}
+
+
+class RealStepFinishUsageTests(unittest.TestCase):
+    def test_a_real_step_finish_event_is_harvested(self) -> None:
+        usage = _extract_usage_from_json_stream(json.dumps(_REAL_STEP_FINISH))
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        self.assertEqual(usage["tokens"]["input"], 12347)
+        self.assertEqual(usage["tokens"]["output"], 12 + 23)  # reasoning is billed output
+        self.assertEqual(usage["cost"], 0)  # provider-reported: a subscription login
+
+    def test_every_step_of_a_multi_step_run_is_counted(self) -> None:
+        second = json.loads(json.dumps(_REAL_STEP_FINISH))
+        second["part"]["tokens"].update({"input": 100, "output": 50, "reasoning": 0})
+        second["part"]["cost"] = 0.25
+        stream = "\n".join(json.dumps(e) for e in (_REAL_STEP_FINISH, second))
+        usage = _extract_usage_from_json_stream(stream)
+        assert usage is not None
+        self.assertEqual(usage["tokens"]["input"], 12447)
+        self.assertEqual(usage["tokens"]["output"], 85)
+        self.assertEqual(usage["cost"], 0.25)
+
+    def test_the_requested_model_is_recorded_when_the_stream_names_none(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(_REAL_STEP_FINISH), stderr="")
+        with patch("factory.adapters.opencode.subprocess.run", return_value=completed):
+            result = run_agent("spec-agent", "hi", model="openai/gpt-5.5-fast")
+        self.assertEqual(result.tokens_in, 12347)
+        self.assertEqual(result.cost_usd, 0)
+        self.assertEqual(result.model_name, "openai/gpt-5.5-fast")
+
 class AgentDefinitionHashTests(unittest.TestCase):
     """The agent .md used for a run is hashed for provenance."""
 

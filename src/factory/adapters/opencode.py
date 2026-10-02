@@ -83,18 +83,58 @@ def _find_usage(obj: object, found: list[dict]) -> None:
             _find_usage(item, found)
 
 
+def _step_finish_usage(event: object) -> dict | None:
+    """The usage on one `step_finish` event — the shape opencode actually emits.
+
+    Observed live (2026-10-02): `{"type": "step_finish", "part": {"tokens":
+    {"input", "output", "reasoning", ...}, "cost"}}`, with NO modelID. Requiring a
+    modelID (the message-level shape above) is why every agent_logs row stored
+    NULL usage and the `$` budget never bound.
+    """
+    if not isinstance(event, dict) or event.get("type") != "step_finish":
+        return None
+    part = event.get("part")
+    tokens = part.get("tokens") if isinstance(part, dict) else None
+    if not isinstance(tokens, dict) or "input" not in tokens or "output" not in tokens:
+        return None
+    return part
+
+
 def _extract_usage_from_json_stream(raw: str) -> dict | None:
-    """Return the last usage-bearing object in the event stream, if any."""
+    """Usage for the whole call: `{"tokens": {"input", "output"}, "cost", ...}` or None.
+
+    A message-level object carrying cumulative totals wins (the last one). Else the
+    `step_finish` parts are SUMMED — one per step of a multi-step run — with
+    reasoning tokens counted as output, since they are billed as output.
+    """
     found: list[dict] = []
+    steps: list[dict] = []
     for line in raw.strip().splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            _find_usage(json.loads(line), found)
+            event = json.loads(line)
         except json.JSONDecodeError:
             continue
-    return found[-1] if found else None
+        _find_usage(event, found)
+        step = _step_finish_usage(event)
+        if step is not None:
+            steps.append(step)
+    if found:
+        return found[-1]
+    if not steps:
+        return None
+    costs = [s.get("cost") for s in steps if isinstance(s.get("cost"), (int, float))]
+    return {
+        "tokens": {
+            "input": sum(int(s["tokens"].get("input") or 0) for s in steps),
+            "output": sum(int(s["tokens"].get("output") or 0)
+                          + int(s["tokens"].get("reasoning") or 0) for s in steps),
+        },
+        # None when no step reported a cost: unknown is not zero.
+        "cost": sum(costs) if costs else None,
+    }
 
 
 def _hash_agent_definition(agent_name: str, cwd: str | None) -> str | None:
@@ -174,8 +214,11 @@ def run_agent(
             tokens_out = tokens.get("output")
             cost_usd = usage.get("cost")
             provider = usage.get("providerID")
-            model = usage.get("modelID")
-            model_name = f"{provider}/{model}" if provider else model
+            observed = usage.get("modelID")
+            model_name = f"{provider}/{observed}" if provider and observed else observed
+        # The stream may not name the model (step_finish does not): record the one
+        # this call asked for rather than nothing.
+        model_name = model_name or model
 
         return AgentResult(
             agent=agent_name,

@@ -86,6 +86,37 @@ class MetricsTests(unittest.TestCase):
         self.assertGreater(m.total_cost_usd, 0)
         self.assertAlmostEqual(m.cost_coverage, 1.0)
 
+    def test_a_zero_dollar_subscription_is_not_reported_as_a_working_budget(self) -> None:
+        """Observed live: a ChatGPT login reports cost 0 while tokens are spent. "$0.00"
+        is then a true reading of currency, and a false one about the $ budget."""
+        rid = self._run("US-1", "completed", cost=0.0)
+        with db.get_db(self.db_path) as conn:
+            db.log_agent(conn, rid, "tester-agent", "in", "{}", verdict="pass",
+                         tokens_in=12000, tokens_out=300, cost_usd=0.0)
+        m = metrics.compute(self.db_path)
+        self.assertTrue(m.cost_measurable)
+        self.assertEqual(m.total_tokens_in, 12000)
+        text = " ".join(m.not_measurable).lower()
+        self.assertIn("$0", text)
+        self.assertIn("tokens", text)
+
+    def test_replays_are_not_counted_as_delivered_work(self) -> None:
+        """Review task T12: a replay re-drives frozen outputs — and logs their usage
+        again — so counting it inflated throughput, gate rates and token totals."""
+        live = self._run("US-1", "completed", gates=[("gate-test", True)], cost=0.1)
+        with db.get_db(self.db_path) as conn:
+            replay = db.start_run(conn, "US-1", replay_of=live)
+            db.log_agent(conn, replay, "spec-agent", "in", "{}", verdict="pass", cost_usd=0.1,
+                         tokens_in=500)
+            db.log_gate(conn, replay, "gate-test", False, "r")
+            db.finish_run(conn, replay, "failed")
+        m = metrics.compute(self.db_path)
+        self.assertEqual(m.total_runs, 1)
+        self.assertEqual(m.by_status.get("failed", 0), 0)
+        self.assertEqual(m.gate_counts["gate-test"], 1)
+        self.assertAlmostEqual(m.total_cost_usd, 0.2)  # spec + coder of the LIVE run only
+        self.assertEqual(m.replay_runs, 1)
+
     def test_human_checkpoint_count_and_pending_are_reported(self) -> None:
         with db.get_db(self.db_path) as conn:
             db.create_story(conn, "US-9", "T", "x")

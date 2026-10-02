@@ -16,9 +16,20 @@ from typing import Any
 # ── metrics ───────────────────────────────────────────────────────
 
 
+# Outcome metrics count LIVE work. A replay re-drives frozen outputs (and logs their
+# usage again): counting it inflated throughput, gate rates and token totals.
+_LIVE_RUNS = "SELECT id FROM pipeline_runs WHERE replay_of IS NULL"
+
+
+def replay_run_count(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM pipeline_runs WHERE replay_of IS NOT NULL"
+    ).fetchone()[0]
+
+
 def run_status_counts(conn: sqlite3.Connection) -> dict[str, int]:
     rows = conn.execute(
-        "SELECT status, COUNT(*) n FROM pipeline_runs GROUP BY status"
+        "SELECT status, COUNT(*) n FROM pipeline_runs WHERE replay_of IS NULL GROUP BY status"
     ).fetchall()
     return {r["status"]: r["n"] for r in rows}
 
@@ -26,7 +37,8 @@ def run_status_counts(conn: sqlite3.Connection) -> dict[str, int]:
 def gate_tallies(conn: sqlite3.Connection) -> list[tuple[str, int, int]]:
     """(gate_name, times run, times passed) per gate."""
     rows = conn.execute(
-        "SELECT gate_name, COUNT(*) n, SUM(passed) p FROM gate_results GROUP BY gate_name"
+        "SELECT gate_name, COUNT(*) n, SUM(passed) p FROM gate_results "
+        f"WHERE run_id IN ({_LIVE_RUNS}) GROUP BY gate_name"
     ).fetchall()
     return [(r["gate_name"], r["n"], r["p"] or 0) for r in rows]
 
@@ -35,7 +47,7 @@ def coder_attempts(conn: sqlite3.Connection) -> list[tuple[int, str, int]]:
     """(run_id, task slot, coder calls) — one row per task a coder worked on."""
     rows = conn.execute(
         "SELECT run_id, stage_type, COUNT(*) n FROM agent_logs "
-        "WHERE agent = 'coder-agent' GROUP BY run_id, stage_type"
+        f"WHERE agent = 'coder-agent' AND run_id IN ({_LIVE_RUNS}) GROUP BY run_id, stage_type"
     ).fetchall()
     return [(r["run_id"], r["stage_type"], r["n"]) for r in rows]
 
@@ -44,7 +56,7 @@ def checkpoint_counts(conn: sqlite3.Connection) -> tuple[int, int]:
     """(checkpoints reached, still pending an answer)."""
     row = conn.execute(
         "SELECT COUNT(*) n, SUM(CASE WHEN human_response IS NULL THEN 1 ELSE 0 END) pending "
-        "FROM gate_results WHERE needs_human = 1"
+        f"FROM gate_results WHERE needs_human = 1 AND run_id IN ({_LIVE_RUNS})"
     ).fetchone()
     return row["n"] or 0, row["pending"] or 0
 
@@ -54,7 +66,10 @@ def usage_totals(conn: sqlite3.Connection, run_id: int | None = None) -> dict[st
 
     Keys: calls, calls_with_cost, cost_usd, tokens_in, tokens_out.
     """
-    where, params = ("WHERE run_id = ?", (run_id,)) if run_id is not None else ("", ())
+    where, params = (
+        ("WHERE run_id = ?", (run_id,)) if run_id is not None
+        else (f"WHERE run_id IN ({_LIVE_RUNS})", ())
+    )
     row = conn.execute(
         "SELECT COUNT(*) n, COUNT(cost_usd) with_cost, "
         "COALESCE(SUM(cost_usd),0) cost, COALESCE(SUM(tokens_in),0) ti, "

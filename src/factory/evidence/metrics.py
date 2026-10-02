@@ -8,12 +8,12 @@ missing was any consumer — nothing in the codebase aggregated across runs, so 
 factory had rich per-run telemetry and no readable memory of its own behaviour.
 
 **Why `not_measurable` is a first-class output.** The temptation is to print
-`$0.00` for cost and move on. But `agent_logs.cost_usd` is NULL in every row ever
-written (opencode's usage events are not being harvested by
-`adapters.opencode._extract_usage_from_json_stream`), which means the `$1` per-task
-remediation budget in `gates.py` has never once bound — `get_run_cost` returns 0.0
-and the comparison is always true. A dashboard reading "$0.00 spent" would present
-a broken instrument as a healthy reading. Naming the gap in the tool itself is the
+`$0.00` for cost and move on. Until 2026-10-02 `agent_logs.cost_usd` was NULL in
+every row (opencode reports usage on `step_finish` events, which the harvester did
+not read), so the `$1` per-task budget never bound. Harvesting now works — and on a
+subscription login the provider reports `$0` for real token use, so "$0.00 spent"
+is still not a working budget. A dashboard that hid either would present a broken
+instrument as a healthy reading; naming the gap in the tool itself is the
 difference between a metric and a decoration.
 
 Pure and TUI-free (like `interfaces/board/data.py`): `compute()` returns data, `render_*`
@@ -34,6 +34,7 @@ from factory.state.db import get_db
 class FactoryMetrics:
     # ── Throughput (Stage 1-3 lagging) ────────────────────────────
     total_runs: int = 0
+    replay_runs: int = 0  # excluded from every outcome metric
     by_status: dict[str, int] = field(default_factory=dict)
     completion_rate: float = 0.0
 
@@ -70,6 +71,7 @@ def compute(db_path: Path) -> FactoryMetrics:
     with get_db(db_path) as conn:
         m.by_status = reports.run_status_counts(conn)
         m.total_runs = sum(m.by_status.values())
+        m.replay_runs = reports.replay_run_count(conn)
         m.completion_rate = _rate(m.by_status.get("completed", 0), m.total_runs)
 
         # ── Gate pass rate per gate ───────────────────────────────
@@ -103,13 +105,19 @@ def compute(db_path: Path) -> FactoryMetrics:
 
     if not m.cost_measurable:
         m.not_measurable.append(
-            f"cost / tokens — 0 of {total_calls} agent calls recorded a cost. "
-            "opencode's usage events are not being harvested "
-            "(adapters.opencode._extract_usage_from_json_stream), so the $"
-            f"{MAX_TASK_COST_USD:.2f} per-task remediation budget in domain/gates.py has never "
-            "bound: "
-            "get_run_cost() always returns 0.0 and the comparison is always true. "
-            "Only MAX_CODER_ATTEMPTS is actually limiting the loop."
+            f"cost / tokens — 0 of {total_calls} agent calls recorded usage. Calls made "
+            "before usage harvesting was fixed (2026-10-02: opencode reports it on "
+            "`step_finish` events) stored none, so for them the $"
+            f"{MAX_TASK_COST_USD:.2f} per-task remediation budget in domain/gates.py never "
+            "bound. Only MAX_CODER_ATTEMPTS limited those loops."
+        )
+    elif m.total_cost_usd == 0 and m.total_tokens_in + m.total_tokens_out > 0:
+        m.not_measurable.append(
+            f"currency spend — the provider reports $0 while "
+            f"{m.total_tokens_in + m.total_tokens_out:,} tokens were used (a subscription "
+            f"login, e.g. ChatGPT). Spend is real in tokens, not dollars, so the "
+            f"${MAX_TASK_COST_USD:.2f} per-task budget cannot bind on this login: only "
+            "MAX_CODER_ATTEMPTS limits the loop."
         )
     m.not_measurable.append(
         "time-to-first-review / review latency — gate_results.responded_at was only "
@@ -130,7 +138,9 @@ def render_markdown(m: FactoryMetrics) -> str:
     lines = [
         "# Factory Metrics",
         "",
-        f"**{m.total_runs} runs** · {_pct(m.completion_rate)} completed.",
+        f"**{m.total_runs} live runs** · {_pct(m.completion_rate)} completed"
+        + (f" · {m.replay_runs} replay(s) excluded (frozen outputs, not delivered work)."
+           if m.replay_runs else "."),
         "",
         "## Throughput",
         "",
