@@ -17,6 +17,15 @@ you only when you are the only one who can decide.
 > **Governing contract:** [`docs/contract/EFFECTIVENESS.md`](docs/contract/EFFECTIVENESS.md).
 > If the code and that document disagree, one of them is wrong.
 
+### A few terms
+
+- A **gate** is an automatic check. It can stop a run when requirements or quality
+  rules are not met.
+- A **checkpoint** is a pause where you decide whether the story or design is
+  right before work continues.
+- The **trust package** is the evidence gathered for you to review before you
+  accept the result.
+
 ---
 
 ## How it works
@@ -44,59 +53,66 @@ chokepoint also refuses credential-shaped paths (`.env`, `.git/`, key material).
 
 ---
 
-## Setup
+## Quick start
+
+You need Python 3.12 or newer, [`uv`](https://docs.astral.sh/uv/getting-started/installation/),
+and [opencode](https://opencode.ai/docs/). Install them using the instructions for
+your operating system. On macOS with Homebrew:
 
 ```bash
-# 1. opencode — the agent runtime the factory shells out to
-brew install opencode              # or see https://opencode.ai
-opencode auth login                # you pay for the model calls
+# Install the tools the factory needs (macOS + Homebrew)
+brew install uv opencode
 
-# 2. the factory itself (Python 3.12+), from the repo root
+# Install the factory's Python dependencies from the repository root
 uv sync --dev
 
-# 3. confirm it works — costs nothing, calls no model
+# Check the code and offline examples. This does not call AI models.
 make check
 
-# 4. preflight before your first run: opencode, one probe per tier model, toolchains,
-#    $FACTORY_HOME and its DB
-.venv/bin/factory doctor           # `--offline` skips the (tiny, paid) model probes
+# Check local setup without contacting models
+source .venv/bin/activate
+factory doctor --offline
 ```
 
-Every command below is `.venv/bin/factory …` (or plain `factory …` with the venv
-activated: `source .venv/bin/activate`). `factory --help` lists every verb.
+Before asking the factory to do work, sign in to a model provider through opencode
+and check that each configured model responds:
 
-`make check` should print `5xx passed` (every test green), `9/9 scenarios behaving as
-expected` and `44/44 checks green`. That is the whole verification loop in one command.
+```bash
+opencode auth login
+factory doctor
+```
+
+`factory doctor` sends one small probe to each configured model. Those probes may
+cost money. The later `factory run` command also makes model calls. `factory --help`
+lists every command. If you do not want to make model calls yet, stop after
+`factory doctor --offline`.
 
 ---
 
 ## Your first project
 
 ```bash
-# Register a project. Creates ~/.factory/projects/bookmarks/ — a git repository —
-# with PROJECT_RULES.md and a project-spec.json from the stack template, committed
-# as its first "factory:" commit.
-.venv/bin/factory project create bookmarks --stack fastapi
+# Create a product project in ~/.factory/projects/bookmarks/
+factory project create bookmarks --stack fastapi
 
 # Ask for one thing.
-.venv/bin/factory run --project bookmarks \
+factory run --project bookmarks \
   "let me search my bookmarks by title, paginated 20 per page"
 ```
 
-The run streams its progress. It will either finish, or **park** and tell you.
-(A request spends tokens, so the CLI refuses anything that looks like a mistyped
-command — `factory lsit`, `factory 'project list'` — with a suggestion, before any
-model is called.)
+The run streams its progress. It may finish, or **park** at a checkpoint and wait for
+your decision. Running a request uses model calls. The CLI rejects likely command
+typos such as `factory lsit` before making a model call.
 
 ```bash
-.venv/bin/factory queue          # what is waiting for you, and why
-.venv/bin/factory board          # interactive board — approve/reject in place
-.venv/bin/factory review 17      # the full package for one run
+factory queue          # what is waiting for you, and why
+factory board          # interactive board — approve/reject in place
+factory review 17      # the full package for one run
 ```
 
 ```bash
-.venv/bin/factory approve 17
-.venv/bin/factory reject 17 "use polling, not websockets; drop the admin screen"
+factory approve 17
+factory reject 17 "use polling, not websockets; drop the admin screen"
 ```
 
 **Rejection is not a dead end.** Your feedback re-enters the pipeline as a new
@@ -117,7 +133,7 @@ $FACTORY_HOME/                 default ~/.factory
 ```
 
 ```bash
-.venv/bin/factory workspace                 # the resolved home, its DB, every product repo
+factory workspace                 # the resolved home, its DB, every product repo
 FACTORY_HOME=~/scratch-factory .venv/bin/factory project create demo   # a separate home
 ```
 
@@ -168,8 +184,8 @@ outside its repository. One command moves it into `$FACTORY_HOME`, merging each
 product's evidence into its repo and committing it:
 
 ```bash
-.venv/bin/factory workspace import-legacy mvp --dry-run   # see the plan; nothing moves
-.venv/bin/factory workspace import-legacy mvp
+factory workspace import-legacy mvp --dry-run   # see the plan; nothing moves
+factory workspace import-legacy mvp
 ```
 
 `factory doctor` warns while an un-imported `factory.db` is still in the checkout, and
@@ -216,7 +232,7 @@ against. `make evals` gates at 100%, and an empty suite never passes.
 When a run fails in an interesting way, **freeze it**:
 
 ```bash
-.venv/bin/factory evals capture 23 governance-block-on-undeclared-file
+factory evals capture 23 governance-block-on-undeclared-file
 ```
 
 It becomes a permanent, free regression case. That is the whole
@@ -232,8 +248,9 @@ tasks. "Add search to bookmarks" works; "build me a SaaS" does not.
 **Invest in `project-spec.json`.** It is injected into every agent and it is what
 stops them inventing technology. The `forbidden` list is the highest-leverage field
 in the whole factory. Generate a starting point with
-`factory spec init <slug> --stack fastapi`; `fastapi` is currently the only template,
-so other stacks mean writing the JSON by hand — worth the hour.
+`factory spec init <slug> --stack fastapi`. `fastapi` is currently the only built-in
+template; for another stack, create a project and edit its `project-spec.json` to
+match the codebase before running a task.
 
 **Read the trust package, not the diff.** If you find yourself reading every line,
 the factory is failing at its actual job; tighten the project spec or
@@ -282,6 +299,11 @@ ceremony for a one-person team, are in
 | [REVIEW_QUEUE.md](docs/contract/REVIEW_QUEUE.md) | how work parks, how you are notified, resume semantics |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | the code layout, the one-way layering rule, where a new toolchain / gate / agent / command goes |
 | [CLAUDE.md](CLAUDE.md) | for Claude Code working **on** the factory (not using it) |
+| [`agents/README.md`](agents/README.md) | what each agent and its shared review policy do |
+| [`docs/README.md`](docs/README.md) | a map of the project documents |
+| [`examples/README.md`](examples/README.md) | how to use the sample project specifications |
+| [`tests/README.md`](tests/README.md) | where tests live and how to run them |
+| [`evals/cases/README.md`](evals/cases/README.md) | what replay cases check and how to add one |
 
 ---
 
