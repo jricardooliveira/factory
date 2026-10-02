@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -441,6 +442,9 @@ class TypeScriptProjectTests(unittest.TestCase):
         self.assertEqual(names.get("tsc"), "warn", result.summary)
         self.assertTrue(result.passed, "a missing tsconfig must not block the gate")
 
+    # Only this case needs a REAL compiler: without tsc, verification FAILS the file
+    # (by design), so "valid TS passes" is unprovable here. CI installs typescript.
+    @unittest.skipUnless(shutil.which("tsc"), "tsc not installed")
     def test_valid_ts_in_a_real_project_passes(self) -> None:
         self._write("frontend/tsconfig.json", self._TSCONFIG)
         p = self._write("frontend/composables/useTickets.ts", (

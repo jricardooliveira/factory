@@ -71,6 +71,16 @@ class StoryBudgetTests(unittest.TestCase):
         live.assert_called_once()
         self.assertEqual(parsed["verdict"], "pass")
 
+    def test_the_operator_cap_from_settings_is_the_one_enforced(self) -> None:
+        self._spent(100_000)  # $3: under the default $10, over an operator cap of $2
+        with patch.dict("os.environ", {"FACTORY_MAX_STORY_COST_USD": "2"}):
+            with patch("factory.pipeline.agent_calls.run_agent", MagicMock()) as live:
+                with self.assertRaises(BudgetExhausted):
+                    run_agent_json(self._state(), "architect-agent", "design it")
+            out = authorized("architect-agent", MagicMock())(self._state())
+        live.assert_not_called()
+        self.assertIn("$2.00", out["error"])
+
     def test_a_replay_is_never_refused(self) -> None:
         self._spent(400_000)
         with db.get_db(self.db_path) as conn:

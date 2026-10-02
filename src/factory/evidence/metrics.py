@@ -25,9 +25,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from factory.agent_config.settings import settings
 from factory.agent_config import tiers
 from factory.domain.budget import story_spend
-from factory.domain.gates import MAX_STORY_COST_USD
 from factory.state import reports
 from factory.state.db import get_db
 
@@ -115,14 +115,14 @@ def compute(db_path: Path) -> FactoryMetrics:
             f"cost of {m.unknown_cost_calls} of {total_calls} agent call(s) — no usage was "
             "recorded (calls before usage harvesting was fixed on 2026-10-02, or failed "
             "calls), or the model has no list price in agents/tiers.toml. They count as "
-            f"$0 toward the ${MAX_STORY_COST_USD:.2f} per-story cap, so it under-counts them."
+            f"$0 toward the ${settings().budget.max_story_cost_usd:.2f} per-story cap, so it under-counts them."
         )
     if m.total_cost_usd == 0 and m.total_tokens_in + m.total_tokens_out > 0:
         m.not_measurable.append(
             f"real currency spend — the provider reports $0 while "
             f"{m.total_tokens_in + m.total_tokens_out:,} tokens were used (a subscription "
             f"login, e.g. ChatGPT). Spend is shown ESTIMATED at API list prices "
-            f"(~${m.estimated_cost_usd:.2f}); the ${MAX_STORY_COST_USD:.2f} per-story cap "
+            f"(~${m.estimated_cost_usd:.2f}); the ${settings().budget.max_story_cost_usd:.2f} per-story cap "
             "uses that estimate."
         )
     m.not_measurable.append(

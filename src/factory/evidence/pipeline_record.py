@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from factory.agent_config.settings import settings
 from factory.agent_config import tiers
 from factory.domain.budget import story_spend
-from factory.domain.gates import MAX_STORY_COST_USD
 from factory.evidence.artifacts import work_dir_for
 from factory.evidence.progress import TimelineEvent, run_timeline
 from factory.state.db import (
@@ -111,7 +111,7 @@ def render_pipeline_record(db_path: Path, run_id: int) -> str | None:
         f"**Stage:** {run.get('current_stage') or '—'}",
         f"- **Started:** {_when(run.get('started_at'))} UTC · "
         f"**Stopped:** {_when(run.get('finished_at'))} UTC",
-        f"- **Story spend:** ~${spend.estimated_usd:.2f} of ${MAX_STORY_COST_USD:.2f} "
+        f"- **Story spend:** ~${spend.estimated_usd:.2f} of ${settings().budget.max_story_cost_usd:.2f} "
         "(estimated at API list prices"
         + (f"; {spend.unknown_calls} call(s) with unknown usage" if spend.unknown_calls else "")
         + ")",

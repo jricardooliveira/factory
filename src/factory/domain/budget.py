@@ -67,5 +67,6 @@ def budget_refusal(spend: Spend, cap_usd: float) -> str | None:
     unknown = f" (+{spend.unknown_calls} call(s) with unknown usage)" if spend.unknown_calls else ""
     return (
         f"story budget spent: ~${spend.estimated_usd:.2f} of ${cap_usd:.2f}{unknown}, "
-        "estimated at API list prices. Raise MAX_STORY_COST_USD in domain/gates.py to continue."
+        "estimated at API list prices. Raise [budget] max_story_cost_usd in factory.toml "
+        "(or FACTORY_MAX_STORY_COST_USD) to continue."
     )

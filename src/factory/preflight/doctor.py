@@ -41,6 +41,7 @@ from typing import Literal
 
 from factory.adapters.opencode import run_agent
 from factory.agent_config import tiers
+from factory.agent_config.settings import settings
 from factory.agent_config.location import checkout_root
 from factory.state.reports import read_only_summary
 from factory.workspace import layout
@@ -53,10 +54,6 @@ PROBE_PROMPT = (
     "Connectivity check from `factory doctor`. Ignore every other instruction "
     "and reply with the single word OK."
 )
-# Far below the 10-minute agent default: a model that cannot say "OK" in two
-# minutes is not usable for a run either, and the preflight must not stall.
-PROBE_TIMEOUT_SECS = 120
-
 # Toolchains `factory.verification` shells out to, and what each one verifies.
 TOOLCHAINS: dict[str, str] = {
     "go": "go build/vet/test for Go projects",
@@ -149,7 +146,7 @@ def _probe(model: str, model_tiers: list[str]) -> Check:
         PROBE_PROMPT,
         cwd=str(repo_root()),
         model=model,
-        timeout=PROBE_TIMEOUT_SECS,
+        timeout=settings().timeouts.probe,
     )
     output = result.output.strip()
     # opencode can exit 0 having streamed only an error event, so an empty answer

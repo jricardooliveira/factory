@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `848 passed` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `848 passed` (~60s, offline, zero tokens) |
+| `make check` | `875 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `875 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -59,8 +59,8 @@ src/factory/
     interview.py        Intake interview: REQUIRED_TOPICS, InterviewTurn, uncovered_topics (coverage
                         is decided from recorded answers, never the model's claim), resolve_answer.
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
-                        review_policy.py, settings.py (factory.toml: budget, timeouts, feature
-                        switches; env > file > default; `settings()` is read per call, never
+                        review_policy.py, settings.py (factory.toml at the checkout root or $FACTORY_SETTINGS:
+                        budget cap + probe timeout; env > file > default; invalid = refused; `settings()` is read per call, never
                         cached).
   pipeline/             The orchestrator (LangGraph). Owns routing/remediation. __init__ is the
                         PUBLIC API — other packages import only from `factory.pipeline`.
@@ -225,7 +225,8 @@ input/output is stored, so any run replays offline for free. Evidence is version
   `get_run_logs` + `next(...)` which is ascending). Otherwise the operator approves one
   design and the coder builds an earlier one.
 - **The budget is $10 per user story** (default `MAX_STORY_COST_USD`; the live value is
-  `settings().budget.max_story_cost_usd`, from `factory.toml`), checked before EVERY live
+  `settings().budget.max_story_cost_usd`, from `factory.toml` or `FACTORY_MAX_STORY_COST_USD`; tests pin
+  `FACTORY_SETTINGS` to a missing file so defaults apply), checked before EVERY live
   model call (`agent_calls._check_budget` → `BudgetExhausted`) and by the boss before each
   stage. Usage comes from opencode's `step_finish` events (rows before 2026-10-02 are NULL);
   the ChatGPT/Codex login reports **$0**, so spend is tokens × list price from

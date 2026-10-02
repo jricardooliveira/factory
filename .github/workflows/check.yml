@@ -37,6 +37,10 @@ jobs:
       - name: Install
         run: uv sync --all-extras --dev
 
+      # verification/typescript.py shells out to tsc; the runner ships node, not tsc.
+      - name: Install TypeScript
+        run: npm install -g typescript@5
+
       - name: Unit + orchestration tests
         run: uv run python -m pytest -q
 

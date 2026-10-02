@@ -10,8 +10,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from factory.agent_config.settings import settings
 from factory.domain.contracts import CoderOutput, SpecOutput, TaskDef
-from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_REARCHITECT_LOOPS, MAX_STORY_COST_USD
+from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_REARCHITECT_LOOPS
 from factory.domain.task_order import order_tasks
 from factory.pipeline.agent_calls import (
     budget_refusal_for,
@@ -306,7 +307,7 @@ def _route_after_build(
         error = (
             f"gate-build failed on {task.id} after {attempt} attempt(s) "
             f"(budget: {MAX_CODER_ATTEMPTS} attempts; story spend "
-            f"~${spend_so_far(state).estimated_usd:.2f} of ${MAX_STORY_COST_USD:.2f}): "
+            f"~${spend_so_far(state).estimated_usd:.2f} of ${settings().budget.max_story_cost_usd:.2f}): "
             f"{gate_reason}"
         )
     else:
