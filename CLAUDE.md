@@ -84,10 +84,14 @@ evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected
 examples/specs/         Sample project specs.
 docs/contract/          EFFECTIVENESS.md (contract), GATES.md, AGENTS.md, REVIEW_QUEUE.md.
 docs/design/            Historical plans/specs + the original brief.
-tests/                  Mirrors src/factory/; tests/test_layout.py pins paths + the layering rule.
+tests/                  Mirrors src/factory/: tests/<area>/ tests src/factory/<area>/ (state/,
+                        domain/, pipeline/prompts/, interfaces/{cli,board}/ ...). Cross-cutting
+                        suites live in tests/integration/ (replay, project-workspace runs, the
+                        subprocess-stdin invariant, test_layout.py = paths + layering rule).
+                        conftest.py + fixtures/ stay at tests/ root. Test basenames are unique.
 ```
 
-**Layering** (enforced by `tests/test_layout.py`): `interfaces → runs → {pipeline, verification,
+**Layering** (enforced by `tests/integration/test_layout.py`): `interfaces → runs → {pipeline, verification,
 evidence, workspace, selftest, agent_config} → domain`; adapters and state serve the middle layers.
 
 **Design principles.** Policy is deterministic Python, never delegated to an LLM. Agents are
@@ -108,7 +112,7 @@ input/output is stored, so any run replays offline for free. Evidence is version
 ## Things Claude gets wrong here
 
 - **Never make a live `opencode` call from a test.** Orchestration is tested offline via the
-  replay-fixture pattern in `tests/pipeline/test_pipeline_replay.py` + `tests/fixtures/agent_outputs/`.
+  replay-fixture pattern in `tests/integration/test_pipeline_replay.py` + `tests/fixtures/agent_outputs/`.
   Reaching for mocks to test the graph is the wrong instinct — seed `agent_logs` and set
   `replay_run_id`.
 - **State lives in `$FACTORY_HOME` (default `~/.factory`), never the working directory.**

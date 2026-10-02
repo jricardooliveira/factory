@@ -54,7 +54,7 @@ def main() -> None:
     if DB_PATH.exists():
         DB_PATH.unlink()
 
-    repo_root = str(Path(__file__).resolve().parents[3])
+    repo_root = str(Path(__file__).resolve().parents[2])
 
     for i, scenario in enumerate(SCENARIOS, 1):
         console.print()

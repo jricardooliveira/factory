@@ -25,7 +25,7 @@ console = Console()
 # deletes it before each sweep, and that must never be the operator's history.
 DB_PATH = home() / "failure-modes.db"
 
-SPEC_FILE = Path(__file__).resolve().parents[3] / "examples" / "specs" / "taskflow.json"
+SPEC_FILE = Path(__file__).resolve().parents[2] / "examples" / "specs" / "taskflow.json"
 
 SCENARIOS = [
     # ── Category 1: Requirements that contradict the project spec ──
@@ -89,7 +89,7 @@ def main() -> None:
     spec_data = json.loads(SPEC_FILE.read_text())
     project_spec = ProjectSpec.model_validate(spec_data)
     spec_text = project_spec.to_architect_context()
-    repo_root = str(Path(__file__).resolve().parents[3])
+    repo_root = str(Path(__file__).resolve().parents[2])
 
     for i, scenario in enumerate(SCENARIOS, 1):
         console.print()

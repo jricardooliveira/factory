@@ -34,7 +34,7 @@ Skip only for: pure docs, the plan/workflow markdown, throwaway exploration.
 
 - Tests live in `tests/<package>/` mirroring `src/factory/<package>/`, named `test_*.py`, plain `unittest.TestCase` or pytest functions.
 - Run a single file: `.venv/bin/python -m pytest tests/verification/test_verify.py -q`. Full suite: `.venv/bin/python -m pytest -q`.
-- **Orchestration logic (pipeline gates/edges) must be tested offline** using the replay-fixture pattern in `tests/pipeline/test_pipeline_replay.py` + `tests/fixtures/agent_outputs/`. Seed an original run's `agent_logs`, then drive `compile_pipeline()` with `replay_run_id` set. **Never** write a test that makes a live `opencode` call.
+- **Orchestration logic (pipeline gates/edges) must be tested offline** using the replay-fixture pattern in `tests/integration/test_pipeline_replay.py` + `tests/fixtures/agent_outputs/`. Seed an original run's `agent_logs`, then drive `compile_pipeline()` with `replay_run_id` set. **Never** write a test that makes a live `opencode` call.
 - **Deterministic checks belong in code, not in an LLM.** New verification logic goes in `src/factory/verification/` / `src/factory/domain/gates.py` with its own unit test, mirroring `gate-build`.
 - After implementing, run the full suite and confirm green before reporting done.
 

@@ -21,7 +21,7 @@ import ast
 import unittest
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "factory"
 AGENTS = ("spec-agent", "architect-agent", "coder-agent", "tester-agent")
 

@@ -1,4 +1,9 @@
-"""Tests for the review queue: status querying + notification sanitization."""
+"""The review queue as stored state: status querying, run cost, stale-run reconciliation.
+
+`factory queue` / `factory reconcile` are thin over these `factory.state.db` accessors.
+Notification sanitization lives in tests/adapters/test_notify.py, CLI argument parsing in
+tests/interfaces/cli/test_common.py and spec rendering in tests/interfaces/test_render.py.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from factory.adapters.notify import _clean
 from factory.state import db
 
 
@@ -50,20 +54,6 @@ class RunsByStatusTests(unittest.TestCase):
         self.assertAlmostEqual(cost, 0.03)
 
 
-class NotifySanitizationTests(unittest.TestCase):
-    def test_strips_applescript_injection_chars(self) -> None:
-        dirty = 'Run #1 "; do shell script "rm -rf /" \\ \n done'
-        cleaned = _clean(dirty)
-        self.assertNotIn('"', cleaned)
-        self.assertNotIn("\\", cleaned)
-        self.assertNotIn("\n", cleaned)
-        # Harmless content survives.
-        self.assertIn("Run #1", cleaned)
-
-    def test_truncates_long_messages(self) -> None:
-        self.assertLessEqual(len(_clean("a" * 500)), 180)
-
-
 class ReconcileTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -92,56 +82,6 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(reconciled, [stale])
         self.assertEqual(statuses[stale], "failed")
         self.assertEqual(statuses[fresh], "running")  # fresh run untouched
-
-
-class CliRunIdValidationTests(unittest.TestCase):
-    def test_non_integer_run_id_exits_cleanly(self) -> None:
-        from factory.interfaces.cli.common import run_id_arg
-
-        with self.assertRaises(SystemExit):
-            run_id_arg(["abc"], "Usage: factory review <run_id>")
-
-    def test_missing_run_id_exits_cleanly(self) -> None:
-        from factory.interfaces.cli.common import run_id_arg
-
-        with self.assertRaises(SystemExit):
-            run_id_arg([], "Usage: factory review <run_id>")
-
-    def test_valid_run_id_parsed(self) -> None:
-        from factory.interfaces.cli.common import run_id_arg
-
-        self.assertEqual(run_id_arg(["42"], "usage"), 42)
-
-
-class SpecSummaryRobustnessTests(unittest.TestCase):
-    """A blocked/off-script spec must never crash the CLI display layer."""
-
-    def test_blocked_spec_does_not_raise(self) -> None:
-        from factory.interfaces.render import print_spec_summary
-
-        # The synthetic blocked dict omits required SpecOutput fields (problem/why).
-        print_spec_summary(
-            {
-                "verdict": "blocked",
-                "title": "",
-                "acceptance_criteria": [],
-                "tasks": [],
-                "questions": ["Agent went off-script: token refresh failed: 401"],
-            }
-        )
-
-    def test_valid_spec_still_renders(self) -> None:
-        from factory.interfaces.render import print_spec_summary
-
-        print_spec_summary(
-            {
-                "title": "T",
-                "problem": "p",
-                "why": "w",
-                "acceptance_criteria": ["a", "b"],
-                "tasks": [],
-            }
-        )
 
 
 if __name__ == "__main__":

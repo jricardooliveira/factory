@@ -13,6 +13,10 @@ Two defects lived in `node_gate_1`:
    round-trip belongs, and the one thing only a human can answer — was appended to
    `failures` and killed the run. EFFECTIVENESS.md §2 and REVIEW_QUEUE.md both
    specify Checkpoint 1 (spec sign-off) for exactly this; it just wasn't built.
+
+The pure gate decisions are pinned in tests/domain/test_gate_after_spec.py and the
+threshold-term detection in tests/domain/test_ambiguity.py; this suite keeps what
+needs the graph or the DB.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from factory.domain import ambiguity, gates
+from factory.domain import gates
 from factory.domain.contracts import SpecOutput
 from factory.pipeline import compile_pipeline
 from factory.state import db
@@ -41,35 +45,6 @@ def _spec(**overrides) -> SpecOutput:
     }
     data.update(overrides)
     return SpecOutput.model_validate(data)
-
-
-class GateAfterSpecTests(unittest.TestCase):
-    def test_clean_spec_passes_without_a_checkpoint(self) -> None:
-        result = gates.gate_after_spec(_spec())
-        self.assertTrue(result.passed)
-        self.assertFalse(result.needs_human)
-
-    def test_open_questions_park_for_the_operator_instead_of_failing(self) -> None:
-        result = gates.gate_after_spec(_spec(questions=["Which auth model — JWT or session?"]))
-        self.assertTrue(
-            result.passed,
-            "an otherwise well-formed story with questions is not a malformed story",
-        )
-        self.assertTrue(result.needs_human)
-        self.assertTrue(result.human_questions)
-        self.assertIn("JWT or session", "\n".join(result.human_questions))
-
-    def test_structural_failure_still_fails_even_with_questions(self) -> None:
-        """A malformed story must not be laundered into a checkpoint: there is
-        nothing for the operator to sign off on."""
-        result = gates.gate_after_spec(_spec(acceptance_criteria=["only one"],
-                                             questions=["and also, which db?"]))
-        self.assertFalse(result.passed)
-        self.assertFalse(result.needs_human)
-
-    def test_scope_explosion_still_fails(self) -> None:
-        many = [{"id": f"T-{i}", "title": "t", "purpose": "p"} for i in range(1, 9)]
-        self.assertFalse(gates.gate_after_spec(_spec(tasks=many)).passed)
 
 
 class Gate1PersistenceTests(unittest.TestCase):
@@ -174,256 +149,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class AgentAmbiguityContractTests(unittest.TestCase):
-    """The gate must honour the contract the agent was actually GIVEN.
-
-    `.opencode/agents/spec-agent.md` instructs: "If the request is ambiguous, set
-    `verdict: fail` and put your questions in a `questions` array." But
-    `gate_after_spec` checked `verdict != "pass"` first and rejected the run as
-    structurally malformed, so the Checkpoint-1 park — which only fired when the
-    verdict PASSED — could never trigger for the one case it exists to serve.
-
-    Found by a live run of the challenge's Story 10, where the spec-agent
-    correctly refused to invent a definition of "overdue" and asked four precise
-    product questions. The pipeline discarded all of it and reported
-    "Spec verdict is 'fail', not 'pass'". The replay probe missed this because
-    the case was hand-authored with `verdict: "pass"` — it encoded an assumption
-    about the agent instead of the agent's real contract.
-    """
-
-    def test_verdict_fail_WITH_questions_is_a_checkpoint_not_a_rejection(self) -> None:
-        result = gates.gate_after_spec(_spec(
-            verdict="fail",
-            questions=[
-                "What exact rule defines an overdue ticket: age since creation, "
-                "time since last update, due date field, or SLA by priority?",
-                "Where must the highlighting appear?",
-            ],
-        ))
-        self.assertTrue(
-            result.passed,
-            "an agent following its own ambiguity contract must not be treated as "
-            "having produced a malformed story",
-        )
-        self.assertTrue(result.needs_human)
-        self.assertIn("overdue", "\n".join(result.human_questions))
-
-    def test_verdict_blocked_with_questions_also_parks(self) -> None:
-        result = gates.gate_after_spec(_spec(verdict="blocked", questions=["which db?"]))
-        self.assertTrue(result.passed)
-        self.assertTrue(result.needs_human)
-
-    def test_verdict_fail_WITHOUT_questions_is_still_a_rejection(self) -> None:
-        """A bare 'fail' with nothing to ask is a genuine refusal, not a
-        checkpoint — there is nothing for the operator to answer."""
-        result = gates.gate_after_spec(_spec(verdict="fail", questions=[]))
-        self.assertFalse(result.passed)
-        self.assertFalse(result.needs_human)
-        self.assertIn("verdict", result.reason.lower())
-
-    def test_a_structurally_broken_story_is_rejected_even_with_questions(self) -> None:
-        """Ambiguity does not excuse a malformed story: with one acceptance
-        criterion there is nothing coherent to sign off on."""
-        result = gates.gate_after_spec(_spec(
-            verdict="fail", acceptance_criteria=["only one"], questions=["which db?"],
-        ))
-        self.assertFalse(result.passed)
-        self.assertFalse(result.needs_human)
-
-    def test_the_real_story_10_output_parks(self) -> None:
-        """Verbatim shape of what the spec-agent returned on the live run."""
-        result = gates.gate_after_spec(SpecOutput.model_validate({
-            "title": "Highlight overdue high-priority tickets",
-            "type": "feature",
-            "problem": "Support managers have no explicit way to identify "
-                       "high-priority tickets that are overdue.",
-            "why": "important cases are forgotten",
-            "acceptance_criteria": [
-                "The system identifies high-priority tickets as overdue according "
-                "to a clearly defined overdue rule.",
-                "Overdue high-priority tickets are highlighted in the support agent "
-                "ticket list.",
-            ],
-            "non_goals": ["Authentication or user management"],
-            "tasks": [
-                {"id": "T-0001", "title": "Define overdue rule and API contract",
-                 "purpose": "p", "scope": [], "completion_evidence": "e"},
-                {"id": "T-0002", "title": "Expose overdue flag in ticket listing",
-                 "purpose": "p", "scope": [], "completion_evidence": "e"},
-                {"id": "T-0003", "title": "Render overdue highlight in frontend",
-                 "purpose": "p", "scope": [], "completion_evidence": "e"},
-            ],
-            "verdict": "fail",
-            "questions": [
-                "What exact rule defines an overdue ticket?",
-                "Where must the highlighting appear?",
-                "What visual treatment counts as highlighted?",
-                "Should overdue status be filterable or searchable?",
-            ],
-        }))
-        self.assertTrue(result.passed, result.reason)
-        self.assertTrue(result.needs_human)
-        self.assertIn("4 open question", result.reason)
-        # BOTH triggers fire on the real output: the agent asked, and the
-        # deterministic check independently found "overdue" carrying no number.
-        # That redundancy is the point — the deterministic half holds when the
-        # agent's half does not (which a live re-run showed happens).
-        self.assertEqual(len(result.human_questions), 2)
-        joined = "\n".join(result.human_questions)
-        self.assertIn("What exact rule defines an overdue ticket?", joined)
-        self.assertIn("UNAUTHORISED THRESHOLD", joined)
-        self.assertIn("undefined threshold", result.reason)
-
-
-class UnboundCriteriaTests(unittest.TestCase):
-    """Deterministically catch a criterion that requires inventing a threshold.
-
-    The live test showed ambiguity detection is a coin flip: the same Story 10
-    request produced four precise questions on one run and `verdict: pass` on the
-    next. For a factory whose premise is "policy is deterministic Python, never
-    delegated to an LLM", whether an under-specified requirement gets flagged is
-    the wrong thing to leave to the model's mood.
-
-    The check is deliberately NARROW. It looks only for terms that oblige the
-    implementation to invent a NUMBER it was never given — the class of silent
-    business-rule invention Story 10 exists to test. Quality adjectives
-    ("appropriate tests", "reasonable error handling") are excluded on purpose:
-    the challenge uses "appropriate" in eight of its fifteen stories, so flagging
-    those would park nearly every story and train the operator to click through —
-    the crying-wolf failure this whole check exists to avoid.
-    """
-
-    def test_the_real_story_10_criterion_is_flagged(self) -> None:
-        found = ambiguity.unbound_criteria([
-            "Overdue high-priority tickets are highlighted in the ticket list",
-        ])
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0][1], "overdue")
-
-    def test_a_criterion_carrying_its_threshold_is_not_flagged(self) -> None:
-        """Story 11 supplies the definition, so it must sail through."""
-        self.assertEqual(
-            ambiguity.unbound_criteria([
-                "A HIGH-priority ticket is overdue when status != CLOSED and "
-                "createdAt is more than 24 hours ago",
-            ]),
-            [],
-        )
-
-    def test_spelled_out_numbers_and_units_count_as_bound(self) -> None:
-        for criterion in (
-            "tickets with no update for seven days are marked stale",
-            "a search returning more than fifty results is paginated",
-            "requests slower than 200ms are logged",
-        ):
-            with self.subTest(criterion=criterion):
-                self.assertEqual(ambiguity.unbound_criteria([criterion]), [])
-
-    def test_quality_adjectives_are_deliberately_not_flagged(self) -> None:
-        """These are review-policy concerns (REVIEW.md + the tester), not
-        unstated business rules — and the challenge is full of them."""
-        self.assertEqual(
-            ambiguity.unbound_criteria([
-                "Appropriate unit tests exist",
-                "Appropriate database/API integration tests exist",
-                "API errors use a consistent response format",
-                "Invalid input returns an appropriate HTTP 400 response",
-                "Frontend provides a loading state",
-                "Empty ticket collections are handled correctly",
-            ]),
-            [],
-        )
-
-    def test_the_challenge_story_1_criteria_all_pass_cleanly(self) -> None:
-        """A well-specified story must never trip this check."""
-        self.assertEqual(
-            ambiguity.unbound_criteria([
-                "Title is mandatory",
-                "Description is mandatory",
-                "Priority must be one of LOW, MEDIUM, HIGH",
-                "Status defaults to OPEN",
-                "Ticket is persisted in SQLite",
-                "Invalid input returns an appropriate HTTP 400 response",
-            ]),
-            [],
-        )
-
-    def test_a_term_already_settled_in_project_memory_is_not_re_litigated(self) -> None:
-        """Once Story 11 defines 'overdue' in a committed ADR, Story 13's
-        dashboard criterion must not park again — the factory does not
-        re-litigate settled decisions (EFFECTIVENESS §7)."""
-        self.assertEqual(
-            ambiguity.unbound_criteria(
-                ["The dashboard shows the number of overdue HIGH or URGENT tickets"],
-                defined_terms=frozenset({"overdue"}),
-            ),
-            [],
-        )
-
-    def test_defined_terms_are_extracted_from_committed_project_context(self) -> None:
-        from factory.domain.ambiguity import defined_threshold_terms
-
-        context = (
-            "## Prior Architecture Decisions\n\n"
-            "ADR-US-0011: a HIGH ticket is OVERDUE when it is not CLOSED and was "
-            "created more than 24 hours ago.\n"
-        )
-        self.assertIn("overdue", defined_threshold_terms(context))
-        self.assertNotIn("stale", defined_threshold_terms(context))
-
-    def test_empty_context_defines_nothing(self) -> None:
-        from factory.domain.ambiguity import defined_threshold_terms
-
-        self.assertEqual(defined_threshold_terms(""), frozenset())
-
-
-class UnboundCriteriaGateTests(unittest.TestCase):
-    """An unbound criterion PARKS the story — it is a question, not a defect."""
-
-    def test_gate_parks_and_names_the_undefined_term(self) -> None:
-        result = gates.gate_after_spec(_spec(acceptance_criteria=[
-            "Overdue high-priority tickets are highlighted in the list",
-            "The highlight is visible on the dashboard",
-        ]))
-        self.assertTrue(result.passed, "an under-specified story is not malformed")
-        self.assertTrue(result.needs_human)
-        joined = "\n".join(result.human_questions)
-        self.assertIn("overdue", joined.lower())
-        self.assertIn("Overdue high-priority tickets", joined)
-
-    def test_a_well_specified_story_still_needs_no_human(self) -> None:
-        result = gates.gate_after_spec(_spec())
-        self.assertTrue(result.passed)
-        self.assertFalse(result.needs_human)
-
-    def test_the_agents_own_questions_and_the_deterministic_check_combine(self) -> None:
-        result = gates.gate_after_spec(_spec(
-            verdict="fail",
-            acceptance_criteria=["Overdue tickets are highlighted", "It looks nice"],
-            questions=["Where should the highlight appear?"],
-        ))
-        self.assertTrue(result.passed)
-        self.assertTrue(result.needs_human)
-        joined = "\n".join(result.human_questions)
-        self.assertIn("Where should the highlight appear?", joined)
-        self.assertIn("overdue", joined.lower())
-
-    def test_settled_terms_do_not_park_the_gate(self) -> None:
-        result = gates.gate_after_spec(
-            _spec(acceptance_criteria=["Overdue tickets are counted on the dashboard",
-                                       "Counts are correct for an empty database"]),
-            defined_terms=frozenset({"overdue"}),
-        )
-        self.assertFalse(result.needs_human)
-
-    def test_a_structural_failure_still_wins_over_the_ambiguity_park(self) -> None:
-        result = gates.gate_after_spec(_spec(
-            acceptance_criteria=["Overdue tickets are highlighted"],  # only 1 AC
-        ))
-        self.assertFalse(result.passed)
-        self.assertFalse(result.needs_human)
-
-
 class SettledTermsWiringTests(unittest.TestCase):
     """The gate must actually consult the project's committed memory."""
 
@@ -485,47 +210,6 @@ class SettledTermsWiringTests(unittest.TestCase):
         self.assertEqual(
             self._drive(with_adr=True, approved=False), "waiting_human",
             "an unapproved ADR is a proposal, not a decision",
-        )
-
-
-class UnitMatchingTests(unittest.TestCase):
-    """Units must match as WORDS, never as substrings.
-
-    The first implementation tested `unit in criterion.lower()`, so "nu**mb**er"
-    matched the megabyte unit "mb" and the criterion was judged to carry a
-    threshold it did not have. "ms" is worse: it matches almost any plural ending
-    in -ms — "items", "terms", "problems", "forms" — which would have silently
-    disabled this check across most real acceptance criteria. A check that
-    quietly stops checking is the worst kind.
-    """
-
-    def test_a_unit_hidden_inside_another_word_does_not_count_as_bound(self) -> None:
-        for criterion in (
-            "The dashboard shows the number of overdue HIGH tickets",   # nu(mb)er
-            "Overdue items are listed first",                          # ite(ms)
-            "Stale search terms are highlighted",                      # ter(ms)
-            "Recent problems appear at the top",                       # proble(ms)
-        ):
-            with self.subTest(criterion=criterion):
-                found = ambiguity.unbound_criteria([criterion])
-                self.assertEqual(
-                    len(found), 1,
-                    f"a unit hidden inside a word must not bind: {criterion}",
-                )
-
-    def test_a_real_unit_as_its_own_word_does_count_as_bound(self) -> None:
-        for criterion in (
-            "tickets with no update for seven days are stale",
-            "requests slower than 200 ms are logged",
-            "uploads larger than 5 mb are rejected",
-            "a ticket is overdue after twenty four hours",
-        ):
-            with self.subTest(criterion=criterion):
-                self.assertEqual(ambiguity.unbound_criteria([criterion]), [])
-
-    def test_plural_units_bind_too(self) -> None:
-        self.assertEqual(
-            ambiguity.unbound_criteria(["a ticket is overdue after two weeks"]), []
         )
 
 
@@ -606,88 +290,6 @@ class OnlyOperatorAuthoredContextSettlesTests(unittest.TestCase):
         from factory.pipeline import settled_threshold_terms
 
         self.assertEqual(settled_threshold_terms({"story_id": "US-0001"}), frozenset())
-
-
-class InventedThresholdTests(unittest.TestCase):
-    """An INVENTED threshold must park too, not just a missing one.
-
-    The first version of this check keyed only off the acceptance criteria, so a
-    criterion carrying a number was "bound" and sailed through — even when the
-    request never supplied that number. Observed live: the request said only
-    "overdue high-priority tickets", and one run wrote "created_at is older than
-    48 hours" while an earlier run's architect had chosen 24. Both are
-    undocumented business rules, both unapproved; writing the number down makes
-    the invention visible but does not make it authorised.
-
-    So the question is asked of the REQUEST: if the operator used a threshold
-    term without a number, the definition needs sign-off however the agent
-    resolves it.
-    """
-
-    REQUEST = ("As a support manager, I want overdue high-priority tickets "
-               "highlighted so that important cases are not forgotten.")
-
-    def test_a_number_the_request_never_supplied_is_flagged(self) -> None:
-        found = ambiguity.unbound_criteria(
-            ["A ticket is overdue when priority is HIGH and created_at is older "
-             "than 48 hours."],
-            request=self.REQUEST,
-        )
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0][1], "overdue")
-
-    def test_a_threshold_the_request_DID_supply_is_not_flagged(self) -> None:
-        """Story 11 hands over the definition, so nothing needs approving."""
-        self.assertEqual(
-            ambiguity.unbound_criteria(
-                ["A HIGH ticket is overdue when status != CLOSED and createdAt is "
-                 "more than 24 hours ago."],
-                request="A HIGH-priority ticket is overdue when status != CLOSED "
-                        "and createdAt is more than 24 hours ago.",
-            ),
-            [],
-        )
-
-    def test_an_operator_settled_term_is_not_flagged_even_from_the_request(self) -> None:
-        self.assertEqual(
-            ambiguity.unbound_criteria(
-                ["Overdue tickets are counted on the dashboard"],
-                request=self.REQUEST,
-                defined_terms=frozenset({"overdue"}),
-            ),
-            [],
-        )
-
-    def test_a_term_absent_from_the_request_is_still_judged_on_the_criterion(self) -> None:
-        """The agent introducing a NEW vague qualifier of its own must still be
-        caught — the request-based rule widens the net, it does not replace it."""
-        found = ambiguity.unbound_criteria(
-            ["Stale tickets are archived"],
-            request="I want a dashboard showing ticket counts",
-        )
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0][1], "stale")
-
-    def test_the_message_distinguishes_invented_from_missing(self) -> None:
-        result = gates.gate_after_spec(
-            _spec(acceptance_criteria=[
-                "A ticket is overdue when created_at is older than 48 hours.",
-                "Overdue tickets are highlighted in the list.",
-            ]),
-            request=self.REQUEST,
-        )
-        self.assertTrue(result.needs_human)
-        joined = "\n".join(result.human_questions)
-        self.assertIn("48 hours", joined)
-        self.assertIn("never", joined.lower())
-
-    def test_no_request_falls_back_to_criterion_only_judgement(self) -> None:
-        self.assertEqual(
-            ambiguity.unbound_criteria(
-                ["A ticket is overdue after 24 hours"], request=""
-            ),
-            [],
-        )
 
 
 class OperatorAnswerSettlesTermTests(unittest.TestCase):
