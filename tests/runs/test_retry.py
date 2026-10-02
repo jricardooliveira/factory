@@ -81,7 +81,7 @@ class RetryDecisionTests(unittest.TestCase):
     """Recovering the ACTION from a recorded answer."""
 
     def test_a_rejection_is_recovered_as_a_rejection(self) -> None:
-        from factory.interfaces.cli import decision_from_response
+        from factory.runs import decision_from_response
 
         action, feedback = decision_from_response(
             "REJECTED: overdue means HIGH, not closed, older than 24 hours")
@@ -89,7 +89,7 @@ class RetryDecisionTests(unittest.TestCase):
         self.assertEqual(feedback, "overdue means HIGH, not closed, older than 24 hours")
 
     def test_an_approval_is_recovered_as_an_approval(self) -> None:
-        from factory.interfaces.cli import decision_from_response
+        from factory.runs import decision_from_response
 
         action, feedback = decision_from_response("APPROVED: looks fine")
         self.assertEqual(action, "approve")
@@ -98,7 +98,7 @@ class RetryDecisionTests(unittest.TestCase):
     def test_an_unrecognised_response_is_treated_as_an_approval_note(self) -> None:
         """Never guess a REJECTION — that would silently re-run work the operator
         may have accepted."""
-        from factory.interfaces.cli import decision_from_response
+        from factory.runs import decision_from_response
 
         action, _ = decision_from_response("some free text")
         self.assertEqual(action, "approve")

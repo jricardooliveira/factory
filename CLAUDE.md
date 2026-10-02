@@ -16,8 +16,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `382 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `382 passed` (~40s, offline, zero tokens) |
+| `make check` | `397 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `397 passed` (~40s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 9/9 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 43/43 agent-configuration checks; exits non-zero below 100% |
@@ -57,14 +57,20 @@ src/factory/
   verification/         Non-LLM build verification: python.py, go.py, typescript.py, scope.py
                         (declared-scope check); verify_changes in __init__.
   evidence/             artifacts.py (INTENT → SPEC → PLAN chain), adr.py (decision memory),
-                        trust_package.py (+ schemas/), metrics.py.
+                        trust_package.py (+ schemas/), metrics.py, progress.py (per-run stage
+                        flow + timeline from the DB; shared by CLI, TUI and simulate).
   workspace/            projects.py, templates.py, git.py (checkpoint commits, baseline, real diff),
                         materialize.py, repo_map.py.
   adapters/             opencode.py (the only place a model is called), notify.py.
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
   selftest/             evals.py (agent-configuration regression), simulate.py (scenario matrix).
-  runs/                 Application service (run/resume/retry/replay) — being extracted from the CLI.
-  interfaces/           cli/, board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
+  runs/                 Application service: run / replay / resume / retry (service.py), resume
+                        context + decision recovery (context.py). NEVER prints: reports progress
+                        through an `on_event` callback (events.py) and refuses with `RunError`.
+  interfaces/           render.py (every rich print helper; takes data, never reads the DB),
+                        cli/ (main.py = argv dispatch + usage; run.py, review.py, project.py,
+                        selftest.py, board.py = one module per command group),
+                        board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
 evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected outcome).
 examples/specs/         Sample project specs.
 docs/contract/          EFFECTIVENESS.md (contract), GATES.md, AGENTS.md, REVIEW_QUEUE.md.
@@ -111,10 +117,15 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - Agents prefix paths with `repo/`; `materialize.normalize_block_path` strips it. Don't double-prefix.
 - A gate may **pass and still need a human** (`GateResult.needs_human`). Passing ≠ crossing a checkpoint.
   Open questions from the spec-agent PARK the run (Checkpoint 1); they are not a failure.
+- **Run orchestration lives in `factory.runs`, never in an interface.** The CLI renders its
+  events (`cli.run.RunPrinter`); the TUI calls it with no callback. Don't print from `runs/`
+  (a test forbids it) and don't import `interfaces.cli` from the board — that console-swap
+  hack is what `runs/` replaced. Tests that drive a command patch the name where the command
+  looks it up, e.g. `patch("factory.runs.run_project_pipeline")`.
 - **Every terminal state must call `finish_run`.** Returning `{"status": "failed"}` in graph
   state only is how a run ends up stuck `running`, invisible to `factory queue`, and later
   mislabelled by `reconcile` as a dead process.
-- **Resume must read the LATEST agent log** (`build_resume_context` / `get_agent_log`, not
+- **Resume must read the LATEST agent log** (`runs.build_resume_context` / `get_agent_log`, not
   `get_run_logs` + `next(...)` which is ascending). Otherwise the operator approves one
   design and the coder builds an earlier one.
 - **`agent_logs.cost_usd` is NULL in every row** — opencode usage harvesting is broken, so

@@ -31,13 +31,7 @@ INFRA = {"adapters", "state"}
 # Edges that break the rule today, each with the reason it is tolerated. This list
 # may only SHRINK: a new violation fails the suite, and fixing a listed one fails it
 # too until the entry is removed (so the list cannot rot into a blanket waiver).
-KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {
-    ("factory.selftest.simulate", "factory.interfaces.board.data"): (
-        "simulate renders each scenario's stage flow with board.data's "
-        "run_pipeline_progress/render_flow; that read model needs a home below "
-        "interfaces (not runs: selftest may not import runs either)."
-    ),
-}
+KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {}
 
 
 def _module_name(path: Path) -> str:
@@ -104,6 +98,28 @@ class LayeringTests(unittest.TestCase):
         edges = set(self._edges())
         stale = [f"{s} -> {d}" for s, d in KNOWN_VIOLATIONS if (s, d) not in edges]
         self.assertEqual(stale, [], "remove fixed entries from KNOWN_VIOLATIONS")
+
+    def test_render_is_presentation_only(self) -> None:
+        """interfaces/render.py takes data and prints it; the command modules fetch.
+        A render helper that opened the DB or drove a run would put orchestration
+        back into the presentation layer that `runs/` was extracted from."""
+        forbidden = ("factory.state", "factory.pipeline", "factory.adapters", "factory.workspace")
+        reaches = sorted(
+            m for m in _factory_imports(PACKAGE / "interfaces" / "render.py")
+            if m.startswith(forbidden)
+        )
+        self.assertEqual(reaches, [])
+
+    def test_console_script_resolves_to_the_cli_main_module(self) -> None:
+        import importlib
+        import tomllib
+
+        target = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]["scripts"][
+            "factory"
+        ]
+        self.assertEqual(target, "factory.interfaces.cli.main:main")
+        module, _, attr = target.partition(":")
+        self.assertTrue(callable(getattr(importlib.import_module(module), attr)))
 
     def test_the_rule_itself_flags_what_it_should(self) -> None:
         self.assertIsNotNone(_violation("factory.domain.gates", "factory.state.db"))

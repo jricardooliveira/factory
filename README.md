@@ -58,7 +58,7 @@ uv sync --dev
 make check
 ```
 
-`make check` should print `382 passed`, `9/9 scenarios behaving as expected` and
+`make check` should print `397 passed`, `9/9 scenarios behaving as expected` and
 `43/43 checks green`. That is the whole verification loop in one command.
 
 ---

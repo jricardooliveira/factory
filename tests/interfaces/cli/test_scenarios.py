@@ -7,14 +7,15 @@ to test gate behavior.
 
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 
 from rich.console import Console
 from rich.rule import Rule
 
-from factory.interfaces.cli import DB_PATH, run_pipeline
+from factory.interfaces.cli.common import DB_PATH
+from factory.interfaces.cli.run import RunPrinter
+from factory.runs import run_pipeline
 
 console = Console()
 
@@ -57,7 +58,8 @@ def main() -> None:
         console.print()
 
         try:
-            run_pipeline(scenario["request"], opencode_cwd=repo_root)
+            run_pipeline(scenario["request"], opencode_cwd=repo_root, db_path=DB_PATH,
+                         on_event=RunPrinter())
         except Exception as e:
             console.print(f"  [bold red]CRASH:[/bold red] {e}")
 

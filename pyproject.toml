@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-factory = "factory.interfaces.cli:main"
+factory = "factory.interfaces.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]

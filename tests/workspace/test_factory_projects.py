@@ -7,11 +7,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
-from factory.interfaces.cli import run_project_pipeline
-from factory.workspace.projects import create_project, get_project, list_projects
+from factory.runs import run_project_pipeline
 from factory.state.db import get_db, init_db
+from factory.workspace.projects import create_project, get_project, list_projects
 
 
 class FactoryProjectTests(unittest.TestCase):
@@ -97,7 +97,7 @@ class FactoryProjectTests(unittest.TestCase):
             spec_path=spec_path,
         )
 
-        with patch("factory.interfaces.cli.run_pipeline") as run_pipeline:
+        with patch("factory.runs.service.run_pipeline") as run_pipeline:
             run_project_pipeline(
                 "PROJ-001",
                 "Create the initial API",
@@ -129,7 +129,7 @@ class FactoryProjectCliTests(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_project_create_command_registers_project_in_current_factory_root(self) -> None:
-        from factory.interfaces.cli import main
+        from factory.interfaces.cli.main import main
 
         with patch("sys.argv", ["factory", "project", "create", "cli-app", "--name", "CLI App"]):
             main()
@@ -140,7 +140,7 @@ class FactoryProjectCliTests(unittest.TestCase):
         self.assertEqual(dict(row), {"id": "PROJ-001", "slug": "cli-app", "name": "CLI App"})
 
     def test_project_create_command_accepts_stack_and_writes_spec_path(self) -> None:
-        from factory.interfaces.cli import main
+        from factory.interfaces.cli.main import main
 
         with patch(
             "sys.argv",
@@ -156,19 +156,21 @@ class FactoryProjectCliTests(unittest.TestCase):
         self.assertEqual(json.loads(spec_path.read_text())["framework"], "FastAPI")
 
     def test_run_command_dispatches_to_project_pipeline(self) -> None:
-        from factory.interfaces.cli import main
+        from factory.interfaces.cli.main import main
 
-        with patch("factory.interfaces.cli.run_project_pipeline") as run_project_pipeline:
+        with patch("factory.runs.run_project_pipeline") as run_project_pipeline:
             with patch(
                 "sys.argv",
                 ["factory", "run", "--project", "PROJ-001", "Add a health endpoint"],
             ):
                 main()
 
-        run_project_pipeline.assert_called_once_with("PROJ-001", "Add a health endpoint")
+        run_project_pipeline.assert_called_once_with(
+            "PROJ-001", "Add a health endpoint", db_path=Path("factory.db"), on_event=ANY
+        )
 
     def test_help_flag_prints_usage_without_creating_pipeline_run(self) -> None:
-        from factory.interfaces.cli import main
+        from factory.interfaces.cli.main import main
 
         with patch("sys.argv", ["factory", "-h"]):
             with self.assertRaises(SystemExit) as raised:

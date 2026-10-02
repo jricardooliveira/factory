@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from factory.interfaces.board.data import render_flow, run_pipeline_progress
+from factory.domain.agent_output import parse_agent_json
+from factory.evidence.progress import render_flow, run_pipeline_progress
 from factory.pipeline import compile_pipeline
 from factory.state import db
-from factory.domain.agent_output import parse_agent_json
 from factory.workspace.git import git_init
 
 
