@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from factory.evidence import trust_package as tp
@@ -140,6 +141,48 @@ class EvidenceBarTests(unittest.TestCase):
         self.assertTrue(any("verdict" in e for e in errors), errors)
         # The unmeasured diff is an evidence bar (already a blocker), not a shape error.
         self.assertFalse(any("unavailable" in e for e in errors), errors)
+
+
+class ReleasedPackageTests(unittest.TestCase):
+    """The saved package and the database must agree on what happens next (T01)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmp.name) / "f.db"
+        db.init_db(self.db_path)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run(self, status: str, release_response: str | None) -> int:
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "US-0001", "T", "x")
+            rid = db.start_run(conn, "US-0001")
+            if release_response is not None:
+                gid = db.log_gate(conn, rid, "gate-release", False, "NOT READY",
+                                  needs_human=True)
+                if release_response:
+                    db.respond_to_gate(conn, gid, release_response)
+            db.finish_run(conn, rid, status)
+        return rid
+
+    def test_a_run_the_operator_released_needs_no_further_authorization(self) -> None:
+        pkg = tp.assemble(self.db_path, self._run("completed", "APPROVED: ship it"))
+        self.assertEqual(pkg["next_authorization"], "none")
+        self.assertEqual(pkg["verdict"], "warn")  # its gaps were accepted, not met
+
+    def test_a_parked_release_awaits_the_operator(self) -> None:
+        pkg = tp.assemble(self.db_path, self._run("waiting_human", ""))
+        self.assertEqual(pkg["next_authorization"], "operator-review")
+
+    def test_a_legacy_self_completed_run_still_needs_review(self) -> None:
+        pkg = tp.assemble(self.db_path, self._run("completed", None))
+        self.assertEqual(pkg["next_authorization"], "operator-review")
+
+    def test_an_unreadable_schema_fails_closed(self) -> None:
+        with patch.object(tp, "_SCHEMA_PATH", Path(self._tmp.name) / "missing.json"):
+            errors = tp.schema_errors({"verdict": "pass"})
+        self.assertTrue(errors and "schema" in errors[0], errors)
 
 if __name__ == "__main__":
     unittest.main()

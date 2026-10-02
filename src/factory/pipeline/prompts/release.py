@@ -11,7 +11,8 @@ from factory.workspace.git import collect_repo_diff
 
 def _diff_block(state: PipelineState) -> str:
     diff = collect_repo_diff(
-        Path(state.get("opencode_cwd") or "."), exclude=factory_owned_paths(state)
+        Path(state.get("opencode_cwd") or "."), exclude=factory_owned_paths(state),
+        base=state.get("base_commit"),
     )
     if diff:
         return f"## The change being released (real git diff)\n\n```diff\n{diff}\n```\n\n"

@@ -31,8 +31,10 @@ from factory.domain.traceability import trace_criteria, unassessed_criteria
 from factory.pipeline.agent_calls import db_conn
 from factory.pipeline.evidence_writers import release_evidence_gaps, write_trust_package
 from factory.pipeline.state import PipelineState
+from factory.workspace.git import git_head
 from factory.state.db import (
     finish_run,
+    set_candidate_commit,
     get_human_responses,
     get_run_cost,
     log_gate,
@@ -303,7 +305,16 @@ def node_gate_release(state: PipelineState) -> dict[str, Any]:
     if state.get("status") in ("failed", "blocked"):
         return state
 
-    # Saved FIRST: the package is what the operator reads at the checkpoint, and an
+    # Pin the candidate under review FIRST: the package names it and measures its
+    # change set up to it, and the boss will release exactly this code or nothing.
+    conn = db_conn(state)
+    try:
+        set_candidate_commit(conn, state["run_id"],
+                             git_head(Path(state.get("opencode_cwd") or ".")))
+        conn.commit()
+    finally:
+        conn.close()
+    # Saved next: the package is what the operator reads at the checkpoint, and an
     # unsaved package is not evidence. Its content does not depend on the park.
     gaps = release_evidence_gaps(state)
     if state.get("project_dir") and write_trust_package(state) is None:

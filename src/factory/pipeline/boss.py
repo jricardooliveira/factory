@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -35,9 +36,11 @@ from factory.domain.authorization import (
 from factory.domain.contracts import ArchitectOutput, SpecOutput
 from factory.domain.task_order import order_tasks
 from factory.pipeline.agent_calls import db_conn
-from factory.pipeline.state import PipelineState
+from factory.pipeline.state import PipelineState, factory_owned_paths
+from factory.workspace.git import code_changed_since
 from factory.state.db import (
     finish_run,
+    get_run,
     get_run_gates,
     log_authorization,
     update_run_stage,
@@ -57,6 +60,21 @@ def _parsed(model: type, data: Any) -> Any:
         return model.model_validate(data)
     except ValidationError:
         return None
+
+
+def _candidate_changed(state: PipelineState) -> bool | None:
+    """Did the code change after Checkpoint 3 pinned the reviewed candidate?"""
+    conn = db_conn(state)
+    try:
+        run = get_run(conn, state["run_id"]) or {}
+    finally:
+        conn.close()
+    candidate = run.get("candidate_commit")
+    if not candidate:
+        return None
+    return code_changed_since(
+        Path(state.get("opencode_cwd") or "."), candidate, exclude=factory_owned_paths(state)
+    )
 
 
 def authorization_for(
@@ -88,7 +106,7 @@ def authorization_for(
     if stage == "release-agent":
         return authorize_release_notes(gates.get("gate-test"))
     if stage == "release":
-        return authorize_release(gates.get("gate-release"))
+        return authorize_release(gates.get("gate-release"), _candidate_changed(state))
     raise ValueError(f"the boss has no authorization rule for stage {stage!r}")
 
 

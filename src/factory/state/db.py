@@ -151,6 +151,9 @@ def init_db(path: Path) -> None:
         # Persisted so a resume of a parked replay keeps replaying instead of
         # calling live agents.
         _ensure_column(conn, "pipeline_runs", "replay_of", "INTEGER")
+        # The commit gate-release judged and the operator reviewed at Checkpoint 3:
+        # releasing it later must release exactly that code.
+        _ensure_column(conn, "pipeline_runs", "candidate_commit", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -200,6 +203,21 @@ def start_run(
         (story_id, project_id, now, base_commit, replay_of),
     )
     return cursor.lastrowid  # type: ignore[return-value]
+
+
+def set_candidate_commit(conn: sqlite3.Connection, run_id: int, commit: str | None) -> None:
+    conn.execute("UPDATE pipeline_runs SET candidate_commit = ? WHERE id = ?", (commit, run_id))
+
+
+def live_runs_in_project(conn: sqlite3.Connection, project_id: str) -> list[int]:
+    """Ids of the project's runs that are working right now (replays excluded:
+    they work in their own scratch clone)."""
+    rows = conn.execute(
+        "SELECT id FROM pipeline_runs WHERE project_id = ? AND status = 'running' "
+        "AND replay_of IS NULL ORDER BY id",
+        (project_id,),
+    ).fetchall()
+    return [r["id"] for r in rows]
 
 
 def get_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any] | None:

@@ -155,6 +155,25 @@ class ReleaseCheckpointTests(unittest.TestCase):
         record = (artifacts.work_dir_for(self.work, "US-0001") / "PIPELINE.md").read_text()
         self.assertIn("the story is complete", record)
 
+    def test_approval_refuses_code_that_changed_after_the_review(self) -> None:
+        parked = self._run()
+        (self.work / "src" / "search.py").write_text("def s():\n    return ['unreviewed']\n")
+        subprocess.run(["git", "commit", "-qam", "manual edit"], cwd=self.work, check=True)
+        outcome = runs.resume_run(parked.run_id, "approve", "ship it", db_path=self.db_path)
+        self.assertEqual(outcome.status, "blocked")
+        self.assertIn("changed", outcome.error or "")
+        with db.get_db(self.db_path) as conn:
+            self.assertNotEqual(db.get_run(conn, parked.run_id)["status"], "completed")
+
+    def test_the_package_names_the_candidate_it_judged(self) -> None:
+        parked = self._run()
+        pkg = json.loads((self.work / "docs" / "releases"
+                          / f"run-{parked.run_id}-trust-package.json").read_text())
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.work, capture_output=True,
+                              text=True).stdout.strip()
+        self.assertTrue(pkg["candidate"]["commit"])
+        self.assertEqual(len(pkg["candidate"]["commit"]), len(head))
+
     def test_reject_sends_the_operators_words_to_the_coder_then_parks_again(self) -> None:
         parked = self._run()
         outcome = runs.resume_run(parked.run_id, "reject", "results must not be empty",

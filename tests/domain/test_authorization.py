@@ -185,6 +185,21 @@ class ReleaseAuthorizationTests(unittest.TestCase):
         # No agent passes the release gate: a verdict with no operator in it is refused.
         self.assertFalse(authorize_release(GateRecord("gate-release", True)).allowed)
 
+    def test_a_candidate_that_changed_after_review_cannot_be_released(self) -> None:
+        approved = GateRecord("gate-release", True, needs_human=True,
+                              human_response="APPROVED: ship it")
+        auth = authorize_release(approved, candidate_changed=True)
+        self.assertFalse(auth.allowed)
+        self.assertTrue(any("changed" in m for m in auth.missing))
+        self.assertTrue(authorize_release(approved, candidate_changed=False).allowed)
+
+    def test_an_unpinned_candidate_is_released_with_a_warning(self) -> None:
+        approved = GateRecord("gate-release", True, needs_human=True,
+                              human_response="APPROVED: ship it")
+        auth = authorize_release(approved, candidate_changed=None)
+        self.assertTrue(auth.allowed)
+        self.assertTrue(any("pinned" in w for w in auth.warnings))
+
     def test_approving_an_unready_release_is_allowed_and_recorded_as_accepted_risk(self) -> None:
         gate = GateRecord("gate-release", False, needs_human=True,
                           human_response="APPROVED: tests run in CI")

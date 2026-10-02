@@ -201,11 +201,16 @@ def authorize_release_notes(gate_test: GateRecord | None) -> Authorization:
     return _decide("release-agent", "gate-test passed", [])
 
 
-def authorize_release(gate_release: GateRecord | None) -> Authorization:
-    """Only the operator releases: the newest gate-release must carry their APPROVAL.
+def authorize_release(
+    gate_release: GateRecord | None, candidate_changed: bool | None = None
+) -> Authorization:
+    """Only the operator releases: the newest gate-release must carry their APPROVAL,
+    for exactly the code they reviewed.
 
     Approving a release the gate judged NOT ready is allowed — the gaps were named
-    at the checkpoint — and is recorded as the operator accepting them.
+    at the checkpoint — and is recorded as the operator accepting them. Code that
+    changed after the checkpoint (another story, a manual edit) was never reviewed,
+    so the approval does not cover it (review task T07).
     """
     if gate_release is None:
         return _decide("release", "", ["a gate-release verdict (the release gate never ran)"])
@@ -217,9 +222,16 @@ def authorize_release(gate_release: GateRecord | None) -> Authorization:
         return _decide("release", "", ["the operator's decision at Checkpoint 3"])
     if gate_release.rejected_by_operator:
         return _decide("release", "", ["Checkpoint 3 was rejected by the operator"])
+    if candidate_changed:
+        return _decide("release", "", [
+            "the reviewed code, unchanged — it changed after Checkpoint 3, so this approval "
+            "does not cover it: start a new run to review the current code"
+        ])
     warnings = [] if gate_release.passed else [
         "released NOT READY: the evidence gaps named at Checkpoint 3 were accepted by the operator"
     ]
+    if candidate_changed is None:
+        warnings.append("the reviewed candidate was not pinned (no git): released as found")
     return _decide("release", "the operator's approval at Checkpoint 3", [], warnings)
 
 

@@ -296,6 +296,19 @@
         "operator-review",
         "none"
       ]
+    },
+    "candidate": {
+      "type": "object",
+      "description": "The code under review: the commit gate-release pinned at Checkpoint 3 (empty before it) and the run's base. The change set is measured between them.",
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "base_commit": {
+          "type": "string"
+        }
+      }
     }
   }
 }

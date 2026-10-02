@@ -179,11 +179,16 @@ def _factory_baseline(root: Path) -> str:
 
 
 def collect_repo_diff(
-    root: Path, *, max_chars: int = _DIFF_MAX_CHARS, exclude: tuple[str, ...] = ()
+    root: Path,
+    *,
+    max_chars: int = _DIFF_MAX_CHARS,
+    exclude: tuple[str, ...] = (),
+    base: str | None = None,
 ) -> str | None:
     """Real cumulative diff of the factory's changes, for the tester to review.
 
-    Returns the git diff from the pre-factory baseline to the current repo state
+    Returns the git diff from `base` (the run's starting commit; else the
+    pre-factory baseline) to the current repo state
     (committed + any working-tree changes), so the tester sees EVERY task's change
     — not just the last one's self-report. None when not a git repo (caller then
     falls back to the agent's self-reported implementation); ``""`` when the repo
@@ -195,7 +200,13 @@ def collect_repo_diff(
         return None
     if _git_resolve(root, "HEAD") is None:
         return None  # no commits yet — nothing to diff
-    base = _factory_baseline(root)
+    # `base` = the run's own starting commit, so a review sees THIS story's change.
+    # Diffing from the first factory commit made story N's review carry stories
+    # 1..N-1, which consumed its character budget (review task T05).
+    # `^{commit}`: `rev-parse --verify` accepts ANY well-formed full sha without
+    # checking that the object exists; a stale base must fall back, not be used.
+    if not base or _git_resolve(root, f"{base}^{{commit}}") is None:
+        base = _factory_baseline(root)
     try:
         spec = _exclude_pathspecs(exclude)
         committed = _run(["git", "diff", base, "HEAD", *spec], root)
@@ -225,7 +236,7 @@ _STATUS_MAP = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C
 
 
 def git_changed_files(
-    root: Path, base: str | None, *, exclude: tuple[str, ...] = ()
+    root: Path, base: str | None, *, exclude: tuple[str, ...] = (), end: str | None = None
 ) -> list[dict[str, str]] | None:
     """Real per-file change set from `base` to the current state, or None if it
     cannot be measured from git.
@@ -235,6 +246,10 @@ def git_changed_files(
     A file both committed and then edited appears once, with its committed status.
     Paths matching `exclude` (a project's factory-owned evidence) are not part of
     the change set: the factory wrote them, no agent did.
+
+    `end` pins the change set to a commit (the candidate reviewed at Checkpoint 3):
+    then nothing after it — a later story, a working-tree edit — can change what
+    an old package says it measured.
     """
     if not is_git_repo(root) or shutil.which("git") is None:
         return None
@@ -242,9 +257,13 @@ def git_changed_files(
         return None
     baseline = base or _factory_baseline(root)
     try:
-        committed = _run(["git", "diff", "--name-status", baseline, "HEAD"], root)
-        working = _run(["git", "diff", "--name-status"], root)
-        untracked = _run(["git", "ls-files", "--others", "--exclude-standard"], root)
+        if end and _git_resolve(root, f"{end}^{{commit}}"):
+            committed = _run(["git", "diff", "--name-status", baseline, end], root)
+            working = untracked = subprocess.CompletedProcess([], 1, "", "")
+        else:
+            committed = _run(["git", "diff", "--name-status", baseline, "HEAD"], root)
+            working = _run(["git", "diff", "--name-status"], root)
+            untracked = _run(["git", "ls-files", "--others", "--exclude-standard"], root)
     except (subprocess.SubprocessError, OSError):
         return None
     if committed.returncode != 0:
@@ -269,6 +288,31 @@ def git_changed_files(
             if path and not _is_noise(path) and not _excluded(path, exclude):
                 files.setdefault(path, "added")
     return [{"path": p, "change": c} for p, c in sorted(files.items())]
+
+
+def code_changed_since(
+    root: Path, commit: str, *, exclude: tuple[str, ...] = ()
+) -> bool | None:
+    """Has any CODE changed since `commit` — committed, uncommitted or untracked?
+
+    `exclude` is the factory's own evidence: it keeps committing PIPELINE.md and
+    trust packages after a checkpoint, and that is not a change to what was
+    reviewed. None when it cannot be measured (no git, unknown commit).
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return None
+    if _git_resolve(root, f"{commit}^{{commit}}") is None:
+        return None
+    spec = _exclude_pathspecs(exclude) or ["--", "."]
+    try:
+        tracked = _run(["git", "diff", "--quiet", commit, *spec], root)
+        untracked = _run(["git", "ls-files", "--others", "--exclude-standard", *spec], root)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if tracked.returncode not in (0, 1):
+        return None
+    new_files = [p for p in untracked.stdout.splitlines() if p.strip() and not _is_noise(p)]
+    return tracked.returncode == 1 or bool(new_files)
 
 
 def _is_noise(path: str) -> bool:

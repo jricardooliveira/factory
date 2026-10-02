@@ -99,7 +99,7 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
     spec = SpecOutput.model_validate(state["spec"])
     root = Path(state.get("opencode_cwd") or ".")
     owned = factory_owned_paths(state)
-    diff = collect_repo_diff(root, exclude=owned) or ""
+    diff = collect_repo_diff(root, exclude=owned, base=state.get("base_commit")) or ""
     prompt = build_remediation_prompt(state, spec, diff)
 
     result, parsed = run_agent_json(state, "coder-agent", prompt, slot="remediation")

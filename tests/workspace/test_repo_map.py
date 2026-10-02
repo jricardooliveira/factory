@@ -56,5 +56,32 @@ class RepoInventoryTests(unittest.TestCase):
         self.assertIn("more file", inv.lower())
 
 
+class GoInventoryTests(unittest.TestCase):
+    """Review task T05: Go files were invisible to the architect and the coder, so
+    every later SupportFlow story would be designed blind to the existing backend."""
+
+    def test_exported_go_functions_types_and_methods_are_listed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "internal" / "http").mkdir(parents=True)
+            (root / "internal" / "http" / "router.go").write_text(
+                "package http\n\n"
+                "type Server struct {\n\tlog *slog.Logger\n}\n\n"
+                "type Store interface {\n\tGet(id string) error\n}\n\n"
+                "func NewRouter(s *Server) http.Handler {\n\treturn nil\n}\n\n"
+                "func (s *Server) Health(w http.ResponseWriter, r *http.Request) {\n}\n\n"
+                "func helper() {}\n"
+            )
+            (root / "vendor" / "x").mkdir(parents=True)
+            (root / "vendor" / "x" / "x.go").write_text("package x\n\nfunc Vendored() {}\n")
+            inventory = build_repo_inventory(root)
+        self.assertIn("internal/http/router.go", inventory)
+        self.assertIn("type Server struct", inventory)
+        self.assertIn("type Store interface", inventory)
+        self.assertIn("func NewRouter(s *Server) http.Handler", inventory)
+        self.assertIn("func (s *Server) Health(w http.ResponseWriter, r *http.Request)", inventory)
+        self.assertNotIn("helper", inventory)  # unexported
+        self.assertNotIn("Vendored", inventory)  # vendor/ is not the project's code
+
 if __name__ == "__main__":
     unittest.main()

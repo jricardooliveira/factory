@@ -122,6 +122,52 @@ class EvidenceExclusionTests(unittest.TestCase):
         self.assertNotIn("SPEC BODY", code_only)
         self.assertNotIn("PROJECT_RULES.md", code_only)
 
+    def test_repo_diff_from_a_runs_base_shows_only_that_run(self) -> None:
+        """Review task T05: the tester's diff started at the FIRST factory commit, so
+        story 10's review carried stories 1-9 and they ate its 16k-char budget."""
+        _write(self.repo, "story_one.py", "ONE = 1\n")
+        git.git_commit_all(self.repo, "factory: US-0001 T-1")
+        story_two_base = git.git_head(self.repo)
+        _write(self.repo, "story_two.py", "TWO = 2\n")
+        git.git_commit_all(self.repo, "factory: US-0002 T-1")
+        everything = git.collect_repo_diff(self.repo) or ""
+        self.assertIn("ONE = 1", everything)
+        this_run = git.collect_repo_diff(self.repo, base=story_two_base) or ""
+        self.assertIn("TWO = 2", this_run)
+        self.assertNotIn("ONE = 1", this_run)
+
+    def test_an_unknown_base_falls_back_to_the_factory_baseline(self) -> None:
+        _write(self.repo, "app.py", "CODE = 1\n")
+        git.git_commit_all(self.repo, "factory: T-1")
+        diff = git.collect_repo_diff(self.repo, base="0" * 40) or ""
+        self.assertIn("CODE = 1", diff)
+
+    def test_code_changed_since_ignores_the_factorys_own_evidence(self) -> None:
+        """Review task T07: an approval must release exactly the code reviewed. The
+        factory keeps committing evidence after the checkpoint; that is not a change."""
+        _write(self.repo, "app.py", "CODE = 1\n")
+        git.git_commit_all(self.repo, "factory: T-1")
+        candidate = git.git_head(self.repo)
+        _write(self.repo, "docs/work/US-0001/PIPELINE.md", "record\n")
+        git.git_commit_paths(self.repo, ["docs/work"], "factory: PIPELINE")
+        self.assertFalse(git.code_changed_since(self.repo, candidate, exclude=EVIDENCE))
+        _write(self.repo, "app.py", "CODE = 2\n")  # an edit after the review
+        self.assertTrue(git.code_changed_since(self.repo, candidate, exclude=EVIDENCE))
+
+    def test_an_untracked_code_file_is_a_change(self) -> None:
+        candidate = git.git_head(self.repo)
+        _write(self.repo, "sneaky.py", "x = 1\n")
+        self.assertTrue(git.code_changed_since(self.repo, candidate, exclude=EVIDENCE))
+
+    def test_the_change_set_can_end_at_a_pinned_candidate(self) -> None:
+        _write(self.repo, "app.py", "CODE = 1\n")
+        git.git_commit_all(self.repo, "factory: US-0001 T-1")
+        candidate = git.git_head(self.repo)
+        _write(self.repo, "later.py", "LATER = 1\n")  # a later story's work
+        git.git_commit_all(self.repo, "factory: US-0002 T-1")
+        files = git.git_changed_files(self.repo, self.base, exclude=EVIDENCE, end=candidate)
+        self.assertEqual([f["path"] for f in files], ["app.py"])
+
     def test_only_evidence_changes_is_a_clean_code_diff(self) -> None:
         _write(self.repo, "docs/work/US-0001/SPEC.md")
         git.git_commit_paths(self.repo, ["docs/work"], "factory: SPEC")

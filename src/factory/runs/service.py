@@ -48,6 +48,7 @@ from factory.runs.events import (
     ignore_events,
 )
 from factory.state.db import (
+    live_runs_in_project,
     create_story,
     get_answered_human_gate,
     get_db,
@@ -102,6 +103,8 @@ def run_pipeline(
                 git_head(Path(opencode_cwd)) if opencode_cwd else None
             )
         else:
+            if project_id:
+                _refuse_if_project_busy(conn, project_id)
             story_id = next_story_id(conn)
             create_story(conn, story_id, "Pending", request, project_id=project_id)
             # Pin the target repo's HEAD as THIS run's baseline, so the trust package
@@ -132,6 +135,8 @@ def run_pipeline(
         "db_path": str(db_path),
         "opencode_cwd": str(cwd),
     }
+    if base_commit:
+        initial_state["base_commit"] = base_commit
     if project_spec_text:
         initial_state["project_spec"] = project_spec_text
     # Project runs get a project_dir so ADRs + decision memory work. The project
@@ -226,6 +231,8 @@ def resume_run(
         pending = get_pending_human_gate(conn, run_id)
         if not pending:
             raise RunError(f"No pending human gate found for run #{run_id}")
+        if run.get("project_id") and not run.get("replay_of"):
+            _refuse_if_project_busy(conn, run["project_id"], except_run=run_id)
 
         # Record the human decision on the pending gate and reopen the run.
         decision = reason or (
@@ -327,6 +334,8 @@ def _resume_state(run: dict[str, Any], spec: dict, db_path: Path) -> dict[str, A
         "spec": spec,
         "status": "running",
     }
+    if run.get("base_commit"):
+        state["base_commit"] = run["base_commit"]
     if project_spec_text:
         state["project_spec"] = project_spec_text
     if project_dir:
@@ -368,6 +377,18 @@ def retry_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) ->
 
     emit(RetryStarted(run_id, gate["gate_name"], action, feedback))
     return resume_run(run_id, action, reason=feedback or None, db_path=db_path, on_event=on_event)
+
+
+def _refuse_if_project_busy(conn: Any, project_id: str, *, except_run: int | None = None) -> None:
+    """One live run per product repo: the coder's checkpoint stages the whole working
+    tree, so two stories at once would commit each other's changes (review T10)."""
+    busy = [r for r in live_runs_in_project(conn, project_id) if r != except_run]
+    if busy:
+        raise RunError(
+            f"Run #{busy[0]} is already working in project {project_id}; two stories in one "
+            "repository would commit each other's changes. Wait for it to stop, or run "
+            "`factory reconcile` if its process died."
+        )
 
 
 def _require_agents_link(repo: Path) -> None:

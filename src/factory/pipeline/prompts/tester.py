@@ -20,7 +20,8 @@ def _changes_under_review_block(state: PipelineState) -> str:
     change when available, falling back to the agent's self-report off-git. A
     project's factory-owned evidence is left out: the tester reviews code."""
     diff = collect_repo_diff(
-        Path(state.get("opencode_cwd") or "."), exclude=factory_owned_paths(state)
+        Path(state.get("opencode_cwd") or "."), exclude=factory_owned_paths(state),
+        base=state.get("base_commit"),
     )
     if diff:
         return f"## Cumulative changes under review (real git diff)\n\n```diff\n{diff}\n```\n\n"

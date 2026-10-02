@@ -16,6 +16,7 @@ class PipelineState(TypedDict, total=False):
     project_spec: str  # rendered project spec context for agents
     project_dir: str  # project root == its git repo (== opencode_cwd) — ADRs + decision memory
     replay_run_id: int  # if set, feed stored agent outputs instead of calling opencode
+    base_commit: str  # the repo HEAD this run started from: every review diff starts here
 
     # Agent outputs (raw + parsed)
     spec_raw: str

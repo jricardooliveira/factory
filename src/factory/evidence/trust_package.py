@@ -144,7 +144,9 @@ def _adr_path(repo: Path | None, story_id: str) -> str:
     return str(adrs[0]) if adrs else ""
 
 
-def _diff_block(repo: Path | None, base_commit: str | None, logs: list[dict]) -> dict[str, Any]:
+def _diff_block(
+    repo: Path | None, base_commit: str | None, logs: list[dict], end: str | None = None
+) -> dict[str, Any]:
     """The change set, measured from git (§5.2).
 
     It used to be built from the coder's own `code_blocks` and labelled
@@ -156,7 +158,8 @@ def _diff_block(repo: Path | None, base_commit: str | None, logs: list[dict]) ->
     is code an agent changed, so it is excluded.
     """
     diff_files = (
-        git.git_changed_files(repo, base_commit, exclude=EVIDENCE_PATHS) if repo else None
+        git.git_changed_files(repo, base_commit, exclude=EVIDENCE_PATHS, end=end)
+        if repo else None
     )
     if diff_files is None:
         return {
@@ -249,6 +252,23 @@ def _security_boundary(tester: dict, logs: list[dict]) -> dict[str, Any]:
     return block
 
 
+def _next_authorization(run: dict, gates: list[dict], blockers: list[str]) -> str:
+    """What this package still needs, agreeing with the database (review task T01).
+
+    - released by the operator at Checkpoint 3 → "none": nothing left to authorize;
+    - every evidence bar met, not yet released → "release": ready for sign-off;
+    - otherwise → "operator-review", including a run that marked ITSELF completed
+      before Checkpoint 3 existed: no operator ever released it.
+    """
+    releases = [g for g in gates if g["gate_name"] == "gate-release"]
+    response = ((releases[-1].get("human_response") if releases else "") or "").upper()
+    if run["status"] == "completed" and response.startswith("APPROVED"):
+        return "none"
+    if run["status"] not in ("failed", "blocked", "completed") and not blockers:
+        return "release"
+    return "operator-review"
+
+
 def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
     """Build the trust package for a run from its stored artifacts."""
     with get_db(db_path) as conn:
@@ -277,9 +297,11 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
     # the scratch clone it was replayed in (see `workspace.sandbox`).
     repo = run_repository(run, db_path)
     adr_path = _adr_path(repo, run["story_id"])
-    diff_block = _diff_block(repo, run.get("base_commit"), logs)
+    # Measured up to the candidate pinned at Checkpoint 3, so re-assembling this
+    # package after later work cannot change what it says was reviewed.
+    candidate = run.get("candidate_commit")
+    diff_block = _diff_block(repo, run.get("base_commit"), logs, end=candidate)
 
-    completed = run["status"] == "completed"
     blockers = _blockers(run, tests_executed, tests_really_passed, diff_block, ac_traceability,
                          adr_path=adr_path)
 
@@ -301,6 +323,7 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
         "verdict": {"failed": "fail", "blocked": "blocked"}.get(
             run["status"], "warn" if blockers else "pass"
         ),
+        "candidate": {"commit": candidate or "", "base_commit": run.get("base_commit") or ""},
         "tests": tests_block,
         "ac_traceability": ac_traceability,
         "diff": diff_block,
@@ -312,9 +335,7 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
             "tokens_out": int(usage["tokens_out"]),
         },
         "blockers": blockers,
-        # Release sign-off is offered only when EVERY evidence bar is met — the
-        # §5 contract is "all four artifacts are non-negotiable".
-        "next_authorization": "release" if completed and not blockers else "operator-review",
+        "next_authorization": _next_authorization(run, gates, blockers),
     }
 
 
@@ -350,8 +371,9 @@ def schema_errors(pkg: dict[str, Any]) -> list[str]:
     """
     try:
         schema = json.loads(_SCHEMA_PATH.read_text())
-    except (OSError, ValueError):
-        return []  # schema unavailable — skip rather than block
+    except (OSError, ValueError) as e:
+        # Fail closed: an unreadable schema validates nothing, so nothing may pass it.
+        return [f"the trust-package schema could not be read ({e}); the package is unvalidated"]
     errors = [
         f"missing required field: {key}"
         for key in schema.get("required", [])

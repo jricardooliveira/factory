@@ -10,14 +10,15 @@ no LLM, bounded in size.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 _IGNORE_DIRS = {
     ".git", "__pycache__", ".venv", "venv", ".opencode", ".pytest_cache",
     "node_modules", ".sandbox", ".mypy_cache", ".ruff_cache", "dist", "build",
-    ".egg-info",
+    ".egg-info", "vendor",
 }
-_CODE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx"}
+_CODE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go"}
 _MAX_METHODS = 10
 
 
@@ -79,6 +80,28 @@ def _py_interfaces(text: str) -> list[str] | None:
     return lines
 
 
+# Exported (capitalised) top-level Go declarations: funcs, methods and types.
+_GO_DECL = re.compile(
+    r"^(?:func (?:\([^)]*\) )?[A-Z]\w*\(.*?(?=\s*\{\s*$|$)|type [A-Z]\w* \w+)",
+    re.MULTILINE,
+)
+
+
+def _go_interfaces(text: str) -> list[str]:
+    """Exported Go declarations as one-line signatures (no bodies). Go files were
+    listed by name only, so a later story was designed blind to the existing
+    backend's API (review task T05)."""
+    out: list[str] = []
+    for match in _GO_DECL.finditer(text):
+        line = match.group(0).rstrip(" {")
+        if line.startswith("type ") and not line.endswith(("struct", "interface")):
+            line = line  # aliases / named types are kept as written
+        out.append(f"    {line}")
+        if len(out) >= _MAX_METHODS * 2:
+            break
+    return out
+
+
 def _iter_code_files(root: Path):
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix not in _CODE_SUFFIXES:
@@ -109,6 +132,13 @@ def build_repo_inventory(root: Path, *, max_files: int = 60, max_chars: int = 60
                 blocks.append(f"- {header}\n" + "\n".join(interfaces))
             else:
                 blocks.append(f"- {header}  (no public interfaces)")
+        elif path.suffix == ".go":
+            try:
+                interfaces = _go_interfaces(path.read_text(encoding="utf-8"))
+            except OSError:
+                interfaces = []
+            blocks.append(f"- {header}\n" + "\n".join(interfaces) if interfaces
+                          else f"- {header}  (no exported declarations)")
         else:
             blocks.append(f"- {header}")
 
