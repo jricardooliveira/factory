@@ -44,6 +44,13 @@ def _arch(modules: list[str], **extra: Any) -> str:
     return json.dumps(d)
 
 
+def _boundary(**subs: str) -> str:
+    d: dict[str, Any] = {"overall": "pass"}
+    for dim, verdict in subs.items():
+        d[dim] = {"verdict": verdict, "findings": [f"{dim} {verdict}"]}
+    return json.dumps(d)
+
+
 def _coder(path: str, content: str, verdict: str = "complete") -> str:
     return json.dumps({"verdict": verdict,
                        "code_blocks": [{"path": path, "content": content, "action": "create"}]})
@@ -180,6 +187,21 @@ CATALOG: list[Scenario] = [
         {"spec-agent": _spec("Billing", [_task("T-1")]),
          "architect-agent": _arch(["pay.py"], sensitivity=["pii", "financial"],
                                   external_dependencies=["Stripe"])},
+        "waiting_human",
+    ),
+    Scenario(
+        "boundary_fail", "Design reads the tenant id from the request -> boundary review "
+        "fails, one redesign, still fails -> rejected at gate-2 before any code",
+        {"spec-agent": _spec("Tickets", [_task("T-1")]),
+         "architect-agent": _arch(["api.py"], api_impact="yes"),
+         "boundary-agent": _boundary(tenant="fail")},
+        "failed",
+    ),
+    Scenario(
+        "boundary_warn", "Boundary review warns (authorization unclear) -> parks at gate-2",
+        {"spec-agent": _spec("Tickets", [_task("T-1")]),
+         "architect-agent": _arch(["api.py"], api_impact="yes"),
+         "boundary-agent": _boundary(authorization="warn")},
         "waiting_human",
     ),
     Scenario(

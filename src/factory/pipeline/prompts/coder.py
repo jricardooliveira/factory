@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from factory.domain.contracts import SpecOutput, TaskDef
 from factory.pipeline.prompts.blocks import (
+    boundary_rules_block,
     project_context_block,
     project_memory_block,
     repo_inventory_block,
@@ -36,6 +37,7 @@ def build_coder_task_prompt(
         memory_context=project_memory_block(state),
         repo_context=repo_inventory_block(state),
         retry_context=retry_context_block(state, attempt),
+        boundary_context=boundary_rules_block(state),
         completed=completed,
         position=(task_index + 1, task_count),
     )

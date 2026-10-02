@@ -29,7 +29,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "factory"
-AGENTS = ("spec-agent", "architect-agent", "coder-agent", "tester-agent", "release-agent")
+AGENTS = ("spec-agent", "architect-agent", "boundary-agent", "coder-agent", "tester-agent",
+          "release-agent")
 
 # Which top-level packages each package may import (besides itself). The table is
 # the rule; it is acyclic by construction (each row names only rows below it).

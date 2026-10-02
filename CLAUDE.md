@@ -17,11 +17,11 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `654 passed` + `10/10 scenarios behaving as expected` + `50/50 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `654 passed` (~90s, offline, zero tokens) |
+| `make check` | `679 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `679 passed` (~90s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
-| `.venv/bin/factory simulate` | 10/10 scenario matrix, offline, zero tokens |
-| `.venv/bin/factory evals` | 50/50 agent-configuration checks; exits non-zero below 100% |
+| `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
+| `.venv/bin/factory evals` | 56/56 agent-configuration checks; exits non-zero below 100% |
 | `.venv/bin/factory evals capture <run_id> <name>` | freeze a real run (or incident) as a permanent eval case |
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
@@ -35,7 +35,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 ## Architecture
 
 ```
-agents/                 The agent configuration: the 5 agent .md definitions (write/edit/bash/patch
+agents/                 The agent configuration: the 6 agent .md definitions (write/edit/bash/patch
                         all disabled), policies/REVIEW.md (injected into the tester prompt) and
                         tiers.toml (agent -> tier -> model, escalate-on-retry: the ONLY place
                         model ids are chosen).
@@ -61,10 +61,11 @@ src/factory/
                         gate verdicts before it runs; a refusal BLOCKS the run, agent never called.
     agent_calls.py      The single agent-call boundary (_run_or_replay, JSON repair). Tests
                         patch `factory.pipeline.agent_calls._run_or_replay` / `.run_agent`.
-    nodes/              spec.py, architect.py, coder.py (+ remediation, scope diff), tester.py,
+    nodes/              spec.py, architect.py, boundary.py (only when the design touches an
+                        API/data/sensitive area), coder.py (+ remediation, scope diff), tester.py,
                         release.py (release-agent notes + `release` = the operator's approval),
                         gates.py (gate-1/2/test, settled_threshold_terms), evidence.py.
-    prompts/            Every agent prompt: spec/architect/coder/tester/release.py, blocks.py,
+    prompts/            Every agent prompt: spec/architect/boundary/coder/tester/release.py, blocks.py,
                         context_pack.py. Byte-pinned by tests/pipeline/prompts/test_prompt_golden.py.
   verification/         Non-LLM build verification: python.py, go.py, typescript.py, scope.py
                         (declared-scope check); verify_changes in __init__.

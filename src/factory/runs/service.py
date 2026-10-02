@@ -30,6 +30,7 @@ from factory.pipeline import (
     resume_entry_for,
 )
 from factory.runs.context import (
+    last_boundary_review,
     build_resume_context,
     decision_from_response,
     load_project_spec_text,
@@ -280,6 +281,12 @@ def resume_run(
             _unresumable(run_id, "missing architect log", db_path)
         pipeline = compile_coder_only_pipeline()
         state["architect"] = arch_parsed
+    if state.get("architect"):
+        # The approved design's boundary rules travel with it to the coder and tester.
+        with get_db(db_path) as conn:
+            review = last_boundary_review(conn, run_id)
+        if review:
+            state.update({"boundary": review, "boundary_status": "reviewed"})
     emit(ResumeEntered(run_id, entry, action, decision))
 
     final_state = state

@@ -23,6 +23,7 @@ def build_task_pack(
     memory_context: str = "",
     repo_context: str = "",
     retry_context: str = "",
+    boundary_context: str = "",
     completed: list[str] | None = None,
     position: tuple[int, int] | None = None,
 ) -> str:
@@ -62,6 +63,7 @@ def build_task_pack(
         f"**Acceptance criteria (whole story — implement the parts this task owns):**\n{ac_block}\n\n"
         f"## Agreed architecture (follow this design)\n\n"
         f"```json\n{json.dumps(architect, indent=2)}\n```\n\n"
+        f"{boundary_context}"
         "Output only the files needed for THIS task. Do not reimplement already-implemented "
         "tasks. Keep changes within the allowed scope."
     )

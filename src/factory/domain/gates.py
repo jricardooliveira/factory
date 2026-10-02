@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from factory.domain.ambiguity import is_bound, unbound_criteria
 from factory.domain.contracts import (
     ArchitectOutput,
+    BoundaryOutput,
     CoderOutput,
     ReleaseOutput,
     SpecOutput,
@@ -43,6 +44,10 @@ MAX_TESTER_REMEDIATIONS = 1
 # How many times the coder may bounce an infeasible design back to the architect
 # (coder → architect feedback) before the run is parked for the human.
 MAX_REARCHITECT_LOOPS = 1
+
+# How many times a FAILED boundary review sends the design back to the architect
+# (with the reviewer's required changes) before gate-2 rejects it.
+MAX_BOUNDARY_REDESIGNS = 1
 
 
 # Ambiguity detection (THRESHOLD_TERMS, unbound_criteria, ...) lives in
@@ -164,14 +169,26 @@ def gate_after_spec(
 
 # ── Gate 2: After architect-agent ─────────────────────────────────
 
-def gate_after_architect(architect: ArchitectOutput) -> GateResult:
-    """Validates architect-agent output before coder-agent.
+def gate_after_architect(
+    architect: ArchitectOutput,
+    boundary: BoundaryOutput | None = None,
+    *,
+    boundary_unavailable: bool = False,
+) -> GateResult:
+    """Validates architect-agent output (and its boundary review) before coder-agent.
 
     This gate checks both automatic pass/fail conditions AND whether
-    human approval is needed before proceeding.
+    human approval is needed before proceeding. `boundary` is the pre-implementation
+    boundary review when the design required one; `boundary_unavailable` means it
+    was required but could not be completed live — the operator decides.
     """
     failures: list[str] = []
     human_questions: list[str] = []
+    boundary_verdict = boundary_overall(boundary) if boundary is not None else None
+    if boundary_verdict == "fail":
+        failures.append(
+            "Boundary review failed — " + "; ".join(boundary_findings(boundary, "fail"))
+        )
 
     if architect.verdict == "fail":
         failures.append("Architect verdict is 'fail'")
@@ -198,12 +215,31 @@ def gate_after_architect(architect: ArchitectOutput) -> GateResult:
 
     # ── Human approval checks (gate passes but needs sign-off) ────
 
-    # Breaking changes need human approval
-    if architect.breaking_changes:
+    # Breaking changes need human approval — the architect's and the boundary review's.
+    breaking = list(architect.breaking_changes)
+    if boundary is not None:
+        breaking += [b for b in boundary.api_contract.breaking_changes if b not in breaking]
+    if breaking:
         human_questions.append(
             f"⚠️ BREAKING CHANGES detected — these will affect existing API consumers:\n"
-            + "\n".join(f"  • {bc}" for bc in architect.breaking_changes)
+            + "\n".join(f"  • {bc}" for bc in breaking)
             + "\n  → Approve these breaking changes?"
+        )
+
+    if boundary_verdict == "warn":
+        human_questions.append(
+            "🧱 BOUNDARY REVIEW WARNINGS — tenant / authorization / API contract / security "
+            "concerns found before any code is written:\n"
+            + "\n".join(f"  • {f}" for f in boundary_findings(boundary, "warn"))
+            + "\n  → Approve the design with these boundary risks, or reject with the fix?"
+        )
+    if boundary_unavailable:
+        reasons = boundary_review_reasons(architect)
+        human_questions.append(
+            "🧱 BOUNDARY REVIEW MISSING — this design needs one ("
+            + "; ".join(reasons)
+            + ") but the review could not be completed.\n"
+            "  → Approve to implement without a boundary review, or reject to redesign?"
         )
 
     # External dependencies need human confirmation
@@ -217,9 +253,16 @@ def gate_after_architect(architect: ArchitectOutput) -> GateResult:
     # Sensitive work needs human review
     if architect.sensitivity:
         tags = ", ".join(architect.sensitivity)
+        reviewed = ""
+        if boundary is not None:
+            # The park is the operator's policy; the boundary review's answer sits beside it.
+            reviewed = "  ◦ The boundary review judged: " + ", ".join(
+                f"{d}: {getattr(boundary, d).verdict}" for d in _BOUNDARY_DIMENSIONS
+            ) + "\n"
         human_questions.append(
             f"🛡️ SENSITIVE WORK detected [{tags}] — this may require domain expertise "
             f"(legal review, security audit, compliance check) that agents cannot provide.\n"
+            f"{reviewed}"
             f"  → Confirm you accept the risk of agent-generated {tags} logic?"
         )
 
@@ -339,3 +382,52 @@ def gate_after_release(
         needs_human=True,
         human_questions=["\n".join(lines)],
     )
+
+
+# ── Gate 4: the boundary review (runs inside gate-2's decision) ───
+
+_BOUNDARY_DIMENSIONS = ("tenant", "authorization", "api_contract", "security")
+
+
+def boundary_review_reasons(architect: ArchitectOutput) -> list[str]:
+    """Why this design needs a pre-implementation boundary review ([] = it does not).
+
+    Decided from the architect's own declarations, so a trivial story never pays
+    for a review and a boundary-touching one never skips it.
+    """
+    reasons: list[str] = []
+    if _says_yes(architect.api_impact):
+        reasons.append("it changes an API")
+    if _says_yes(architect.db_impact) or _says_yes(architect.migration_needed):
+        reasons.append("it changes the database")
+    if architect.breaking_changes:
+        reasons.append("it declares breaking changes")
+    if architect.sensitivity:
+        reasons.append(f"it touches sensitive areas ({', '.join(architect.sensitivity)})")
+    return reasons
+
+
+def boundary_overall(review: BoundaryOutput) -> str:
+    """The review's real verdict: any failed dimension fails it, any warning warns.
+
+    The brief: "if any required sub-verdict is fail, the overall verdict must be
+    fail" — enforced here, never taken from the agent's own `overall`.
+    """
+    verdicts = [getattr(review, d).verdict for d in _BOUNDARY_DIMENSIONS] + [review.overall]
+    if "fail" in verdicts:
+        return "fail"
+    if "warn" in verdicts:
+        return "warn"
+    return "pass"
+
+
+def boundary_findings(review: BoundaryOutput, level: str) -> list[str]:
+    """`dimension: finding` for every dimension at `level` (plus required changes on fail)."""
+    out: list[str] = []
+    for dim in _BOUNDARY_DIMENSIONS:
+        sub = getattr(review, dim)
+        if sub.verdict == level:
+            out += [f"{dim}: {f}" for f in sub.findings] or [f"{dim}: {level} (no detail)"]
+    if level == "fail":
+        out += [f"required change: {c}" for c in review.required_changes]
+    return out or [f"the reviewer's overall verdict is {level}"]

@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from factory.domain.ambiguity import defined_threshold_terms
-from factory.domain.contracts import ArchitectOutput, ReleaseOutput, SpecOutput, TesterOutput
+from factory.domain.contracts import (
+    ArchitectOutput,
+    BoundaryOutput,
+    ReleaseOutput,
+    SpecOutput,
+    TesterOutput,
+)
 from factory.domain.gates import (
     MAX_TASK_COST_USD,
     MAX_TESTER_REMEDIATIONS,
@@ -161,7 +167,12 @@ def node_gate_2(state: PipelineState) -> dict[str, Any]:
         return state
 
     arch = ArchitectOutput.model_validate(state["architect"])
-    result = gate_after_architect(arch)
+    status = state.get("boundary_status")
+    result = gate_after_architect(
+        arch,
+        _parsed_or_none(BoundaryOutput, state.get("boundary")) if status == "reviewed" else None,
+        boundary_unavailable=status == "unavailable",
+    )
 
     conn = db_conn(state)
     try:

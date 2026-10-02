@@ -29,6 +29,7 @@ fast = "openai/gpt-5.5-fast"
 [agents]
 spec-agent = "frontier"       # planning / decomposition — "is this the right work?"
 architect-agent = "frontier"  # design trade-offs, risk, ADRs
+boundary-agent = "frontier"   # pre-implementation tenant / authz / API / security review
 tester-agent = "frontier"     # risk analysis + security / QA review (≈ PR review)
 coder-agent = "fast"          # implementation — highest call volume
 release-agent = "fast"        # release notes — summarising evidence, deciding nothing

@@ -1,8 +1,8 @@
 """The LangGraph wiring: conditional edges, resume routing, and every graph builder.
 
-spec-agent → gate-1 → architect-agent → gate-2 → coder-agent (one task per pass)
-→ tester-agent → gate-test, with bounded loops back for retries, re-architecture
-and tester-driven remediation. The resume graphs re-enter that line at a parked
+spec-agent → gate-1 → architect-agent → [boundary-agent] → gate-2 → coder-agent
+(one task per pass) → tester-agent → gate-test → release-agent → gate-release, with
+bounded loops back for retries, re-architecture, boundary redesign and remediation. The resume graphs re-enter that line at a parked
 checkpoint.
 """
 
@@ -10,8 +10,12 @@ from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
+from factory.domain.contracts import ArchitectOutput
+from factory.domain.gates import boundary_review_reasons
+
 from factory.pipeline.boss import authorized
 from factory.pipeline.nodes.architect import node_architect_agent
+from factory.pipeline.nodes.boundary import node_boundary_agent
 from factory.pipeline.nodes.coder import node_coder_agent
 from factory.pipeline.nodes.gates import (
     node_gate_1,
@@ -32,6 +36,24 @@ def should_continue_after_gate_1(state: PipelineState) -> str:
     if state.get("status") in ("failed", "blocked", "waiting_human"):
         return END
     return "architect-agent"
+
+
+def route_after_architect(state: PipelineState) -> str:
+    """A design that declares a boundary impact is reviewed before gate-2."""
+    if state.get("status") in ("failed", "blocked") or not state.get("architect"):
+        return "gate-2"  # gate-2 passes a stopped run through to the end
+    try:
+        reasons = boundary_review_reasons(ArchitectOutput.model_validate(state["architect"]))
+    except ValueError:
+        reasons = []
+    return "boundary-agent" if reasons else "gate-2"
+
+
+def route_after_boundary(state: PipelineState) -> str:
+    """A failed review sends the design back to the architect (bounded), else gate-2."""
+    if state.get("boundary_redesign") and state.get("status") not in ("failed", "blocked"):
+        return "architect-agent"
+    return "gate-2"
 
 
 def should_continue_after_gate_2(state: PipelineState) -> str:
@@ -81,6 +103,7 @@ def route_after_gate_test(state: PipelineState) -> str:
 # effect, and the boss lets it run only when that approval is on record.
 _AUTHORIZED_STAGES = {
     "architect-agent": node_architect_agent,
+    "boundary-agent": node_boundary_agent,
     "coder-agent": node_coder_agent,
     "tester-agent": node_tester_agent,
     "release-agent": node_release_agent,
@@ -107,7 +130,8 @@ def build_pipeline(entry: str = "spec-agent") -> StateGraph:
     graph.set_entry_point(entry)
     graph.add_conditional_edges("spec-agent", should_continue_after_spec)
     graph.add_conditional_edges("gate-1", should_continue_after_gate_1)
-    graph.add_edge("architect-agent", "gate-2")
+    graph.add_conditional_edges("architect-agent", route_after_architect)
+    graph.add_conditional_edges("boundary-agent", route_after_boundary)
     graph.add_conditional_edges("gate-2", should_continue_after_gate_2)
     graph.add_conditional_edges("coder-agent", route_after_coder)
     graph.add_edge("tester-agent", "gate-test")

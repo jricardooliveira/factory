@@ -202,6 +202,41 @@ def _blockers(
     return blockers
 
 
+_VERDICT_RANK = {"not_applicable": 0, "pass": 1, "warn": 2, "fail": 3}
+
+
+def _worst(*verdicts: str) -> str:
+    known = [v for v in verdicts if v in _VERDICT_RANK]
+    return max(known, key=_VERDICT_RANK.__getitem__) if known else "not_applicable"
+
+
+def _security_boundary(tester: dict, logs: list[dict]) -> dict[str, Any]:
+    """Evidence 4 (§5): the tester's post-implementation security verdict joined
+    with the pre-implementation boundary review's sub-verdicts, when one ran."""
+    review = _latest(logs, "boundary-agent") or {}
+    architect = _latest(logs, "architect-agent") or {}
+    breaking = list(architect.get("breaking_changes", []))
+    breaking += [b for b in (review.get("api_contract") or {}).get("breaking_changes", [])
+                 if b not in breaking]
+    findings = list(tester.get("security_findings", []))
+    block: dict[str, Any] = {
+        "overall": _worst(tester.get("security_verdict", "not_applicable")),
+        "highest_severity": tester.get("highest_severity", "none"),
+        "breaking_changes": breaking,
+        "findings": findings,
+    }
+    if review:
+        tenant = (review.get("tenant") or {}).get("verdict", "not_applicable")
+        authz = (review.get("authorization") or {}).get("verdict", "not_applicable")
+        block["tenant_isolation"] = _worst(tenant)
+        block["authorization"] = _worst(authz)
+        dims = [(review.get(d) or {}) for d in ("tenant", "authorization", "api_contract",
+                                                "security")]
+        block["overall"] = _worst(block["overall"], *(d.get("verdict", "") for d in dims))
+        findings += [f"boundary review: {f}" for d in dims for f in d.get("findings", [])]
+    return block
+
+
 def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
     """Build the trust package for a run from its stored artifacts."""
     with get_db(db_path) as conn:
@@ -258,14 +293,7 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
         "ac_traceability": ac_traceability,
         "diff": diff_block,
         "adr": {"path": adr_path, "summary": (tester.get("summary") or "")[:200]},
-        "security_boundary": {
-            "overall": tester.get("security_verdict", "not_applicable"),
-            "highest_severity": tester.get("highest_severity", "none"),
-            "breaking_changes": (_latest(logs, "architect-agent") or {}).get(
-                "breaking_changes", []
-            ),
-            "findings": tester.get("security_findings", []),
-        },
+        "security_boundary": _security_boundary(tester, logs),
         "cost": {
             "usd": round(float(usage["cost_usd"]), 6),
             "tokens_in": int(usage["tokens_in"]),

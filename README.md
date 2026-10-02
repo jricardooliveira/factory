@@ -30,7 +30,7 @@ you only when you are the only one who can decide.
 
 ## How it works
 
-Five opencode agents, driven by a LangGraph pipeline, separated by **deterministic
+Six opencode agents, driven by a LangGraph pipeline, separated by **deterministic
 gates written in Python** — never by an LLM deciding whether an LLM did well. Before
 every agent starts, the **boss** (code, not an LLM) checks that what it needs exists
 and was approved; if not, the run stops and says what is missing.
@@ -40,6 +40,8 @@ request
   → spec-agent      story, acceptance criteria, sliced tasks
   → [gate-1]        structural checks   ── ⏸ CHECKPOINT 1: "is this the right work?"
   → architect-agent design, ADR, risks
+  → boundary-agent  tenant / authorization / API / security review — only when the
+                    design touches one; a failed review sends the design back once
   → [gate-2]        scope + risk flags  ── ⏸ CHECKPOINT 2: "is this the right design?"
   → coder-agent     ONE task per call, dependency-ordered
   → [gate-build]    it must actually compile
@@ -53,7 +55,7 @@ A run never marks itself done: even a fully green release waits for you, with th
 trust package and the release notes in front of you.
 
 **Agents cannot write files.** `write`, `edit`, `bash` and `patch` are disabled on
-all five. Code reaches disk only through the coder's declared `code_blocks`, and any
+all six. Code reaches disk only through the coder's declared `code_blocks`, and any
 file that appears in the repo undeclared *blocks* the build gate. That single
 chokepoint also refuses credential-shaped paths (`.env`, `.git/`, key material).
 

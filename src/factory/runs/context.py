@@ -51,6 +51,11 @@ def build_resume_context(
     )
 
 
+def last_boundary_review(conn: sqlite3.Connection, run_id: int) -> dict | None:
+    """The newest usable boundary review — its rules travel with the approved design."""
+    return _last_usable(conn, run_id, "boundary-agent")
+
+
 def _last_usable(conn: sqlite3.Connection, run_id: int, agent: str) -> dict | None:
     """The newest output of `agent` that actually parses.
 

@@ -22,6 +22,11 @@ class PipelineState(TypedDict, total=False):
     spec: dict[str, Any]
     architect_raw: str
     architect: dict[str, Any]
+    boundary_raw: str
+    boundary: dict[str, Any]  # the boundary review (BoundaryOutput) of the CURRENT design
+    boundary_status: str  # "" (none needed / not yet) | reviewed | skipped (replay) | unavailable
+    boundary_redesign: bool  # the review failed: route back to the architect
+    boundary_redesigns: int  # how many redesigns a failed review has triggered
     coder_raw: str
     coder: dict[str, Any]
     tester_raw: str

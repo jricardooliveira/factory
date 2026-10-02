@@ -24,6 +24,7 @@ from unittest.mock import patch
 
 from factory.pipeline import build_spec_prompt, build_tester_prompt
 from factory.pipeline.nodes.architect import node_architect_agent
+from factory.pipeline.nodes.boundary import node_boundary_agent
 from factory.pipeline.nodes.coder import node_coder_agent
 from factory.pipeline.nodes.release import node_release_agent
 from factory.pipeline.nodes.spec import node_spec_agent
@@ -100,6 +101,13 @@ FIXED_DIFF = (
     "+def overdue():\n"
     "+    return []"
 )
+
+
+BOUNDARY_RULE = "Only operators of the invoice's own company may list it as overdue"
+BOUNDARY_REVIEWED = {
+    "boundary_status": "reviewed",
+    "boundary": {"overall": "pass", "rules_for_coder": [BOUNDARY_RULE]},
+}
 
 
 class _Captured(Exception):
@@ -267,7 +275,33 @@ class PromptGoldenTests(unittest.TestCase):
         )
         self._assert_golden("architect_infeasible", self._capture(node_architect_agent, state))
 
+    def test_architect_prompt_after_a_failed_boundary_review(self) -> None:
+        state = self._state(
+            full=False,
+            spec=SPEC,
+            triggered_by="boundary-failed",
+            prior_findings=["tenant: customer id is read from the query string",
+                            "required change: take the customer id from the session"],
+        )
+        prompt = self._capture(node_architect_agent, state)
+        self.assertIn("failed the boundary review", prompt)
+        self._assert_golden("architect_boundary_failed", prompt)
+
+    # ── boundary-agent ────────────────────────────────────────────
+
+    def test_boundary_prompt(self) -> None:
+        arch = {**ARCHITECT, "api_impact": "yes — adds GET /invoices/overdue",
+                "sensitivity": ["financial"]}
+        state = self._state(full=True, spec=SPEC, architect=arch)
+        self._assert_golden("boundary_full", self._capture(node_boundary_agent, state))
+
     # ── coder-agent ───────────────────────────────────────────────
+
+    def test_coder_prompt_carries_the_boundary_rules(self) -> None:
+        state = self._state(full=False, spec=SPEC, architect=ARCHITECT, **BOUNDARY_REVIEWED)
+        prompt = self._capture(node_coder_agent, state)
+        self.assertIn(BOUNDARY_RULE, prompt)
+        self._assert_golden("coder_task_boundary_rules", prompt)
 
     def test_coder_prompt_first_task(self) -> None:
         state = self._state(full=True, spec=SPEC, architect=ARCHITECT)
@@ -348,6 +382,13 @@ class PromptGoldenTests(unittest.TestCase):
                 direct = build_tester_prompt(state)
         self.assertEqual(prompt, direct)
         self._assert_golden(name, prompt)
+
+    def test_tester_prompt_carries_the_boundary_rules(self) -> None:
+        state = self._state(full=False, spec=SPEC, architect=ARCHITECT, **TESTER_STATE_EXTRAS,
+                            **BOUNDARY_REVIEWED)
+        prompt = self._capture(node_tester_agent, state, diff=FIXED_DIFF)
+        self.assertIn(BOUNDARY_RULE, prompt)
+        self._assert_golden("tester_boundary_rules", prompt)
 
     def test_tester_prompt_with_real_diff(self) -> None:
         self._tester("tester_git_diff", FIXED_DIFF)

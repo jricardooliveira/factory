@@ -76,7 +76,10 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
             )
             commit_adr(state, adr_path)
 
-        out: dict[str, Any] = {"architect_raw": result.output, "architect": parsed}
+        # A new design voids the previous design's boundary review: the route after
+        # the architect decides afresh whether THIS design needs one.
+        out: dict[str, Any] = {"architect_raw": result.output, "architect": parsed,
+                               "boundary": {}, "boundary_status": ""}
         if adr_path:
             out["adr_path"] = adr_path
         # Link 3: the plan. `order_tasks` already computes the dependency order on

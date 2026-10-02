@@ -16,7 +16,10 @@ from factory.agent_config import tiers
 from factory.agent_config.location import agents_dir as _agents_dir
 from factory.agent_config.location import checkout_root
 from factory.domain.contracts import (
+    ApiContractVerdict,
     ArchitectOutput,
+    BoundaryOutput,
+    BoundaryVerdict,
     CodeBlock,
     CoderOutput,
     ReleaseOutput,
@@ -40,6 +43,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "coder-agent": CoderOutput,
     "tester-agent": TesterOutput,
     "release-agent": ReleaseOutput,
+    "boundary-agent": BoundaryOutput,
 }
 
 # Nested models, so a drifted key inside a list/object is caught too.
@@ -47,6 +51,10 @@ NESTED_MODELS: dict[str, type[BaseModel]] = {
     "tasks": TaskDef,
     "code_blocks": CodeBlock,
     "test_coverage": TestCoverage,
+    "tenant": BoundaryVerdict,
+    "authorization": BoundaryVerdict,
+    "api_contract": ApiContractVerdict,
+    "security": BoundaryVerdict,
 }
 
 _FENCE_RE = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.DOTALL)

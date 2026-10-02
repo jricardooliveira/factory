@@ -42,6 +42,20 @@ Passes only if: verdict is not `fail`; architecture notes present; ≥1 affected
 
 ---
 
+## Boundary review (Gate 4, decided inside gate-2) `✅ built`
+
+**Runs:** between `architect-agent` and gate-2, **only** when the design declares a boundary impact — an API change, a database change or migration, breaking changes, or a sensitive area (`domain/gates.boundary_review_reasons`). A design with none never pays for it. **Code:** `pipeline/nodes/boundary.py`, routed by `graph.route_after_architect` / `route_after_boundary`; the verdict logic is in `domain/gates.py`.
+
+The boundary-agent returns four sub-verdicts — tenant, authorization, API contract, security — and the review's verdict is **computed** (`boundary_overall`): any `fail` fails it, any `warn` warns, regardless of the agent's own `overall`.
+
+- **fail** → the design goes back to the architect with the findings and required changes (`MAX_BOUNDARY_REDESIGNS` = 1); failing again, **gate-2 rejects** the design. No code is written.
+- **warn** → gate-2 parks at **Checkpoint 2** with the findings.
+- **breaking changes** found by the review join the architect's in the Checkpoint 2 question.
+- **unavailable** (the agent failed or went off-script on a live run) → Checkpoint 2 asks whether to implement without a review. A replay of a run recorded before the agent existed skips it (logged `skipped`), as it originally ran.
+- When the architect's `sensitivity` flag parks the run, the question shows the boundary review's sub-verdicts beside it. The park itself stays: whether a passed review may answer it is an autonomy policy for the operator.
+
+---
+
 ## gate-build — Build verification `✅ built`
 
 **Runs:** after `coder-agent`, post-materialization. **Code:** `src/factory/verification/` → `verify_changes()`, called from `pipeline/nodes/coder.py`.
@@ -106,6 +120,7 @@ A gate judges a stage's **output** after it ran; authorization judges its **inpu
 | Stage | Authorized only if |
 |---|---|
 | `architect-agent` | a usable story with acceptance criteria and tasks; gate-1 passed, and if it parked, the operator approved (not rejected) |
+| `boundary-agent` | an architecture that declares a boundary impact (otherwise there is nothing to review) |
 | `coder-agent` (per task) | an architecture with notes and affected modules; gate-2 passed / approved at Checkpoint 2; the task has a purpose; every task it depends on is already built |
 | `coder-agent` (remediation) | the newest gate-test FAILED, or the operator REJECTED the release at Checkpoint 3 — and there are findings to resolve |
 | `tester-agent` | every task of the story is built and the newest gate-build passed |

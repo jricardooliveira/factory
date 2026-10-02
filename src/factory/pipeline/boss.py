@@ -24,6 +24,7 @@ from factory.domain.authorization import (
     Authorization,
     GateRecord,
     authorize_architect,
+    authorize_boundary,
     authorize_release,
     authorize_release_notes,
     authorize_remediation,
@@ -82,6 +83,8 @@ def authorization_for(
     if stage == "tester-agent":
         task_ids = [t.id for t in spec.tasks] if spec else []
         return authorize_tester(task_ids, completed, gates.get("gate-build"))
+    if stage == "boundary-agent":
+        return authorize_boundary(_parsed(ArchitectOutput, state.get("architect")))
     if stage == "release-agent":
         return authorize_release_notes(gates.get("gate-test"))
     if stage == "release":

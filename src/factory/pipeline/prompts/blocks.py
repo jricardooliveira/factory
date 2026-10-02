@@ -58,6 +58,12 @@ def reviewer_feedback_block(state: PipelineState) -> str:
     elif trigger == "design-infeasible":
         header = "## Implementer feedback (the coder could not build your previous design)"
         intro = "The coder found the design infeasible. Revise it to resolve:"
+    elif trigger == "boundary-failed":
+        header = "## Boundary review findings (your previous design failed the boundary review)"
+        intro = (
+            "The pre-implementation review found tenant / authorization / API contract / "
+            "security problems. Revise the design so these hold:"
+        )
     else:
         return ""
     lines = "\n".join(f"- {f}" for f in findings)
@@ -75,5 +81,23 @@ def retry_context_block(state: PipelineState, attempt: int) -> str:
         f"## Previous attempt failed (attempt {attempt} of {MAX_CODER_ATTEMPTS})\n\n"
         f"The prior implementation failed `{trigger}`. Fix these specifically; "
         f"the files you wrote already exist in the working directory — correct them:\n"
+        f"{lines}\n\n"
+    )
+
+
+def boundary_rules_block(state: PipelineState) -> str:
+    """The boundary review's rules for the implementation ('' when there was no review).
+
+    The coder must follow them and the tester must check them: a boundary review
+    that only gates the design, and never reaches the code, protects nothing.
+    """
+    if state.get("boundary_status") != "reviewed":
+        return ""
+    rules = (state.get("boundary") or {}).get("rules_for_coder") or []
+    if not rules:
+        return ""
+    lines = "\n".join(f"- {r}" for r in rules)
+    return (
+        "## Boundary rules (from the pre-implementation boundary review — these MUST hold)\n\n"
         f"{lines}\n\n"
     )

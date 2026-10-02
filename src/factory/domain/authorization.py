@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from factory.domain.contracts import ArchitectOutput, SpecOutput, TaskDef
+from factory.domain.gates import boundary_review_reasons
 
 
 @dataclass(frozen=True)
@@ -220,3 +221,15 @@ def authorize_release(gate_release: GateRecord | None) -> Authorization:
         "released NOT READY: the evidence gaps named at Checkpoint 3 were accepted by the operator"
     ]
     return _decide("release", "the operator's approval at Checkpoint 3", [], warnings)
+
+
+def authorize_boundary(architect: ArchitectOutput | None) -> Authorization:
+    """The boundary review runs on a real design that declares a boundary impact."""
+    if architect is None or not architect.architecture_notes.strip():
+        return _decide("boundary-agent", "", ["an architecture to review"])
+    reasons = boundary_review_reasons(architect)
+    if not reasons:
+        return _decide("boundary-agent", "", [
+            "a reason to review: the design declares no API, data, breaking or sensitive impact"
+        ])
+    return _decide("boundary-agent", "the design requires a boundary review: " + "; ".join(reasons), [])

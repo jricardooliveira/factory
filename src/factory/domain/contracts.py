@@ -116,3 +116,36 @@ class ReleaseOutput(BaseModel):
     rollback_notes: str = ""
     known_limitations: list[str] = Field(default_factory=list)
     concerns: list[str] = Field(default_factory=list)
+
+
+class BoundaryVerdict(BaseModel):
+    """One boundary dimension: pass | warn | fail | not_applicable, with findings."""
+
+    verdict: str = "not_applicable"
+    findings: list[str] = Field(default_factory=list)
+
+
+class ApiContractVerdict(BoundaryVerdict):
+    breaking_changes: list[str] = Field(default_factory=list)
+
+
+class BoundaryOutput(BaseModel):
+    """boundary-agent: the pre-implementation boundary review (original brief §5.5).
+
+    `overall` is the agent's own summary; the verdict that counts is computed by
+    `gates.boundary_overall` — any failed sub-verdict fails the review.
+    """
+
+    overall: str = "pass"  # pass | warn | fail
+    tenant: BoundaryVerdict = Field(default_factory=BoundaryVerdict)
+    authorization: BoundaryVerdict = Field(default_factory=BoundaryVerdict)
+    api_contract: ApiContractVerdict = Field(default_factory=ApiContractVerdict)
+    security: BoundaryVerdict = Field(default_factory=BoundaryVerdict)
+    rules_for_coder: list[str] = Field(
+        default_factory=list,
+        description="Explicit boundary rules the implementation must follow",
+    )
+    required_changes: list[str] = Field(
+        default_factory=list,
+        description="What the design must change when a sub-verdict fails",
+    )

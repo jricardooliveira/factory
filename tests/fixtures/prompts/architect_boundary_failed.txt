@@ -1,0 +1,43 @@
+## Boundary review findings (your previous design failed the boundary review)
+
+The pre-implementation review found tenant / authorization / API contract / security problems. Revise the design so these hold:
+- tenant: customer id is read from the query string
+- required change: take the customer id from the session
+
+## Story
+
+```json
+{
+  "verdict": "pass",
+  "story_id": "US-0099",
+  "title": "Overdue invoices",
+  "problem": "Operators cannot see which invoices are late.",
+  "why": "Late invoices cost money.",
+  "acceptance_criteria": [
+    "An invoice unpaid 30 days after issue is listed as overdue",
+    "The overdue list is sorted oldest first"
+  ],
+  "tasks": [
+    {
+      "id": "T-0001",
+      "title": "Overdue query",
+      "purpose": "find late invoices"
+    },
+    {
+      "id": "T-0002",
+      "title": "Overdue listing",
+      "purpose": "show them",
+      "depends_on": [
+        "T-0001"
+      ]
+    }
+  ],
+  "questions": []
+}
+```
+
+## Original Request
+
+List invoices that are overdue, oldest first.
+
+Design the technical approach for this story. You MUST stay within the project specification above, honor the Project Rules, and stay consistent with the Prior Architecture Decisions. Do not introduce technologies, patterns, or modules not listed in the spec.
