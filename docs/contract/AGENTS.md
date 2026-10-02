@@ -17,7 +17,7 @@ Agent definitions live in `agents/<name>.md` (resolved by opencode through one r
 | `boundary-agent` | project | Pre-impl gate: tenant/authz/API-contract/security sub-verdicts | ✅ built (frontier; runs only when the design declares an API, data, breaking or sensitive impact) |
 | `coder-agent` | project | Implement approved task within scope; write tests | ✅ built |
 | `tester-agent` | project | QA/security/performance verdicts; AC coverage | ✅ built (gate-test) |
-| `release-agent` | project | Writes the release notes (`RELEASE.md`) read at Checkpoint 3 — decides nothing | ✅ built (fast tier) |
+| `release-agent` | project | Writes the release notes (`RELEASE.md`) read at Checkpoint 3 — decides nothing | ✅ built (`notes` tier) |
 
 **`boss` and `god` are intentionally not LLM agents.** Their real responsibilities are code. The boss is built as such:
 
@@ -54,7 +54,19 @@ Each stage produces a handoff that the next stage and the gates consume. Today t
 
 **Evals:** the roster above IS configuration, so it is regression-tested. `factory evals` (`src/factory/selftest/evals/`) asserts that opencode loads exactly the registered agents from `.opencode/agents/` and nothing else, and, per agent: the definition exists; `write`/`edit`/`bash`/`patch` are all explicitly `false` (the governance invariant — an agent with tools bypasses `materialize` and the out-of-band-write check entirely); `model_tier` and `model` match `agents/tiers.toml` (loaded by `agent_config.tiers`); the prompt demands JSON-only (the orchestrator parses it as JSON); and the JSON example in the definition validates against its Pydantic model with **no unknown keys** — a field in the prompt that the model lacks is silently discarded, so the agent obeys an instruction the code ignores. `make evals` gates at 100%, and an empty suite never passes.
 
-**Model defaults:** `agents/tiers.toml` maps frontier and standard to `openai/gpt-5.5` and fast to `openai/gpt-5.5-fast` — the models the operator's opencode login (ChatGPT/Codex) accepts; before the restructure (commit f96e09a) they were `anthropic/claude-opus-4-8`, `anthropic/claude-sonnet-4-6` and `openai/gpt-5.4-mini`. The leverage split that matters today holds: the coder runs on the fast model and escalates to a different, stronger one on retry (`factory doctor` warns if an escalation ever becomes a no-op). **standard currently equals frontier**; it only backs agents the file does not list (none today). To run elsewhere, re-point a tier per run with `FACTORY_TIER_<TIER>=provider/model` rather than editing the file.
+**Model defaults** (operator decision, 2026-10-02 — the latest OpenAI and Anthropic models). Tiers are roles in `agents/tiers.toml`:
+
+| Agent | Tier | Model | Why |
+|---|---|---|---|
+| spec, architect | `frontier` | `openai/gpt-6-astra` | the hardest reasoning: what to build and how |
+| coder | `build` | `openai/gpt-6.1-sol` | complex coding at a lower cost |
+| coder, attempt 2+ | `special` | `requesty/claude-fable-5.1` | the special case: a failed attempt, retried by the other family's strongest model |
+| boundary-agent | `check` | `requesty/claude-sonnet-5-5` | independent review of an OpenAI-written design |
+| tester | `review` | `requesty/claude-opus-5-5` | independent review of OpenAI-written code; gates release |
+| release-agent | `notes` | `openai/gpt-6-luna` | summaries — Luna's purpose — at no real cost on the login |
+| any unlisted agent | `standard` | `requesty/claude-haiku-4-5` | cheap fallback (none today) |
+
+**The rule:** a reviewer never shares a model family with the authors it reviews — two models of one family tend to share blind spots (pinned by `tests/agent_config/test_tiers.py`). OpenAI models run on the ChatGPT/Codex login (provider cost $0, so spend is estimated at list price for the $10-per-story cap); Anthropic models run through **Requesty** (`requesty/*` — real money; `anthropic/*` is not a configured provider, and each model must be approved for the key in Requesty's Model Library). `factory doctor` probes every model before a run. To run elsewhere, re-point a tier per run with `FACTORY_TIER_<TIER>=provider/model` rather than editing the file. (Earlier defaults: `openai/gpt-5.5` / `gpt-5.5-fast` until 2026-10-02; Anthropic 4.x models before commit f96e09a.)
 
 **Review policy:** the tester's passes, severity ladder, skip list and nit cap live in [REVIEW.md](../../agents/policies/REVIEW.md) and are injected into its prompt by `agent_config.review_policy.policy_block()` (called from `pipeline/prompts/tester.py`). `tester-agent.md` keeps only the role and the JSON contract, so review behaviour is tunable in one committed file instead of split between agent prose and `domain/gates.py`.
 

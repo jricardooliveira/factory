@@ -13,6 +13,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from factory.adapters.opencode import AgentResult
+from factory.agent_config import tiers as mt
+from factory.agent_config.settings import settings
 from factory.preflight import doctor
 from factory.workspace import db_path
 from factory.workspace.projects import create_project
@@ -36,9 +38,7 @@ class DoctorTests(unittest.TestCase):
     def setUp(self) -> None:
         # Pin the tier models so env overrides on the dev machine can't leak in.
         self._saved = {
-            k: os.environ.pop(k)
-            for k in ("FACTORY_TIER_FRONTIER", "FACTORY_TIER_STANDARD", "FACTORY_TIER_FAST")
-            if k in os.environ
+            k: os.environ.pop(k) for k in list(os.environ) if k.startswith("FACTORY_TIER_")
         }
 
     def tearDown(self) -> None:
@@ -49,12 +49,11 @@ class DoctorTests(unittest.TestCase):
             report = doctor.run_doctor(which=_which(ALL_TOOLS))
         self.assertTrue(report.passed)
         probed = sorted(call.kwargs["model"] for call in probe.call_args_list)
-        self.assertEqual(probed, ["openai/gpt-5.5", "openai/gpt-5.5-fast"])
+        self.assertEqual(probed, sorted(set(mt.TIER_DEFAULTS.values())))
         checks = _by_name(report)
         self.assertEqual(checks["opencode"].status, "ok")
-        self.assertEqual(checks["model openai/gpt-5.5"].status, "ok")
-        self.assertIn("frontier", checks["model openai/gpt-5.5"].detail)
-        self.assertIn("standard", checks["model openai/gpt-5.5"].detail)
+        self.assertEqual(checks["model openai/gpt-6-astra"].status, "ok")
+        self.assertIn("frontier", checks["model openai/gpt-6-astra"].detail)
         for tool in ("go", "node", "tsc"):
             self.assertEqual(checks[tool].status, "ok")
 
@@ -62,7 +61,7 @@ class DoctorTests(unittest.TestCase):
         with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
             doctor.run_doctor(which=_which(ALL_TOOLS))
         kwargs = probe.call_args.kwargs
-        self.assertEqual(kwargs["timeout"], doctor.PROBE_TIMEOUT_SECS)
+        self.assertEqual(kwargs["timeout"], settings().timeouts.probe)
         # opencode resolves `.opencode/agents` from cwd: the probe must run where
         # that symlink lives, or every probe "fails" with an unknown agent.
         self.assertTrue((doctor.repo_root() / ".opencode" / "agents").exists())
@@ -70,10 +69,10 @@ class DoctorTests(unittest.TestCase):
 
     def test_unreachable_model_fails_the_report_with_its_error(self) -> None:
         def probe(agent: str, prompt: str, **kwargs) -> AgentResult:
-            if kwargs["model"] == "openai/gpt-5.5-fast":
+            if kwargs["model"] == "requesty/claude-sonnet-5-5":
                 return AgentResult(
                     agent=agent,
-                    output="ERROR: model gpt-5.5-fast is not supported",
+                    output="ERROR: The requested model is not approved for this API key",
                     duration_secs=0.5,
                     returncode=1,
                 )
@@ -82,9 +81,9 @@ class DoctorTests(unittest.TestCase):
         with patch("factory.preflight.doctor.run_agent", side_effect=probe):
             report = doctor.run_doctor(which=_which(ALL_TOOLS))
         self.assertFalse(report.passed)
-        bad = _by_name(report)["model openai/gpt-5.5-fast"]
+        bad = _by_name(report)["model requesty/claude-sonnet-5-5"]
         self.assertEqual(bad.status, "fail")
-        self.assertIn("not supported", bad.detail)
+        self.assertIn("not approved", bad.detail)
 
     def test_success_exit_with_no_output_is_unreachable(self) -> None:
         # opencode can exit 0 having streamed only an error event: an empty answer
@@ -95,15 +94,15 @@ class DoctorTests(unittest.TestCase):
         self.assertFalse(report.passed)
 
     def test_env_override_is_what_gets_probed(self) -> None:
-        os.environ["FACTORY_TIER_FAST"] = "openai/override-model"
+        os.environ["FACTORY_TIER_BUILD"] = "openai/override-model"
         try:
             with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
                 doctor.run_doctor(which=_which(ALL_TOOLS))
         finally:
-            del os.environ["FACTORY_TIER_FAST"]
+            del os.environ["FACTORY_TIER_BUILD"]
         probed = {call.kwargs["model"] for call in probe.call_args_list}
         self.assertIn("openai/override-model", probed)
-        self.assertNotIn("openai/gpt-5.5-fast", probed)
+        self.assertNotIn("openai/gpt-6.1-sol", probed)
 
     def test_offline_skips_every_model_probe(self) -> None:
         with patch("factory.preflight.doctor.run_agent") as probe:
@@ -111,7 +110,7 @@ class DoctorTests(unittest.TestCase):
         probe.assert_not_called()
         self.assertTrue(report.passed)
         models = [c for c in report.checks if c.name.startswith("model ")]
-        self.assertEqual(len(models), 2)
+        self.assertEqual(len(models), len(set(mt.TIER_DEFAULTS.values())))
         self.assertTrue(all(c.status == "skip" for c in models))
 
     def test_missing_opencode_fails_without_probing(self) -> None:
@@ -121,7 +120,7 @@ class DoctorTests(unittest.TestCase):
         self.assertFalse(report.passed)
         checks = _by_name(report)
         self.assertEqual(checks["opencode"].status, "fail")
-        self.assertEqual(checks["model openai/gpt-5.5"].status, "fail")
+        self.assertEqual(checks["model openai/gpt-6-astra"].status, "fail")
 
     def test_missing_toolchains_warn_but_do_not_fail(self) -> None:
         # A missing go/node/tsc only matters for projects in that stack, so it is
@@ -279,7 +278,7 @@ class TierLeverageTests(unittest.TestCase):
     doctor says so instead of letting the policy silently degrade."""
 
     def test_an_escalation_onto_the_same_model_is_a_warning(self) -> None:
-        with patch.dict(os.environ, {"FACTORY_TIER_FAST": "openai/gpt-5.5"}), \
+        with patch.dict(os.environ, {"FACTORY_TIER_SPECIAL": "openai/gpt-6.1-sol"}), \
                 patch("factory.preflight.doctor.run_agent", side_effect=_ok):
             report = doctor.run_doctor(offline=True, which=_which(ALL_TOOLS))
         check = _by_name(report)["tier escalation"]
@@ -291,7 +290,7 @@ class TierLeverageTests(unittest.TestCase):
     def test_a_tier_model_without_a_list_price_is_a_warning(self) -> None:
         """The $10-per-story cap prices tokens from agents/tiers.toml [prices]; a model
         without one is spent blind (its calls count as unknown)."""
-        with patch.dict(os.environ, {"FACTORY_TIER_FAST": "openai/unpriced-model"}), \
+        with patch.dict(os.environ, {"FACTORY_TIER_BUILD": "openai/unpriced-model"}), \
                 patch("factory.preflight.doctor.run_agent", side_effect=_ok):
             report = doctor.run_doctor(offline=True, which=_which(ALL_TOOLS))
         check = _by_name(report)["price list"]

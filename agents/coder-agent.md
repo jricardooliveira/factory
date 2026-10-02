@@ -1,6 +1,6 @@
 ---
-model_tier: fast
-model: openai/gpt-5.5-fast
+model_tier: build
+model: openai/gpt-6.1-sol
 temperature: 0.2
 tools:
   write: false

@@ -16,10 +16,13 @@ from factory.interfaces.render import output
 _COGNITIVE_WORK = {
     "spec-agent": "planning / decomposition",
     "architect-agent": "design trade-offs, risk, ADRs",
-    "tester-agent": "risk + security / QA review",
+    "tester-agent": "independent code review (gates release)",
     "coder-agent": "implementation",
+    "boundary-agent": "independent pre-coding boundary review",
+    "release-agent": "release notes (decides nothing)",
 }
-_TIER_COLOR = {"frontier": "magenta", "standard": "cyan", "fast": "green"}
+_TIER_COLOR = {"frontier": "magenta", "build": "green", "review": "yellow", "check": "yellow",
+               "notes": "cyan", "special": "red", "standard": "white"}
 
 
 def print_tiers(
@@ -28,7 +31,7 @@ def print_tiers(
     model_for_tier: Callable[[str], str],
 ) -> None:
     """Which model each agent runs at — the factory's leverage allocation."""
-    table = Table(title="Model tiers — frontier reserved for high-leverage thinking")
+    table = Table(title="Model tiers — reviewers never share the authors' model family")
     table.add_column("Agent", style="bold")
     table.add_column("Cognitive work")
     table.add_column("Tier")
@@ -46,7 +49,7 @@ def print_tiers(
     output.console.print(table)
     output.console.print(
         "[dim]Override a tier without editing code: "
-        "FACTORY_TIER_FRONTIER=provider/model factory run ...[/dim]"
+        "FACTORY_TIER_<TIER>=provider/model factory run ...  (factory doctor probes them)[/dim]"
     )
 
 

@@ -10,19 +10,41 @@ import yaml
 from factory.agent_config import tiers as mt
 
 
+def _family(model: str) -> str:
+    return "anthropic" if "claude" in model else "openai" if "gpt" in model else model
+
+
 class TierMappingTests(unittest.TestCase):
-    def test_thinking_agents_run_frontier(self) -> None:
-        for agent in ("spec-agent", "architect-agent", "tester-agent"):
+    def test_planning_agents_run_frontier(self) -> None:
+        for agent in ("spec-agent", "architect-agent"):
             self.assertEqual(mt.tier_for_agent(agent), "frontier", agent)
 
-    def test_coder_runs_fast_on_first_attempt(self) -> None:
-        self.assertEqual(mt.tier_for_agent("coder-agent", attempt_number=1), "fast")
+    def test_each_agent_has_its_role_tier(self) -> None:
+        self.assertEqual(mt.tier_for_agent("tester-agent"), "review")
+        self.assertEqual(mt.tier_for_agent("boundary-agent"), "check")
+        self.assertEqual(mt.tier_for_agent("release-agent"), "notes")
 
-    def test_coder_escalates_to_frontier_on_retry(self) -> None:
-        self.assertEqual(mt.tier_for_agent("coder-agent", attempt_number=2), "frontier")
-        self.assertEqual(mt.tier_for_agent("coder-agent", attempt_number=3), "frontier")
+    def test_coder_builds_on_first_attempt(self) -> None:
+        self.assertEqual(mt.tier_for_agent("coder-agent", attempt_number=1), "build")
 
-    def test_thinking_agents_do_not_escalate(self) -> None:
+    def test_a_failed_coder_attempt_is_the_special_case(self) -> None:
+        self.assertEqual(mt.tier_for_agent("coder-agent", attempt_number=2), "special")
+        self.assertEqual(mt.tier_for_agent("coder-agent", attempt_number=3), "special")
+
+    def test_reviewers_never_share_a_model_family_with_the_authors(self) -> None:
+        """Operator decision (2026-10-02): OpenAI and Anthropic models side by side.
+        Reviews are independent only when the reviewer is not the author's family:
+        two models of one family tend to share blind spots."""
+        authors = {_family(mt.resolve_model(a, 1)[0])
+                   for a in ("spec-agent", "architect-agent", "coder-agent")}
+        for reviewer in ("boundary-agent", "tester-agent"):
+            with self.subTest(reviewer=reviewer):
+                self.assertNotIn(_family(mt.resolve_model(reviewer, 1)[0]), authors)
+        # ...and a failed attempt is retried by the OTHER family's strongest model.
+        self.assertNotEqual(_family(mt.resolve_model("coder-agent", 2)[0]),
+                            _family(mt.resolve_model("coder-agent", 1)[0]))
+
+    def test_other_agents_do_not_escalate(self) -> None:
         # Only the coder escalates; an architect re-run stays frontier (no change).
         self.assertEqual(mt.tier_for_agent("architect-agent", attempt_number=2), "frontier")
 
@@ -36,21 +58,21 @@ class ModelResolutionTests(unittest.TestCase):
         self.assertEqual(tier, "frontier")
         self.assertEqual(model, mt.TIER_DEFAULTS["frontier"])
 
-    def test_coder_resolves_cheap_then_frontier(self) -> None:
-        self.assertEqual(mt.resolve_model("coder-agent", 1), (mt.TIER_DEFAULTS["fast"], "fast"))
+    def test_coder_resolves_build_then_special(self) -> None:
+        self.assertEqual(mt.resolve_model("coder-agent", 1), (mt.TIER_DEFAULTS["build"], "build"))
         self.assertEqual(
-            mt.resolve_model("coder-agent", 2), (mt.TIER_DEFAULTS["frontier"], "frontier")
+            mt.resolve_model("coder-agent", 2), (mt.TIER_DEFAULTS["special"], "special")
         )
 
     def test_env_override_repoints_a_tier(self) -> None:
         import os
 
-        os.environ["FACTORY_TIER_FAST"] = "openai/some-other-cheap"
+        os.environ["FACTORY_TIER_BUILD"] = "openai/some-other-cheap"
         try:
-            self.assertEqual(mt.model_for_tier("fast"), "openai/some-other-cheap")
+            self.assertEqual(mt.model_for_tier("build"), "openai/some-other-cheap")
         finally:
-            del os.environ["FACTORY_TIER_FAST"]
-        self.assertEqual(mt.model_for_tier("fast"), mt.TIER_DEFAULTS["fast"])
+            del os.environ["FACTORY_TIER_BUILD"]
+        self.assertEqual(mt.model_for_tier("build"), mt.TIER_DEFAULTS["build"])
 
     def test_unknown_tier_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -106,15 +128,20 @@ class TiersTomlTests(unittest.TestCase):
         self.assertEqual(mt.ESCALATE_ON_RETRY, data["escalate_on_retry"])
         self.assertEqual(mt.DEFAULT_TIER, data["default_tier"])
 
-    def test_defaults_are_models_this_machine_can_reach(self) -> None:
-        # The account is a ChatGPT/Codex login: gpt-5.4-mini is rejected and the
-        # anthropic/* ids are not a configured provider (live-loop finding).
+    def test_defaults_are_the_latest_openai_and_anthropic_models(self) -> None:
+        # Operator decision (2026-10-02). OpenAI through the ChatGPT/Codex login;
+        # Anthropic through Requesty (`requesty/*` — anthropic/* is not configured).
+        # Reachability is `factory doctor`'s to prove before a run spends anything.
         self.assertEqual(
             mt.TIER_DEFAULTS,
             {
-                "frontier": "openai/gpt-5.5",
-                "standard": "openai/gpt-5.5",
-                "fast": "openai/gpt-5.5-fast",
+                "frontier": "openai/gpt-6-astra",
+                "build": "openai/gpt-6.1-sol",
+                "notes": "openai/gpt-6-luna",
+                "review": "requesty/claude-opus-5-5",
+                "check": "requesty/claude-sonnet-5-5",
+                "special": "requesty/claude-fable-5.1",
+                "standard": "requesty/claude-haiku-4-5",
             },
         )
 
@@ -125,11 +152,20 @@ class TiersTomlTests(unittest.TestCase):
         for tier, model in mt.TIER_DEFAULTS.items():
             with self.subTest(tier=tier):
                 self.assertIn(model, prices)
-        # OpenAI pricing page, 2026-10-02: Fast mode is 2.5x the standard rate.
-        self.assertEqual((prices["openai/gpt-5.5"].input_per_m,
-                          prices["openai/gpt-5.5"].output_per_m), (5.0, 30.0))
-        self.assertEqual((prices["openai/gpt-5.5-fast"].input_per_m,
-                          prices["openai/gpt-5.5-fast"].output_per_m), (12.5, 75.0))
+        # USD per 1M tokens, 2026-10-02: OpenAI's announced GPT-6 prices and opencode's
+        # metadata for the Requesty-routed models.
+        expected = {
+            "openai/gpt-6-astra": (10.0, 50.0), "openai/gpt-6.1-sol": (2.0, 10.0),
+            "openai/gpt-6-luna": (0.1, 0.5), "requesty/claude-opus-5-5": (4.0, 20.0),
+            "requesty/claude-sonnet-5-5": (2.0, 10.0), "requesty/claude-haiku-4-5": (1.0, 5.0),
+            "requesty/claude-fable-5.1": (10.0, 50.0),
+            # Kept so spend recorded under the previous models is still priced.
+            "openai/gpt-5.5": (5.0, 30.0), "openai/gpt-5.5-fast": (12.5, 75.0),
+        }
+        for model, (inp, out) in expected.items():
+            with self.subTest(model=model):
+                self.assertEqual((prices[model].input_per_m, prices[model].output_per_m),
+                                 (inp, out))
 
     def test_a_malformed_price_is_rejected_at_load(self) -> None:
         path = self._write(
@@ -193,11 +229,16 @@ class TiersTomlTests(unittest.TestCase):
             mt.load_tiers(path)
 
     def test_distinct_models_groups_tiers_by_model(self) -> None:
-        # frontier and standard share a model: doctor probes it once, not twice.
-        self.assertEqual(
-            mt.distinct_models(),
-            {"openai/gpt-5.5": ["frontier", "standard"], "openai/gpt-5.5-fast": ["fast"]},
-        )
+        # Two tiers on one model are probed once, not twice.
+        import os
+
+        os.environ["FACTORY_TIER_STANDARD"] = "openai/gpt-6.1-sol"
+        try:
+            models = mt.distinct_models()
+        finally:
+            del os.environ["FACTORY_TIER_STANDARD"]
+        self.assertEqual(models["openai/gpt-6.1-sol"], ["build", "standard"])
+        self.assertEqual(len(models), 6)
 
     def test_distinct_models_honors_env_overrides(self) -> None:
         import os
@@ -208,7 +249,8 @@ class TiersTomlTests(unittest.TestCase):
         finally:
             del os.environ["FACTORY_TIER_STANDARD"]
         self.assertEqual(models["openai/other"], ["standard"])
-        self.assertEqual(models["openai/gpt-5.5"], ["frontier"])
+        self.assertNotIn("requesty/claude-haiku-4-5", models)
+        self.assertEqual(models["openai/gpt-6-astra"], ["frontier"])
 
 
 if __name__ == "__main__":

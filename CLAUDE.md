@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `741 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `741 passed` (~90s, offline, zero tokens) |
+| `make check` | `757 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `757 passed` (~90s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 56/56 agent-configuration checks; exits non-zero below 100% |
@@ -51,7 +51,9 @@ src/factory/
     traceability.py     Deterministic AC ↔ tester-claim cross-check (catches silently dropped criteria).
     agent_output.py     parse_agent_json & friends.   project_spec.py  ProjectSpec model.
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
-                        review_policy.py.
+                        review_policy.py, settings.py (factory.toml: budget, timeouts, feature
+                        switches; env > file > default; `settings()` is read per call, never
+                        cached).
   pipeline/             The orchestrator (LangGraph). Owns routing/remediation. __init__ is the
                         PUBLIC API — other packages import only from `factory.pipeline`.
     state.py            PipelineState.
@@ -167,8 +169,11 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Model choice lives in `agents/tiers.toml`, nowhere else.** Each agent's `.md` frontmatter
   repeats its `model_tier:` and that tier's `model:`; `tests/agent_config/test_tiers.py` and
   `factory evals` fail on drift. Change the toml and the frontmatter together. Default models
-  must be ones this machine's opencode login accepts (a ChatGPT/Codex login: openai/gpt-5.5
-  family; gpt-5.4-mini is rejected, anthropic/* is not configured).
+  must be ones this machine's opencode accepts: `openai/*` through the ChatGPT/Codex login
+  (GPT-6 Astra/Sol/Luna), Anthropic ONLY as `requesty/claude-*` (`anthropic/*` is not a
+  configured provider; Requesty must approve each model for the key). A reviewer tier
+  never shares a model family with the authors (`tests/agent_config/test_tiers.py` pins
+  it). Every tier model needs a `[prices]` entry for the $10 cap.
 - **`factory doctor` tests patch `factory.selftest.doctor.run_agent`** — a probe is a real,
   paid model call.
 - **The `factory:` commit-message prefix is load-bearing.** `workspace.git._factory_baseline()` finds the
@@ -202,7 +207,8 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Resume must read the LATEST agent log** (`runs.build_resume_context` / `get_agent_log`, not
   `get_run_logs` + `next(...)` which is ascending). Otherwise the operator approves one
   design and the coder builds an earlier one.
-- **The budget is $10 per user story** (`MAX_STORY_COST_USD`), checked before EVERY live
+- **The budget is $10 per user story** (default `MAX_STORY_COST_USD`; the live value is
+  `settings().budget.max_story_cost_usd`, from `factory.toml`), checked before EVERY live
   model call (`agent_calls._check_budget` → `BudgetExhausted`) and by the boss before each
   stage. Usage comes from opencode's `step_finish` events (rows before 2026-10-02 are NULL);
   the ChatGPT/Codex login reports **$0**, so spend is tokens × list price from

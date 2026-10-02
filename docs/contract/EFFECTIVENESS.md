@@ -155,7 +155,7 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | Branch per story + PR-shaped review (the factory commits straight onto the current branch) | ⛔ to build |
 | tester-agent + gate-test (QA/AC-coverage, security, performance sub-verdicts) | ✅ built |
 | Run generated test bodies in the build gate (opt-in `FACTORY_RUN_TESTS`) | ✅ built (subprocess; hardened sandbox still ⛔) |
-| Per-agent model tiers — frontier for thinking (spec/architect/tester), cheap for coder, escalate-on-retry (`factory tiers`, policy in `agents/tiers.toml`; `factory doctor` probes every tier model before a run) | ✅ built |
+| Per-agent model tiers as ROLES — GPT-6 Astra plans, Sol codes, Luna summarises; Claude Opus/Sonnet review (never the authors' family); Fable retries a failed attempt (`factory tiers`, policy in `agents/tiers.toml`; `factory doctor` probes every tier model before a run) | ✅ built |
 | Tester reviews the **real git diff of this run** (from its `base_commit`, not every story since the first; not the last task's self-report) | ✅ built (`workspace.git.collect_repo_diff`) |
 | Tester failure routes back to the coder for a bounded remediation pass (`MAX_TESTER_REMEDIATIONS`), findings carried, coder escalated to frontier | ✅ built |
 | Malformed-JSON agent output gets one repair retry before `blocked` (live runs) | ✅ built |

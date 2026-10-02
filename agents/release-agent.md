@@ -1,6 +1,6 @@
 ---
-model_tier: fast
-model: openai/gpt-5.5-fast
+model_tier: notes
+model: openai/gpt-6-luna
 temperature: 0.2
 tools:
   write: false

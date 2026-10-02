@@ -1,6 +1,6 @@
 ---
-model_tier: frontier
-model: openai/gpt-5.5
+model_tier: review
+model: requesty/claude-opus-5-5
 temperature: 0.2
 tools:
   write: false

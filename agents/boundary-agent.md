@@ -1,6 +1,6 @@
 ---
-model_tier: frontier
-model: openai/gpt-5.5
+model_tier: check
+model: requesty/claude-sonnet-5-5
 temperature: 0.1
 tools:
   write: false

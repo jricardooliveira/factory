@@ -73,7 +73,7 @@ class DetachedInstallTests(unittest.TestCase):
             self.home,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout.split(), ["fast", "True"])
+        self.assertEqual(proc.stdout.split(), ["build", "True"])
 
 
 class AgentsDirTests(unittest.TestCase):

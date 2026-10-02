@@ -1,6 +1,6 @@
 ---
 model_tier: frontier
-model: openai/gpt-5.5
+model: openai/gpt-6-astra
 temperature: 0.3
 tools:
   write: false
