@@ -61,7 +61,7 @@ make check
 factory doctor                     # `--offline` skips the (tiny, paid) model probes
 ```
 
-`make check` should print `493 passed`, `9/9 scenarios behaving as expected` and
+`make check` should print `502 passed`, `9/9 scenarios behaving as expected` and
 `43/43 checks green`. That is the whole verification loop in one command.
 
 ---
@@ -157,7 +157,7 @@ Everything here is offline, deterministic and free — no model calls:
 | `factory metrics` | how the factory has actually been performing |
 | `factory tiers` | which model each agent runs at |
 | `factory workspace` | where the state lives: `$FACTORY_HOME`, its `factory.db`, every product repo |
-| `factory doctor --offline` | preflight: opencode + go/node/tsc on PATH (drop `--offline` to also probe each tier model — one tiny paid call per model) |
+| `factory doctor --offline` | preflight: opencode + go/node/tsc on PATH, `$FACTORY_HOME` and its DB, each product's `.opencode` link, any un-imported legacy `factory.db` (drop `--offline` to also probe each tier model — one tiny paid call per model) |
 
 **Which model runs where is data, not code:** `agents/tiers.toml` maps each agent to a
 tier, each tier to an opencode `provider/model`, and names the agents that escalate a

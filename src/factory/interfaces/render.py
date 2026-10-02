@@ -918,7 +918,7 @@ def print_doctor(report: Any) -> None:
         console.print(
             "  [red]Not ready: fix the ❌ lines above before `factory run` "
             "(re-point a tier with FACTORY_TIER_<TIER>=provider/model or edit "
-            "agents/tiers.toml).[/red]"
+            "agents/tiers.toml; point FACTORY_HOME at a writable directory).[/red]"
         )
 
 

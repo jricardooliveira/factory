@@ -16,8 +16,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `493 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `493 passed` (~60s, offline, zero tokens) |
+| `make check` | `502 passed` + `9/9 scenarios behaving as expected` + `43/43 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `502 passed` (~60s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 9/9 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 43/43 agent-configuration checks; exits non-zero below 100% |
@@ -25,7 +25,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
 | `.venv/bin/factory workspace` | resolved `$FACTORY_HOME` (default `~/.factory`), its `factory.db` and every project repo |
-| `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc; non-zero if a model is unreachable |
+| `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
 | `.venv/bin/factory --help` | full CLI verb list |
 
 `ruff` is configured in `pyproject.toml` (line-length 100, `E,F,I,W`) but **is not installed** in

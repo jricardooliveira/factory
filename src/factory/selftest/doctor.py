@@ -14,6 +14,16 @@ What it checks:
 - ``go`` / ``node`` / ``tsc`` are on PATH (warning only — ``verification`` needs
   them for projects in that stack, and silently skipping a check is how a false
   PASS ships).
+- ``$FACTORY_HOME`` (default ``~/.factory``) is usable and its ``factory.db``
+  readable (blocking — every run writes there).
+- each registered product's directory exists and its ``.opencode`` resolves to
+  THIS checkout's agent definitions (warning — a stale link runs another
+  checkout's agent configuration, not the one ``factory evals`` validated).
+- no pre-$FACTORY_HOME ``factory.db`` is left in the checkout (warning — the
+  factory would start on an empty home and the run history would look lost).
+
+The doctor is read-only: it never creates the home, opens the DB for writing,
+or repairs a link; it says how.
 
 ``passed`` is False iff a blocking check failed; the CLI turns that into a
 non-zero exit.
@@ -21,7 +31,9 @@ non-zero exit.
 
 from __future__ import annotations
 
+import os
 import shutil
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +41,7 @@ from typing import Literal
 
 from factory.adapters.opencode import run_agent
 from factory.agent_config import tiers
+from factory.workspace import layout
 
 Status = Literal["ok", "fail", "warn", "skip"]
 
@@ -48,6 +61,10 @@ TOOLCHAINS: dict[str, str] = {
     "node": "node --check for JavaScript projects",
     "tsc": "tsc -p for TypeScript projects",
 }
+
+# Where the pre-$FACTORY_HOME layout kept its DB, relative to the checkout: the
+# old `mvp/` wrapper, and the repo root (a bare CWD-relative factory.db).
+LEGACY_STATE_DIRS: tuple[str, ...] = ("mvp", ".")
 
 
 @dataclass(frozen=True)
@@ -106,8 +123,87 @@ def _probe(model: str, model_tiers: list[str]) -> Check:
     return Check(name, "fail", f"{backs} — {reason}")
 
 
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _read_home_db(db: Path) -> tuple[int, list[tuple[str, str]]]:
+    """(run count, [(slug, repo_path)]) from the home DB, opened READ-ONLY so the
+    doctor never creates or migrates it."""
+    conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
+    try:
+        runs = conn.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0]
+        projects = conn.execute(
+            "SELECT slug, repo_path FROM projects ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return int(runs), [(str(slug), str(repo or "")) for slug, repo in projects]
+
+
+def _workspace_checks() -> list[Check]:
+    home = layout.home()
+    db = home / layout.DB_FILENAME
+    if home.exists() and not home.is_dir():
+        return [Check("workspace", "fail", f"{home} exists and is not a directory")]
+    if home.exists() and not os.access(home, os.W_OK):
+        return [Check("workspace", "fail", f"{home} is not writable")]
+    if not db.exists():
+        return [Check("workspace", "ok", f"{home} — no factory.db yet (created on first run)")]
+    try:
+        runs, projects = _read_home_db(db)
+    except sqlite3.Error as exc:
+        return [Check("workspace", "fail", f"{db} is not a readable factory.db — {exc}")]
+
+    checks = [
+        Check(
+            "workspace",
+            "ok",
+            f"{home} — {_plural(runs, 'run')}, {_plural(len(projects), 'project')}",
+        )
+    ]
+    checks.extend(_project_check(slug, Path(repo)) for slug, repo in projects)
+    return checks
+
+
+def _project_check(slug: str, repo: Path) -> Check:
+    name = f"project {slug}"
+    agents = repo_root() / ".opencode"
+    if not str(repo) or not repo.is_dir():
+        return Check(name, "warn", f"directory missing: {repo}", blocking=False)
+    link = repo / ".opencode"
+    fix = f"re-link: ln -sfn {agents} {link}"
+    if not link.exists():
+        target = f" -> {os.readlink(link)}" if link.is_symlink() else ""
+        return Check(name, "warn", f".opencode missing or dangling{target}; {fix}",
+                     blocking=False)
+    if link.resolve() != agents.resolve():
+        return Check(name, "warn", f".opencode is stale -> {link.resolve()}; {fix}",
+                     blocking=False)
+    return Check(name, "ok", str(repo), blocking=False)
+
+
+def _legacy_state_check(checkout: Path) -> Check | None:
+    found = [
+        d for d in LEGACY_STATE_DIRS if (checkout / d / layout.DB_FILENAME).is_file()
+    ]
+    if not found:
+        return None
+    where = ", ".join(str((checkout / d / layout.DB_FILENAME).resolve()) for d in found)
+    hint = f"factory workspace import-legacy {found[0]}"
+    return Check(
+        "legacy state",
+        "warn",
+        f"pre-$FACTORY_HOME state not imported: {where}; run `{hint}` from {checkout}",
+        blocking=False,
+    )
+
+
 def run_doctor(
-    *, offline: bool = False, which: Callable[[str], str | None] = shutil.which
+    *,
+    offline: bool = False,
+    which: Callable[[str], str | None] = shutil.which,
+    checkout: Path | None = None,
 ) -> DoctorReport:
     report = DoctorReport()
 
@@ -136,5 +232,10 @@ def run_doctor(
             if path
             else Check(tool, "warn", f"not on PATH — needed for {purpose}", blocking=False)
         )
+
+    report.checks.extend(_workspace_checks())
+    legacy = _legacy_state_check(checkout if checkout is not None else repo_root())
+    if legacy is not None:
+        report.checks.append(legacy)
 
     return report
