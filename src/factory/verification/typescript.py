@@ -6,15 +6,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from factory.verification import _GO_TIMEOUT, VerifyCheck, _run
+from factory.verification.base import BUILD_TIMEOUT, VerifyCheck, run_command
 
 
-def _node_check(js_files: list[Path], root: Path) -> VerifyCheck:
+def node_check(js_files: list[Path], root: Path) -> VerifyCheck:
     if shutil.which("node") is None:
         return VerifyCheck("node_check", "skip", "node not installed")
     for f in js_files:
         try:
-            proc = _run(["node", "--check", str(f)], root)
+            proc = run_command(["node", "--check", str(f)], root)
         except subprocess.TimeoutExpired:
             return VerifyCheck("node_check", "warn", "timed out")
         if proc.returncode != 0:
@@ -27,7 +27,7 @@ def _ts_project_dirs(root: Path, ts_files: list[Path]) -> list[Path]:
 
     A monorepo's TS project is `frontend/`, not the repo root — every Nuxt layout
     puts it there. Running tsc from the root instead is what made this check
-    useless (see _tsc_check).
+    useless (see tsc_check).
     """
     root_resolved = root.resolve()
     found: list[Path] = []
@@ -60,7 +60,7 @@ def _resolve_tsc(project_dir: Path, root: Path) -> list[str] | None:
     return None
 
 
-def _tsc_check(root: Path, ts_files: list[Path]) -> VerifyCheck:
+def tsc_check(root: Path, ts_files: list[Path]) -> VerifyCheck:
     """Typecheck each TS project that owns a changed file.
 
     Previously this ran `tsc --noEmit` from the repo root with no `-p`. With no
@@ -79,7 +79,7 @@ def _tsc_check(root: Path, ts_files: list[Path]) -> VerifyCheck:
         if tsc is None:
             return VerifyCheck("tsc", "skip", "tsc not installed")
         try:
-            proc = _run([*tsc, "--noEmit", "-p", str(project_dir)], root, timeout=_GO_TIMEOUT)
+            proc = run_command([*tsc, "--noEmit", "-p", str(project_dir)], root, timeout=BUILD_TIMEOUT)
         except subprocess.TimeoutExpired:
             return VerifyCheck("tsc", "warn", "timed out")
         if proc.returncode != 0:

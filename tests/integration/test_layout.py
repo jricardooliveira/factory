@@ -149,8 +149,8 @@ class AgentConfigLayoutTests(unittest.TestCase):
     def test_project_repos_link_to_the_repo_root_opencode_dir(self) -> None:
         from factory.workspace import projects
 
-        self.assertEqual(projects._package_root(), REPO_ROOT)
-        self.assertTrue((projects._package_root() / ".opencode" / "agents" / "coder-agent.md").is_file())
+        self.assertEqual(projects.checkout_root(), REPO_ROOT)
+        self.assertTrue((projects.checkout_root() / ".opencode" / "agents" / "coder-agent.md").is_file())
 
     def test_default_paths_point_at_real_files(self) -> None:
         from factory.agent_config import review_policy

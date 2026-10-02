@@ -32,11 +32,13 @@ from pathlib import Path
 from factory.state.db import get_db
 from factory.workspace import layout
 from factory.workspace.git import git_commit_paths, git_init, is_git_repo
+from factory.agent_config.location import checkout_root
+from factory.workspace.layout import normalize_slug
 from factory.workspace.projects import (
     RULES_FILENAME,
     SPEC_FILENAME,
-    _link_opencode_agents,
-    normalize_slug,
+    link_opencode_agents,
+    render_project_rules,
 )
 
 _DB_SIDECARS = ("-wal", "-shm")
@@ -242,12 +244,10 @@ def _external_spec_candidates(recorded: Path, old_dir: Path) -> list[Path]:
     restructure invalidated (<factory>/mvp/specs/x.json is now
     <factory>/examples/specs/x.json), so after the recorded path, look by NAME in
     the old dir's specs/ and in this factory's examples/specs/."""
-    from factory.workspace.projects import _package_root
-
     return [
         recorded,
         old_dir / "specs" / recorded.name,
-        _package_root() / "examples" / "specs" / recorded.name,
+        checkout_root() / "examples" / "specs" / recorded.name,
     ]
 
 
@@ -293,8 +293,6 @@ def _plan_spec(move: ProjectMove, spec_path: str | None, old_dir: Path) -> None:
 
 def migrate_rules_text(text: str) -> str:
     """Drop the old scaffold's now-wrong path lines; keep every operator line."""
-    from factory.workspace.projects import render_project_rules
-
     lines = text.splitlines()
     if not any(line.strip() in _STALE_RULE_LINES for line in lines):
         return text
@@ -342,7 +340,7 @@ def _move_project(move: ProjectMove) -> None:
         if migrated != text:
             rules.write_text(migrated, encoding="utf-8")
 
-    _link_opencode_agents(move.target)
+    link_opencode_agents(move.target)
     if is_git_repo(move.target):
         move.committed = git_commit_paths(
             move.target, to_commit,

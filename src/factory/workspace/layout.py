@@ -13,6 +13,7 @@ evidence beside it under ``docs/`` (see `EVIDENCE_PATHS`).
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 FACTORY_HOME_ENV = "FACTORY_HOME"
@@ -57,6 +58,15 @@ def projects_dir() -> Path:
 def project_dir_for(slug: str) -> Path:
     """A product's directory, which is also its git repository."""
     return projects_dir() / slug
+
+
+def normalize_slug(value: str) -> str:
+    """Return a filesystem and CLI friendly project slug (the ``projects/<slug>`` name)."""
+
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    if not slug:
+        raise ValueError("Project slug must contain at least one letter or number")
+    return slug
 
 
 def is_evidence_path(path: str, evidence: tuple[str, ...] = EVIDENCE_PATHS) -> bool:

@@ -7,8 +7,8 @@ from typing import Any
 
 from factory.domain.contracts import ArchitectOutput, SpecOutput
 from factory.evidence.adr import write_adr
-from factory.pipeline.agent_calls import _get_db_conn, _run_agent_json, _usage_kwargs
-from factory.pipeline.nodes.evidence import _commit_adr, _write_chain_artifact
+from factory.pipeline.agent_calls import db_conn, run_agent_json, usage_kwargs
+from factory.pipeline.evidence_writers import commit_adr, write_chain_artifact
 from factory.pipeline.prompts.architect import build_architect_prompt
 from factory.pipeline.state import PipelineState
 from factory.state.db import finish_run, log_agent, update_run_stage, update_story_status
@@ -18,21 +18,21 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
     if state.get("status") == "failed":
         return state
 
-    conn = _get_db_conn(state)
+    conn = db_conn(state)
     try:
         update_run_stage(conn, state["run_id"], "architect-agent")
         conn.commit()
 
         prompt = build_architect_prompt(state)
 
-        result, parsed = _run_agent_json(state, "architect-agent", prompt)
+        result, parsed = run_agent_json(state, "architect-agent", prompt)
 
         # Handle synthetic blocked response
         if parsed.get("error") == "Agent did not return valid JSON":
             log_agent(
                 conn, state["run_id"], "architect-agent", prompt,
                 result.output, verdict="blocked", duration_secs=result.duration_secs,
-                **_usage_kwargs(result),
+                **usage_kwargs(result),
             )
             agent_said = parsed.get("agent_response", "unknown")
             error = f"architect-agent did not return JSON. Agent said: {agent_said}"
@@ -63,7 +63,7 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
             result.output,
             verdict=arch.verdict,
             duration_secs=result.duration_secs,
-            **_usage_kwargs(result),
+            **usage_kwargs(result),
         )
         conn.commit()
 
@@ -74,7 +74,7 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
             adr_path = str(
                 write_adr(Path(state["project_dir"]), state["story_id"], spec.title, arch)
             )
-            _commit_adr(state, adr_path)
+            commit_adr(state, adr_path)
 
         out: dict[str, Any] = {"architect_raw": result.output, "architect": parsed}
         if adr_path:
@@ -84,7 +84,7 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
         # reviewer reads the sequence that ran, and its declared scope is what the
         # trust package checks the real diff against.
         if arch.verdict != "fail":
-            plan_path = _write_chain_artifact(
+            plan_path = write_chain_artifact(
                 state, "plan", SpecOutput.model_validate(state["spec"]), arch
             )
             if plan_path:

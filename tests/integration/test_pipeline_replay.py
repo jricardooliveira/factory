@@ -16,7 +16,7 @@ from pathlib import Path
 from factory.domain.gates import MAX_CODER_ATTEMPTS
 from factory.pipeline import compile_architect_resume_pipeline, compile_pipeline
 from factory.pipeline.graph import route_after_coder
-from factory.pipeline.prompts.blocks import _retry_context_block, _reviewer_feedback_block
+from factory.pipeline.prompts.blocks import retry_context_block, reviewer_feedback_block
 from factory.state import db
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "agent_outputs"
@@ -440,11 +440,11 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(route_after_coder({}), END)
 
     def test_retry_block_empty_on_first_attempt(self) -> None:
-        self.assertEqual(_retry_context_block({"prior_findings": ["x"]}, 1), "")
-        self.assertEqual(_retry_context_block({}, 2), "")
+        self.assertEqual(retry_context_block({"prior_findings": ["x"]}, 1), "")
+        self.assertEqual(retry_context_block({}, 2), "")
 
     def test_retry_block_includes_findings_on_later_attempts(self) -> None:
-        block = _retry_context_block(
+        block = retry_context_block(
             {"prior_findings": ["py_compile:fail"], "triggered_by": "gate-build"}, 2
         )
         self.assertIn("Previous attempt failed", block)
@@ -452,11 +452,11 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("gate-build", block)
 
     def test_reviewer_feedback_block_only_on_rejection(self) -> None:
-        self.assertEqual(_reviewer_feedback_block({}), "")
+        self.assertEqual(reviewer_feedback_block({}), "")
         self.assertEqual(
-            _reviewer_feedback_block({"prior_findings": ["x"], "triggered_by": "gate-build"}), ""
+            reviewer_feedback_block({"prior_findings": ["x"], "triggered_by": "gate-build"}), ""
         )
-        block = _reviewer_feedback_block(
+        block = reviewer_feedback_block(
             {"prior_findings": ["Use Postgres, not SQLite"], "triggered_by": "architecture-rejected"}
         )
         self.assertIn("Reviewer feedback", block)

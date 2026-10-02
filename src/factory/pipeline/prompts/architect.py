@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 
 from factory.pipeline.prompts.blocks import (
-    _project_context,
-    _project_memory_block,
-    _repo_inventory_block,
-    _reviewer_feedback_block,
+    project_context_block,
+    project_memory_block,
+    repo_inventory_block,
+    reviewer_feedback_block,
 )
 from factory.pipeline.state import PipelineState
 
@@ -18,10 +18,10 @@ def build_architect_prompt(state: PipelineState) -> str:
     the existing codebase, any reviewer/implementer feedback, then the story."""
     spec_context = f"## Story\n\n```json\n{json.dumps(state['spec'], indent=2)}\n```\n\n"
     return (
-        f"{_project_context(state)}"
-        f"{_project_memory_block(state)}"
-        f"{_repo_inventory_block(state)}"
-        f"{_reviewer_feedback_block(state)}"
+        f"{project_context_block(state)}"
+        f"{project_memory_block(state)}"
+        f"{repo_inventory_block(state)}"
+        f"{reviewer_feedback_block(state)}"
         f"{spec_context}"
         f"## Original Request\n\n{state['request']}\n\n"
         "Design the technical approach for this story. "

@@ -13,7 +13,7 @@ from langgraph.graph import END
 from factory.pipeline import agent_calls
 from factory.pipeline.graph import route_after_coder
 from factory.pipeline.nodes.coder import node_coder_agent
-from factory.pipeline.prompts.blocks import _reviewer_feedback_block
+from factory.pipeline.prompts.blocks import reviewer_feedback_block
 from factory.domain.gates import MAX_REARCHITECT_LOOPS
 from factory.adapters.opencode import AgentResult
 from factory.state import db
@@ -25,14 +25,14 @@ def _ar(output: str) -> AgentResult:
 
 class ReviewerFeedbackBlockTests(unittest.TestCase):
     def test_design_infeasible_renders_implementer_feedback(self) -> None:
-        block = _reviewer_feedback_block(
+        block = reviewer_feedback_block(
             {"triggered_by": "design-infeasible", "prior_findings": ["needs a queue, not a cron"]}
         )
         self.assertIn("coder", block.lower())
         self.assertIn("needs a queue, not a cron", block)
 
     def test_architecture_rejected_still_renders(self) -> None:
-        block = _reviewer_feedback_block(
+        block = reviewer_feedback_block(
             {"triggered_by": "architecture-rejected", "prior_findings": ["use Postgres"]}
         )
         self.assertIn("rejected", block.lower())

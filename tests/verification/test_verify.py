@@ -214,7 +214,7 @@ class TestExecutionScopeTests(unittest.TestCase):
     """Tests must run after EVERY task that touches Python, not only after a task
     that happened to write a test file.
 
-    `verify_changes` gated `run_tests` on `any(_is_py_test(p) for p in py_files)`,
+    `verify_changes` gated `run_tests` on `any(is_py_test(p) for p in py_files)`,
     so a task that modified source without adding a test never executed the
     project's existing suite — the exact case where a regression is invisible.
     """
@@ -404,7 +404,7 @@ class GoVerificationTests(unittest.TestCase):
 class TypeScriptProjectTests(unittest.TestCase):
     """`tsc --noEmit` must be run against a real TS project, not the bare cwd.
 
-    Found by driving the SupportFlow challenge through the pipeline: `_tsc_check`
+    Found by driving the SupportFlow challenge through the pipeline: `tsc_check`
     ran `tsc --noEmit` from the repo root, and with no tsconfig.json there tsc
     prints its HELP TEXT and exits 1. The factory read that as `tsc:fail` and
     blocked gate-build for a reason having nothing to do with the code — so in a

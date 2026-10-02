@@ -9,26 +9,20 @@ outside that repository — so a product's history lived partly in the factory.
 
 from __future__ import annotations
 
-import re
 import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+from factory.agent_config.location import checkout_root
 from factory.state.db import get_db, init_db
 from factory.workspace import layout
+from factory.workspace.git import git_commit_paths, git_init
+from factory.workspace.layout import normalize_slug
+from factory.workspace.templates import create_project_spec, write_project_spec
 
 RULES_FILENAME = "PROJECT_RULES.md"
 SPEC_FILENAME = "project-spec.json"
-
-
-def normalize_slug(value: str) -> str:
-    """Return a filesystem and CLI friendly project slug."""
-
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    if not slug:
-        raise ValueError("Project slug must contain at least one letter or number")
-    return slug
 
 
 def _next_project_id(conn: sqlite3.Connection) -> str:
@@ -46,19 +40,18 @@ def _row_to_project(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def _package_root() -> Path:
-    # src/factory/workspace/projects.py -> the factory repo root, which holds
-    # `.opencode/` (whose `agents` entry is a relative symlink to `agents/`).
-    return Path(__file__).resolve().parents[3]
+def factory_opencode_dir() -> Path:
+    """This checkout's ``.opencode/`` — what every product's ``.opencode`` links to."""
+    return checkout_root() / ".opencode"
 
 
-def _link_opencode_agents(repo_path: Path) -> None:
+def link_opencode_agents(repo_path: Path) -> None:
     """Point <repo>/.opencode at the factory's agent definitions.
 
     An existing SYMLINK is re-pointed (a repo moved by `import-legacy` still
     links to wherever the factory used to live); a real directory is left alone.
     """
-    agents_dir = _package_root() / ".opencode"
+    agents_dir = factory_opencode_dir()
     target = repo_path / ".opencode"
     if not agents_dir.exists():
         return
@@ -142,19 +135,15 @@ def create_project(
         project_id = _next_project_id(conn)
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        from factory.workspace.git import git_commit_paths, git_init
-
         git_init(project_dir)
         _write_project_rules(project_dir, project_id, normalized_slug, project_name)
-        _link_opencode_agents(project_dir)
+        link_opencode_agents(project_dir)
 
         resolved_spec_path: Path | None = None
         if spec_path is not None:
             resolved_spec_path = project_dir / SPEC_FILENAME
             shutil.copyfile(spec_path, resolved_spec_path)
         elif stack:
-            from factory.workspace.templates import create_project_spec, write_project_spec
-
             resolved_spec_path = write_project_spec(
                 project_dir / SPEC_FILENAME,
                 create_project_spec(stack, name=project_name, slug=normalized_slug),

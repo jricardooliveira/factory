@@ -5,15 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 from factory.domain.contracts import SpecOutput
-from factory.pipeline.agent_calls import _get_db_conn, _run_agent_json, _usage_kwargs
-from factory.pipeline.nodes.evidence import _write_chain_artifact
+from factory.pipeline.agent_calls import db_conn, run_agent_json, usage_kwargs
+from factory.pipeline.evidence_writers import write_chain_artifact
 from factory.pipeline.prompts.spec import build_spec_prompt
 from factory.pipeline.state import PipelineState
 from factory.state.db import finish_run, log_agent, update_run_stage, update_story_title
 
 
 def node_spec_agent(state: PipelineState) -> dict[str, Any]:
-    conn = _get_db_conn(state)
+    conn = db_conn(state)
     try:
         update_run_stage(conn, state["run_id"], "spec-agent")
         conn.commit()
@@ -21,10 +21,10 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
         # Link 1 of the chain: the operator's raw ask, on disk with an author and a
         # date, BEFORE any agent interprets it — so a run that dies at the spec
         # still leaves a record of what was asked.
-        intent_path = _write_chain_artifact(state, "intent", state.get("request", ""))
+        intent_path = write_chain_artifact(state, "intent", state.get("request", ""))
 
         prompt = build_spec_prompt(state)
-        result, parsed = _run_agent_json(state, "spec-agent", prompt)
+        result, parsed = run_agent_json(state, "spec-agent", prompt)
 
         # Handle synthetic blocked response from _extract_json
         if parsed.get("error") == "Agent did not return valid JSON":
@@ -33,7 +33,7 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
             log_agent(
                 conn, state["run_id"], "spec-agent", prompt,
                 result.output, verdict="blocked", duration_secs=result.duration_secs,
-                **_usage_kwargs(result),
+                **usage_kwargs(result),
             )
             finish_run(conn, state["run_id"], "blocked", error=error)
             conn.commit()
@@ -52,7 +52,7 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
         log_agent(
             conn, state["run_id"], "spec-agent", prompt,
             result.output, verdict=spec.verdict, duration_secs=result.duration_secs,
-            **_usage_kwargs(result),
+            **usage_kwargs(result),
         )
         # Give the story its real title. Do NOT overwrite the canonical story_id
         # (state["story_id"] is the DB row); the agent's spec.story_id is its own
@@ -63,7 +63,7 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
 
         # Link 2: the story the design must answer. The ADR recorded the decision
         # but never the requirements it was a decision about.
-        spec_path = _write_chain_artifact(state, "spec", spec)
+        spec_path = write_chain_artifact(state, "spec", spec)
 
         out: dict[str, Any] = {"spec_raw": result.output, "spec": parsed}
         if intent_path:

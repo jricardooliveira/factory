@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from factory.verification import _GO_TIMEOUT, _TEST_TIMEOUT, VerifyCheck, _run, tests_enabled
+from factory.verification.base import BUILD_TIMEOUT, TEST_TIMEOUT, VerifyCheck, run_command, tests_enabled
 
 
 def _go_module_path(module_dir: Path) -> str:
@@ -31,7 +31,7 @@ def _go_module_path(module_dir: Path) -> str:
     return ""
 
 
-def _go_module_dirs(root: Path, go_files: list[Path]) -> list[Path]:
+def go_module_dirs(root: Path, go_files: list[Path]) -> list[Path]:
     """Nearest go.mod ancestor for each changed .go file (deduped, stable order).
 
     A monorepo puts the module at `backend/go.mod`, not the repo root, so the
@@ -84,7 +84,7 @@ def _classify_go_failure(output: str, module_path: str) -> str:
     return "fail"
 
 
-def _go_build(module_dirs: list[Path]) -> VerifyCheck:
+def go_build(module_dirs: list[Path]) -> VerifyCheck:
     if shutil.which("go") is None:
         return VerifyCheck("go_build", "skip", "go not installed")
     if not module_dirs:
@@ -94,7 +94,7 @@ def _go_build(module_dirs: list[Path]) -> VerifyCheck:
     for module_dir in module_dirs:
         module_path = _go_module_path(module_dir)
         try:
-            proc = _run(["go", "build", "./..."], module_dir, timeout=_GO_TIMEOUT)
+            proc = run_command(["go", "build", "./..."], module_dir, timeout=BUILD_TIMEOUT)
         except subprocess.TimeoutExpired:
             warnings.append(f"{module_dir.name}: timed out")
             continue
@@ -110,7 +110,7 @@ def _go_build(module_dirs: list[Path]) -> VerifyCheck:
     return VerifyCheck("go_build", "pass", f"{len(module_dirs)} module(s)")
 
 
-def _go_parse(go_files: list[Path], root: Path) -> VerifyCheck:
+def go_parse(go_files: list[Path], root: Path) -> VerifyCheck:
     """Syntax-check .go files with NO module, using `gofmt -e`.
 
     `go build` requires a module, so a task that writes Go before (or without)
@@ -123,7 +123,7 @@ def _go_parse(go_files: list[Path], root: Path) -> VerifyCheck:
         return VerifyCheck("go_parse", "skip", "gofmt not installed")
     targets = [str((root / p) if not p.is_absolute() else p) for p in go_files]
     try:
-        proc = _run(["gofmt", "-e", "-l", *targets], root)
+        proc = run_command(["gofmt", "-e", "-l", *targets], root)
     except (subprocess.TimeoutExpired, OSError):
         return VerifyCheck("go_parse", "warn", "gofmt did not run")
     # gofmt -e exits non-zero and writes parse errors to stderr on bad syntax;
@@ -133,7 +133,7 @@ def _go_parse(go_files: list[Path], root: Path) -> VerifyCheck:
     return VerifyCheck("go_parse", "pass", f"{len(targets)} file(s) parse")
 
 
-def _go_vet(module_dirs: list[Path]) -> VerifyCheck:
+def go_vet(module_dirs: list[Path]) -> VerifyCheck:
     """`go vet` catches what the compiler allows — named in the challenge's own
     quality gates (bad Printf verbs, unreachable code, lost struct tags)."""
     if shutil.which("go") is None:
@@ -142,7 +142,7 @@ def _go_vet(module_dirs: list[Path]) -> VerifyCheck:
         return VerifyCheck("go_vet", "skip", "no go module")
     for module_dir in module_dirs:
         try:
-            proc = _run(["go", "vet", "./..."], module_dir, timeout=_GO_TIMEOUT)
+            proc = run_command(["go", "vet", "./..."], module_dir, timeout=BUILD_TIMEOUT)
         except subprocess.TimeoutExpired:
             return VerifyCheck("go_vet", "warn", "timed out")
         if proc.returncode != 0:
@@ -165,9 +165,9 @@ def run_go_tests(module_dirs: list[Path]) -> VerifyCheck:
         return VerifyCheck("go_test", "skip", "no go module")
     for module_dir in module_dirs:
         try:
-            proc = _run(["go", "test", "./..."], module_dir, timeout=_TEST_TIMEOUT)
+            proc = run_command(["go", "test", "./..."], module_dir, timeout=TEST_TIMEOUT)
         except subprocess.TimeoutExpired:
-            return VerifyCheck("go_test", "fail", f"tests timed out after {_TEST_TIMEOUT}s")
+            return VerifyCheck("go_test", "fail", f"tests timed out after {TEST_TIMEOUT}s")
         if proc.returncode != 0:
             output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
             if _classify_go_failure(output, _go_module_path(module_dir)) == "warn":

@@ -26,8 +26,9 @@ SRC = PACKAGE.parents[1]
 ALLOWED: dict[str, set[str]] = {
     "state": set(),
     "agent_calls": {"state"},
+    "evidence_writers": {"state"},
     "prompts": {"state", "prompts"},
-    "nodes": {"state", "agent_calls", "prompts", "nodes"},
+    "nodes": {"state", "agent_calls", "evidence_writers", "prompts", "nodes"},
     "graph": {"state", "nodes"},
 }
 

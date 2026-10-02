@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from factory.domain.project_spec import ProjectSpec
-from factory.workspace.projects import normalize_slug
+from factory.workspace.layout import normalize_slug
 
 
 SUPPORTED_STACKS = {"fastapi"}

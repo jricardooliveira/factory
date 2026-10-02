@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from factory.agent_config import review_policy
-from factory.pipeline.prompts.blocks import _project_context, _project_memory_block
+from factory.pipeline.prompts.blocks import project_context_block, project_memory_block
 from factory.pipeline.state import PipelineState, factory_owned_paths
 from factory.workspace.git import collect_repo_diff
 
@@ -38,8 +38,8 @@ def build_tester_prompt(state: PipelineState) -> str:
     single home; the agent definition keeps only the role and the JSON contract.
     """
     return (
-        f"{_project_context(state)}"
-        f"{_project_memory_block(state)}"
+        f"{project_context_block(state)}"
+        f"{project_memory_block(state)}"
         f"{review_policy.policy_block()}"
         f"## Story\n\n```json\n{json.dumps(state.get('spec', {}), indent=2)}\n```\n\n"
         f"## Architecture\n\n```json\n{json.dumps(state.get('architect', {}), indent=2)}\n```\n\n"

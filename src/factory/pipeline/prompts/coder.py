@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from factory.domain.contracts import SpecOutput, TaskDef
 from factory.pipeline.prompts.blocks import (
-    _project_context,
-    _project_memory_block,
-    _repo_inventory_block,
-    _retry_context_block,
+    project_context_block,
+    project_memory_block,
+    repo_inventory_block,
+    retry_context_block,
 )
 from factory.pipeline.prompts.context_pack import build_remediation_pack, build_task_pack
 from factory.pipeline.state import PipelineState
@@ -32,10 +32,10 @@ def build_coder_task_prompt(
         task,
         spec,
         state["architect"],
-        project_context=_project_context(state),
-        memory_context=_project_memory_block(state),
-        repo_context=_repo_inventory_block(state),
-        retry_context=_retry_context_block(state, attempt),
+        project_context=project_context_block(state),
+        memory_context=project_memory_block(state),
+        repo_context=repo_inventory_block(state),
+        retry_context=retry_context_block(state, attempt),
         completed=completed,
         position=(task_index + 1, task_count),
     )
@@ -48,6 +48,6 @@ def build_remediation_prompt(state: PipelineState, spec: SpecOutput, diff: str) 
         state["architect"],
         state.get("prior_findings") or [],
         diff,
-        project_context=_project_context(state),
-        memory_context=_project_memory_block(state),
+        project_context=project_context_block(state),
+        memory_context=project_memory_block(state),
     )

@@ -1,6 +1,6 @@
 """Factory plumbing must never be committed into the product's repository.
 
-Found by a live validation run. `projects._link_opencode_agents` puts a
+Found by a live validation run. `projects.link_opencode_agents` puts a
 `.opencode` symlink inside each project repo so opencode can find the agent
 definitions. `git_commit_all` runs `git add -A`, so the very first task commit
 captured that symlink — an absolute path to the operator's machine — into the

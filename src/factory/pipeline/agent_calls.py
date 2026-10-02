@@ -1,6 +1,6 @@
 """The pipeline's single agent-call boundary: run (or replay) an agent, parse its JSON.
 
-Every node reaches a model through `_run_agent_json` → `_run_or_replay`, so this
+Every node reaches a model through `run_agent_json` → `_run_or_replay`, so this
 module is also where tests patch the boundary (`_run_or_replay`, or `run_agent`
 one level lower) — patch it HERE, where the names are looked up.
 """
@@ -37,7 +37,7 @@ _JSON_REPAIR_SUFFIX = (
 )
 
 
-def _run_agent_json(
+def run_agent_json(
     state: PipelineState, agent_name: str, prompt: str, slot: str | None = None
 ) -> tuple[AgentResult, dict[str, Any]]:
     """Run an agent and parse its JSON, with ONE repair retry on a live run.
@@ -73,7 +73,7 @@ def _run_or_replay(
     """
     replay_id = state.get("replay_run_id")
     if replay_id:
-        conn = _get_db_conn(state)
+        conn = db_conn(state)
         try:
             if slot is not None:
                 log = get_agent_log_by_stage(conn, replay_id, agent_name, slot)
@@ -103,7 +103,7 @@ def _run_or_replay(
     return run_agent(agent_name, prompt, cwd=state.get("opencode_cwd"), model=model)
 
 
-def _usage_kwargs(result: AgentResult) -> dict[str, Any]:
+def usage_kwargs(result: AgentResult) -> dict[str, Any]:
     """Build the cost/provenance kwargs for log_agent from an agent result."""
     return {
         "tokens_in": result.tokens_in,
@@ -114,7 +114,7 @@ def _usage_kwargs(result: AgentResult) -> dict[str, Any]:
     }
 
 
-def _get_db_conn(state: PipelineState) -> sqlite3.Connection:
+def db_conn(state: PipelineState) -> sqlite3.Connection:
     """Get a DB connection from state."""
     conn = sqlite3.connect(state["db_path"])
     conn.row_factory = sqlite3.Row

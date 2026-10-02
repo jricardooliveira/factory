@@ -1,6 +1,9 @@
 """Best-effort evidence writers the nodes call: the artifact chain, the ADR and the
 trust package — each committed to the product repo the moment it is written.
 
+Not a node module (see `pipeline.nodes`): a sibling of `agent_calls`, the other
+side-effect helper every node shares.
+
 Evidence must never be able to fail a run, so the writers swallow I/O errors —
 the chain writer returns None so the caller can record the gap.
 
@@ -21,7 +24,7 @@ from factory.pipeline.state import PipelineState
 from factory.workspace.git import git_commit_paths
 
 
-def _commit_evidence(state: PipelineState, path: Path | str | None, what: str) -> None:
+def commit_evidence(state: PipelineState, path: Path | str | None, what: str) -> None:
     """Commit one evidence file to the project repo (best-effort, never raises)."""
     project_dir = state.get("project_dir")
     if not project_dir or not path:
@@ -32,7 +35,7 @@ def _commit_evidence(state: PipelineState, path: Path | str | None, what: str) -
         pass  # evidence is best-effort; a failed commit must not fail the run
 
 
-def _write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | None:
+def write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | None:
     """Write one link of the committed artifact chain (best-effort).
 
     Evidence must never be able to fail a run — but a silent `except: pass` is how
@@ -53,16 +56,16 @@ def _write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | 
         return None
     if not path:
         return None
-    _commit_evidence(state, path, f"{state['story_id']} {kind.upper()}")
+    commit_evidence(state, path, f"{state['story_id']} {kind.upper()}")
     return str(path)
 
 
-def _commit_adr(state: PipelineState, adr_path: Path | str) -> None:
+def commit_adr(state: PipelineState, adr_path: Path | str) -> None:
     """Commit the ADR the architect node just wrote."""
-    _commit_evidence(state, adr_path, f"{state['story_id']} ADR")
+    commit_evidence(state, adr_path, f"{state['story_id']} ADR")
 
 
-def _write_trust_package(state: PipelineState) -> None:
+def write_trust_package(state: PipelineState) -> None:
     """Best-effort: save the assembled trust package to docs/releases/ (project runs)."""
     project_dir = state.get("project_dir")
     if not project_dir:
@@ -77,4 +80,4 @@ def _write_trust_package(state: PipelineState) -> None:
         target.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
     except Exception:
         return  # never let release-note I/O fail the run
-    _commit_evidence(state, target, f"{state['story_id']} trust package (run {state['run_id']})")
+    commit_evidence(state, target, f"{state['story_id']} trust package (run {state['run_id']})")

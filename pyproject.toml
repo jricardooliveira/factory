@@ -22,6 +22,12 @@ build-backend = "hatchling.build"
 # which the trust package validates against at run time.
 packages = ["src/factory"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# The agent configuration lives at the repo root (agents/), outside the package.
+# A wheel has no checkout around it, so ship a copy; agent_config.location falls
+# back to it when there is no checkout agents/ directory.
+"agents" = "factory/_agents"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

@@ -22,7 +22,7 @@ from pathlib import Path
 from factory.evidence import trust_package as tp
 from factory.state import db
 from factory.workspace import git, layout, legacy
-from factory.workspace.projects import _package_root
+from factory.agent_config.location import checkout_root as _package_root
 
 OLD_RULES = (
     "# Alpha Project Rules\n\n"

@@ -86,5 +86,5 @@ class RunError(Exception):
     """
 
 
-def _ignore(_event: RunEvent) -> None:
+def ignore_events(_event: RunEvent) -> None:
     """The default callback: a caller that asked for no events gets none."""

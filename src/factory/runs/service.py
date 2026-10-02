@@ -40,7 +40,7 @@ from factory.runs.events import (
     RunFinished,
     RunOutcome,
     RunStarted,
-    _ignore,
+    ignore_events,
 )
 from factory.state.db import (
     create_story,
@@ -66,7 +66,7 @@ def run_pipeline(
     on_event: OnEvent | None = None,
 ) -> RunOutcome:
     """Start a run (or replay one on frozen outputs) and stream it to the end."""
-    emit = on_event or _ignore
+    emit = on_event or ignore_events
 
     # Init DB; create a new story (fresh run) or reuse the replayed run's story
     init_db(db_path)
@@ -178,7 +178,7 @@ def resume_run(
     on_event: OnEvent | None = None,
 ) -> RunOutcome:
     """Resume a paused pipeline run after human approval/rejection."""
-    emit = on_event or _ignore
+    emit = on_event or ignore_events
     init_db(db_path)
     with get_db(db_path) as conn:
         run = conn.execute(
@@ -276,7 +276,7 @@ def retry_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) ->
     refused it, and the recorded answer had no reader. This puts the run back
     where it was and replays the SAME decision — no re-interruption.
     """
-    emit = on_event or _ignore
+    emit = on_event or ignore_events
     init_db(db_path)
     with get_db(db_path) as conn:
         run = conn.execute(

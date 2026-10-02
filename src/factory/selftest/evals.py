@@ -252,7 +252,7 @@ def config_checks(*, agents_dir: Path | None = None) -> list[EvalResult]:
             )
         )
 
-        # ── The prompt must demand JSON-only: _run_agent_json depends on it ──
+        # ── The prompt must demand JSON-only: run_agent_json depends on it ──
         results.append(
             _check(
                 f"agent-demands-json-only:{agent}",

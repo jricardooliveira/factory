@@ -55,7 +55,7 @@ _UNIT_WORDS = frozenset({
 _WORD_RE = re.compile(r"[a-z0-9%\-]+")
 
 
-def _is_bound(criterion: str) -> bool:
+def is_bound(criterion: str) -> bool:
     """Whether a criterion supplies the number its qualifier needs."""
     lowered = criterion.lower()
     if any(ch.isdigit() for ch in lowered) or "%" in lowered:
@@ -92,7 +92,7 @@ def unasked_request_terms(
     """
     if not request:
         return frozenset()
-    if _is_bound(request):
+    if is_bound(request):
         # The operator supplied a number, so nothing was invented.
         return frozenset()
     words = set(_WORD_RE.findall(request.lower()))
@@ -128,7 +128,7 @@ def unbound_criteria(
         # An unauthorised term from the request always needs approval; otherwise
         # only an unquantified criterion does.
         hit = next((t for t in candidates if t in needs_approval), None)
-        if hit is None and not _is_bound(criterion):
+        if hit is None and not is_bound(criterion):
             hit = candidates[0]
         if hit:
             findings.append((criterion, hit))

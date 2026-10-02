@@ -14,12 +14,12 @@ from factory.pipeline.state import PipelineState
 from factory.workspace.repo_map import build_repo_inventory
 
 
-def _project_context(state: PipelineState) -> str:
+def project_context_block(state: PipelineState) -> str:
     """The rendered project spec as a leading prompt block ('' off-project)."""
     return f"{state['project_spec']}\n\n" if state.get("project_spec") else ""
 
 
-def _project_memory_block(state: PipelineState) -> str:
+def project_memory_block(state: PipelineState) -> str:
     """Prior ADRs + PROJECT_RULES for this project, as a prompt block ('' if none)."""
     project_dir = state.get("project_dir")
     if not project_dir:
@@ -28,7 +28,7 @@ def _project_memory_block(state: PipelineState) -> str:
     return f"{memory}\n\n" if memory else ""
 
 
-def _repo_inventory_block(state: PipelineState) -> str:
+def repo_inventory_block(state: PipelineState) -> str:
     """Interface map of the existing repo, so agents design/code against what's
     really there (brownfield awareness). Empty on a greenfield repo."""
     inventory = build_repo_inventory(Path(state.get("opencode_cwd") or "."))
@@ -40,7 +40,7 @@ def _repo_inventory_block(state: PipelineState) -> str:
     )
 
 
-def _reviewer_feedback_block(state: PipelineState) -> str:
+def reviewer_feedback_block(state: PipelineState) -> str:
     """Prompt block carrying feedback into a re-architecture pass.
 
     Two sources re-enter the architect with findings: a human REJECTING the
@@ -64,7 +64,7 @@ def _reviewer_feedback_block(state: PipelineState) -> str:
     return f"{header}\n\n{intro}\n{lines}\n\n"
 
 
-def _retry_context_block(state: PipelineState, attempt: int) -> str:
+def retry_context_block(state: PipelineState, attempt: int) -> str:
     """Prompt block telling the coder this is a remediation attempt ('' on first try)."""
     findings = state.get("prior_findings") or []
     if attempt <= 1 or not findings:

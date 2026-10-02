@@ -18,14 +18,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# src/factory/agent_config/review_policy.py -> <repo>/agents/policies/REVIEW.md.
-_DEFAULT_PATH = (
-    Path(__file__).resolve().parents[3] / "agents" / "policies" / "REVIEW.md"
-)
+from factory.agent_config.location import agents_dir
 
 
 def default_policy_path() -> Path:
-    return _DEFAULT_PATH
+    """``<agents dir>/policies/REVIEW.md`` — the checkout's, else the packaged copy."""
+    return agents_dir() / "policies" / "REVIEW.md"
 
 
 def load_review_policy(path: Path | None = None) -> str:
@@ -34,7 +32,7 @@ def load_review_policy(path: Path | None = None) -> str:
     Degrades to empty rather than raising: a missing policy must leave the tester
     working off its own definition, not break the run.
     """
-    target = path or _DEFAULT_PATH
+    target = path or default_policy_path()
     try:
         return target.read_text(encoding="utf-8").strip()
     except OSError:

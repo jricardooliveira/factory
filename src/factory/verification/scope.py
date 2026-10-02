@@ -1,4 +1,13 @@
-"""Scope policy: which changed paths fall outside a task's declared scope."""
+"""Scope policy — both of the factory's scope checks, as pure set logic.
+
+- `declared_scope_mismatch` / `scope_note`: what the coder DECLARED in
+  code_blocks vs what actually changed. An undeclared change is an out-of-band
+  write and BLOCKS gate-build (the coder node supplies the measured change set).
+- `paths_outside_scope`: what changed vs the task's declared ``scope``. Reported
+  as evidence in the trust package; it does not block.
+
+The measuring (git) lives in `factory.workspace.git`; this module only judges.
+"""
 
 from __future__ import annotations
 
@@ -72,3 +81,27 @@ def paths_outside_scope(changed: list[str], allowed_scope: list[str]) -> list[st
         if not ok:
             violations.append(path)
     return violations
+
+
+def declared_scope_mismatch(
+    changed: set[str], claimed: set[str]
+) -> tuple[set[str], set[str]]:
+    """Return (unclaimed, missing) for one coder pass.
+
+    `unclaimed` = files that changed but the coder did NOT declare in code_blocks —
+    out-of-band writes, an agent scribbling outside the factory's controlled
+    materialize path. `missing` = declared but not on disk.
+    """
+    return changed - claimed, claimed - changed
+
+
+def scope_note(unclaimed: set[str], missing: set[str]) -> str | None:
+    """The gate-build reason suffix for a declared-scope mismatch (None if clean)."""
+    if not unclaimed and not missing:
+        return None
+    bits = []
+    if unclaimed:
+        bits.append(f"unclaimed: {sorted(unclaimed)}")
+    if missing:
+        bits.append(f"claimed-but-absent: {sorted(missing)}")
+    return "scope-mismatch (" + "; ".join(bits) + ")"

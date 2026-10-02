@@ -7,12 +7,17 @@ the coder is *escalated* to a frontier model — a retry is exactly the case whe
 cheap reasoning already proved insufficient.
 
 The policy is DATA: ``agents/tiers.toml`` (next to the agent definitions it
-governs) is the single source of truth, loaded once at import into:
+governs) is the single source of truth, loaded on FIRST USE (`config()`) into:
 
 - ``AGENT_TIERS``       — which tier each stage runs at.
 - ``TIER_DEFAULTS``     — which concrete opencode model backs each tier.
 - ``ESCALATE_ON_RETRY`` — which agents move up a tier on attempt 2+.
 - ``DEFAULT_TIER``      — the tier of any agent the file does not list.
+
+Lazily, not at import: every CLI verb imports this module through the pipeline,
+so an import-time load made a missing or invalid tiers.toml crash read-only verbs
+(`factory list`, `factory --help`) and `factory doctor` — the very command meant
+to diagnose it. The four names above stay readable as module attributes.
 
 A ``FACTORY_TIER_<TIER>`` environment variable still wins over the file, so the
 operator can re-point a tier for one run without editing anything.
@@ -27,7 +32,11 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
+from typing import Any
+
+from factory.agent_config.location import TIERS_FILENAME, agents_dir
 
 
 @dataclass(frozen=True)
@@ -41,8 +50,8 @@ class TierConfig:
 
 
 def default_tiers_path() -> Path:
-    # src/factory/agent_config/tiers.py -> <repo>/agents/tiers.toml.
-    return Path(__file__).resolve().parents[3] / "agents" / "tiers.toml"
+    """``<agents dir>/tiers.toml`` — the checkout's, else the packaged copy."""
+    return agents_dir() / TIERS_FILENAME
 
 
 def _str_table(data: dict, key: str, path: Path, *, required: bool = True) -> dict[str, str]:
@@ -93,12 +102,25 @@ def load_tiers(path: Path | None = None) -> TierConfig:
     )
 
 
-_CONFIG = load_tiers()
+@cache
+def config() -> TierConfig:
+    """The default tiers.toml, parsed once on first use (see the module docstring)."""
+    return load_tiers()
 
-TIER_DEFAULTS: dict[str, str] = _CONFIG.tier_models
-AGENT_TIERS: dict[str, str] = _CONFIG.agent_tiers
-ESCALATE_ON_RETRY: dict[str, str] = _CONFIG.escalate_on_retry
-DEFAULT_TIER: str = _CONFIG.default_tier
+
+_LAZY_ATTRS = {
+    "TIER_DEFAULTS": "tier_models",
+    "AGENT_TIERS": "agent_tiers",
+    "ESCALATE_ON_RETRY": "escalate_on_retry",
+    "DEFAULT_TIER": "default_tier",
+}
+
+
+def __getattr__(name: str) -> Any:
+    # PEP 562: `tiers.AGENT_TIERS` keeps working, but reading it is what loads the file.
+    if name in _LAZY_ATTRS:
+        return getattr(config(), _LAZY_ATTRS[name])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def model_for_tier(tier: str) -> str:
@@ -107,16 +129,17 @@ def model_for_tier(tier: str) -> str:
     if override:
         return override
     try:
-        return TIER_DEFAULTS[tier]
+        return config().tier_models[tier]
     except KeyError:
         raise ValueError(f"Unknown model tier: {tier!r}") from None
 
 
 def tier_for_agent(agent_name: str, attempt_number: int = 1) -> str:
     """The tier an agent runs at, applying retry-escalation past the first attempt."""
-    if attempt_number > 1 and agent_name in ESCALATE_ON_RETRY:
-        return ESCALATE_ON_RETRY[agent_name]
-    return AGENT_TIERS.get(agent_name, DEFAULT_TIER)
+    cfg = config()
+    if attempt_number > 1 and agent_name in cfg.escalate_on_retry:
+        return cfg.escalate_on_retry[agent_name]
+    return cfg.agent_tiers.get(agent_name, cfg.default_tier)
 
 
 def resolve_model(agent_name: str, attempt_number: int = 1) -> tuple[str, str]:
@@ -132,6 +155,6 @@ def distinct_models() -> dict[str, list[str]]:
     model once.
     """
     models: dict[str, list[str]] = {}
-    for tier in TIER_DEFAULTS:
+    for tier in config().tier_models:
         models.setdefault(model_for_tier(tier), []).append(tier)
     return models

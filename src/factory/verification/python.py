@@ -8,12 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from factory.verification import _TEST_TIMEOUT, VerifyCheck, _run, tests_enabled
+from factory.verification.base import TEST_TIMEOUT, VerifyCheck, run_command, tests_enabled
 
 
-def _py_compile(py_files: list[Path], root: Path) -> VerifyCheck:
+def py_compile_check(py_files: list[Path], root: Path) -> VerifyCheck:
     try:
-        proc = _run([sys.executable, "-m", "py_compile", *[str(p) for p in py_files]], root)
+        proc = run_command([sys.executable, "-m", "py_compile", *[str(p) for p in py_files]], root)
     except subprocess.TimeoutExpired:
         return VerifyCheck("py_compile", "warn", "timed out")
     if proc.returncode != 0:
@@ -61,11 +61,11 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
     return VerifyCheck("pytest_collect", "warn", tail)
 
 
-def _pytest_collect(root: Path) -> VerifyCheck | None:
+def pytest_collect(root: Path) -> VerifyCheck | None:
     if importlib.util.find_spec("pytest") is None:
         return VerifyCheck("pytest_collect", "skip", "pytest not installed")
     try:
-        proc = _run([sys.executable, "-m", "pytest", "--collect-only", "-q"], root)
+        proc = run_command([sys.executable, "-m", "pytest", "--collect-only", "-q"], root)
     except subprocess.TimeoutExpired:
         return VerifyCheck("pytest_collect", "warn", "timed out")
     if proc.returncode != 0:
@@ -88,17 +88,17 @@ def run_tests(root: Path) -> VerifyCheck:
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", str(root)],
-            cwd=str(root), capture_output=True, text=True, timeout=_TEST_TIMEOUT,
+            cwd=str(root), capture_output=True, text=True, timeout=TEST_TIMEOUT,
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
-        return VerifyCheck("pytest_run", "fail", f"tests timed out after {_TEST_TIMEOUT}s")
+        return VerifyCheck("pytest_run", "fail", f"tests timed out after {TEST_TIMEOUT}s")
     if proc.returncode != 0:
         return VerifyCheck("pytest_run", "fail", (proc.stdout or proc.stderr).strip()[-600:])
     return VerifyCheck("pytest_run", "pass", "tests passed")
 
 
-def _is_py_test(path: Path) -> bool:
+def is_py_test(path: Path) -> bool:
     n = path.name
     return n.startswith("test_") or n.endswith("_test.py")
 
@@ -107,7 +107,7 @@ def _is_py_test(path: Path) -> bool:
 _SKIP_TREES = {".git", ".venv", "venv", "__pycache__", ".opencode", ".sandbox", "node_modules"}
 
 
-def _has_tests(root: Path) -> bool:
+def has_tests(root: Path) -> bool:
     """Whether the repo contains any Python test file at all.
 
     Guards `run_tests`: a repo with no suite has nothing to run, and pytest's
@@ -118,7 +118,7 @@ def _has_tests(root: Path) -> bool:
         for path in root.rglob("*.py"):
             if any(part in _SKIP_TREES for part in path.parts):
                 continue
-            if _is_py_test(path):
+            if is_py_test(path):
                 return True
     except OSError:
         return False

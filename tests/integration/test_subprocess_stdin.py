@@ -39,10 +39,10 @@ class AgentCallStdinTests(unittest.TestCase):
 
 class VerifyStdinTests(unittest.TestCase):
     def test_verify_commands_never_inherit_stdin(self) -> None:
-        from factory import verification
+        from factory.verification import base
 
-        with patch("factory.verification.subprocess.run", return_value=_done()) as run:
-            verification._run(["go", "build", "./..."], Path("."))
+        with patch("factory.verification.base.subprocess.run", return_value=_done()) as run:
+            base.run_command(["go", "build", "./..."], Path("."))
         self.assertIs(run.call_args.kwargs.get("stdin"), subprocess.DEVNULL)
 
     def test_running_agent_written_tests_never_inherits_stdin(self) -> None:

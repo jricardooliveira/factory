@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from factory.domain.ambiguity import _is_bound, unbound_criteria
+from factory.domain.ambiguity import is_bound, unbound_criteria
 from factory.domain.contracts import ArchitectOutput, CoderOutput, SpecOutput, TesterOutput
 
 
@@ -126,7 +126,7 @@ def gate_after_spec(
             "criteria either leave it undefined or fill it in with a value you "
             "never approved:\n"
             + "\n".join(
-                f"  • '{term}' — {'the story INVENTED a value your request never supplied' if _is_bound(crit) else 'still undefined'}"
+                f"  • '{term}' — {'the story INVENTED a value your request never supplied' if is_bound(crit) else 'still undefined'}"
                 f" in: {crit}"
                 for crit, term in unbound
             )

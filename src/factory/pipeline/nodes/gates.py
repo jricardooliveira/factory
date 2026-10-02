@@ -21,8 +21,8 @@ from factory.domain.gates import (
     gate_after_tester,
 )
 from factory.domain.traceability import trace_criteria, unassessed_criteria
-from factory.pipeline.agent_calls import _get_db_conn
-from factory.pipeline.nodes.evidence import _write_trust_package
+from factory.pipeline.agent_calls import db_conn
+from factory.pipeline.evidence_writers import write_trust_package
 from factory.pipeline.state import PipelineState
 from factory.state.db import (
     finish_run,
@@ -63,7 +63,7 @@ def settled_threshold_terms(state: PipelineState) -> frozenset[str]:
     run_id, db_path = state.get("run_id"), state.get("db_path")
     if run_id and db_path:
         try:
-            conn = _get_db_conn(state)
+            conn = db_conn(state)
             try:
                 rows = conn.execute(
                     "SELECT human_response FROM gate_results WHERE run_id = ? "
@@ -117,7 +117,7 @@ def node_gate_1(state: PipelineState) -> dict[str, Any]:
     )
 
     error = f"Gate 1 failed: {result.reason}" if not result.passed else None
-    conn = _get_db_conn(state)
+    conn = db_conn(state)
     try:
         human_q_text = "\n\n".join(result.human_questions) if result.human_questions else None
         log_gate(
@@ -165,7 +165,7 @@ def node_gate_2(state: PipelineState) -> dict[str, Any]:
     arch = ArchitectOutput.model_validate(state["architect"])
     result = gate_after_architect(arch)
 
-    conn = _get_db_conn(state)
+    conn = db_conn(state)
     try:
         human_q_text = "\n\n".join(result.human_questions) if result.human_questions else None
         log_gate(
@@ -240,14 +240,14 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
 
     gate_dict = {"gate": result.gate, "passed": result.passed, "reason": reason}
 
-    conn = _get_db_conn(state)
+    conn = db_conn(state)
     try:
         log_gate(conn, state["run_id"], result.gate, result.passed, reason)
 
         if result.passed:
             update_story_status(conn, state["story_id"], "completed")
             finish_run(conn, state["run_id"], "completed")
-            _write_trust_package(state)
+            write_trust_package(state)
             conn.commit()
             return {"gate_test": gate_dict, "status": "completed"}
 

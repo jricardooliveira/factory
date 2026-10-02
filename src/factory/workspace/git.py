@@ -44,7 +44,7 @@ def git_init(root: Path) -> None:
 
 
 # Factory plumbing that lives inside a product repo but is not part of the product.
-# `.opencode` is the symlink `projects._link_opencode_agents` creates so opencode can
+# `.opencode` is the symlink `projects.link_opencode_agents` creates so opencode can
 # resolve the agent definitions; it is an absolute path to the operator's machine.
 _INFRA_EXCLUDES = ("/.opencode",)
 

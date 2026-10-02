@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from factory.pipeline.prompts.blocks import _project_memory_block
+from factory.pipeline.prompts.blocks import project_memory_block
 from factory.pipeline.state import PipelineState
 
 
@@ -23,7 +23,7 @@ def build_spec_prompt(state: PipelineState) -> str:
     parts: list[str] = []
     if state.get("project_spec"):
         parts.append(f"{state['project_spec']}\n")
-    memory = _project_memory_block(state)
+    memory = project_memory_block(state)
     if memory:
         parts.append(memory)
 
