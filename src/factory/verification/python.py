@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from factory.verification.base import TEST_TIMEOUT, VerifyCheck, run_command, tests_enabled
+from factory.verification.base import suite_timeout, VerifyCheck, run_command, tests_enabled
 
 
 def py_compile_check(py_files: list[Path], root: Path) -> VerifyCheck:
@@ -193,11 +193,11 @@ def run_tests(root: Path) -> VerifyCheck:
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", str(root)],
-            cwd=str(root), capture_output=True, text=True, timeout=TEST_TIMEOUT,
+            cwd=str(root), capture_output=True, text=True, timeout=suite_timeout(),
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
-        return VerifyCheck("pytest_run", "fail", f"tests timed out after {TEST_TIMEOUT}s")
+        return VerifyCheck("pytest_run", "fail", f"tests timed out after {suite_timeout()}s")
     if proc.returncode != 0:
         return VerifyCheck("pytest_run", "fail", (proc.stdout or proc.stderr).strip()[-600:])
     return VerifyCheck("pytest_run", "pass", "tests passed")

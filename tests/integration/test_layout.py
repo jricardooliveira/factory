@@ -45,10 +45,10 @@ ALLOWED: dict[str, frozenset[str]] = {
     "pipeline": frozenset({"evidence", "verification", "workspace", "agent_config",
                            "adapters", "state", "domain"}),
     "evidence": frozenset({"verification", "workspace", "agent_config", "state", "domain"}),
-    "verification": frozenset({"workspace", "domain"}),
+    "verification": frozenset({"workspace", "agent_config", "domain"}),
     "workspace": frozenset({"agent_config", "state", "domain"}),
     "agent_config": frozenset({"domain"}),
-    "adapters": frozenset({"domain"}),
+    "adapters": frozenset({"agent_config", "domain"}),
     "state": frozenset({"domain"}),
     "domain": frozenset(),
 }

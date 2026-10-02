@@ -12,7 +12,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from factory.verification.base import BUILD_TIMEOUT, TEST_TIMEOUT, VerifyCheck, run_command, tests_enabled
+from factory.verification.base import (
+    VerifyCheck,
+    build_timeout,
+    run_command,
+    suite_timeout,
+    tests_enabled,
+)
 
 
 def _go_module_path(module_dir: Path) -> str:
@@ -99,7 +105,7 @@ def go_build(module_dirs: list[Path]) -> VerifyCheck:
     for module_dir in module_dirs:
         module_path = _go_module_path(module_dir)
         try:
-            proc = run_command(["go", "build", "./..."], module_dir, timeout=BUILD_TIMEOUT)
+            proc = run_command(["go", "build", "./..."], module_dir, timeout=build_timeout())
         except subprocess.TimeoutExpired:
             warnings.append(f"{module_dir.name}: timed out")
             continue
@@ -147,7 +153,7 @@ def go_vet(module_dirs: list[Path]) -> VerifyCheck:
         return VerifyCheck("go_vet", "skip", "no go module")
     for module_dir in module_dirs:
         try:
-            proc = run_command(["go", "vet", "./..."], module_dir, timeout=BUILD_TIMEOUT)
+            proc = run_command(["go", "vet", "./..."], module_dir, timeout=build_timeout())
         except subprocess.TimeoutExpired:
             return VerifyCheck("go_vet", "warn", "timed out")
         if proc.returncode != 0:
@@ -170,9 +176,9 @@ def run_go_tests(module_dirs: list[Path]) -> VerifyCheck:
         return VerifyCheck("go_test", "skip", "no go module")
     for module_dir in module_dirs:
         try:
-            proc = run_command(["go", "test", "./..."], module_dir, timeout=TEST_TIMEOUT)
+            proc = run_command(["go", "test", "./..."], module_dir, timeout=suite_timeout())
         except subprocess.TimeoutExpired:
-            return VerifyCheck("go_test", "fail", f"tests timed out after {TEST_TIMEOUT}s")
+            return VerifyCheck("go_test", "fail", f"tests timed out after {suite_timeout()}s")
         if proc.returncode != 0:
             output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
             if _classify_go_failure(output, _go_module_path(module_dir)) == "warn":

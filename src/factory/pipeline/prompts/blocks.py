@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from factory.domain.gates import MAX_CODER_ATTEMPTS
+from factory.agent_config.settings import settings
 from factory.evidence.adr import load_project_memory
 from factory.evidence.brief import load_brief
 from factory.pipeline.state import PipelineState
@@ -90,7 +90,8 @@ def retry_context_block(state: PipelineState, attempt: int) -> str:
     trigger = state.get("triggered_by", "a gate")
     lines = "\n".join(f"- {f}" for f in findings)
     return (
-        f"## Previous attempt failed (attempt {attempt} of {MAX_CODER_ATTEMPTS})\n\n"
+        f"## Previous attempt failed (attempt {attempt} of "
+        f"{settings().budget.max_coder_attempts})\n\n"
         f"The prior implementation failed `{trigger}`. Fix these specifically; "
         f"the files you wrote already exist in the working directory — correct them:\n"
         f"{lines}\n\n"

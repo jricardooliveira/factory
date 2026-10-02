@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from factory.verification.base import BUILD_TIMEOUT, VerifyCheck, run_command
+from factory.verification.base import build_timeout, VerifyCheck, run_command
 
 
 # A missing toolchain cannot let its files pass unverified (review task T04).
@@ -83,7 +83,9 @@ def tsc_check(root: Path, ts_files: list[Path]) -> VerifyCheck:
         if tsc is None:
             return VerifyCheck("tsc", "fail", _NOT_INSTALLED.format(tool="tsc"))
         try:
-            proc = run_command([*tsc, "--noEmit", "-p", str(project_dir)], root, timeout=BUILD_TIMEOUT)
+            proc = run_command(
+                [*tsc, "--noEmit", "-p", str(project_dir)], root, timeout=build_timeout()
+            )
         except subprocess.TimeoutExpired:
             return VerifyCheck("tsc", "warn", "timed out")
         if proc.returncode != 0:

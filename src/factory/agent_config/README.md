@@ -14,6 +14,7 @@ chosen.
 |---|---|
 | `location.py` | `agents_dir()` resolves the config directory; `checkout_root()` is the repo root (holds `agents/`, `.opencode/`, `evals/`, `examples/`; only meaningful in a source checkout). Constants `AGENTS_DIR_ENV`, `TIERS_FILENAME`. |
 | `tiers.py` | `load_tiers` parses and validates `tiers.toml` into a frozen `TierConfig`; `config()` caches the default one. `model_for_tier`, `tier_for_agent`, `resolve_model` -> `(model_id, tier)`, `distinct_models()` (model -> tiers it backs, one preflight probe per model). |
+| `settings.py` | `load_settings` parses `factory.toml` (repo root; `FACTORY_CONFIG` overrides) into frozen `Settings(budget, timeouts, features)`; precedence env > file > default; a missing file is all-defaults, a malformed one raises `SettingsError`. `settings()` re-reads per call. Budget defaults come from `domain/gates.py`'s `MAX_*` constants. |
 | `review_policy.py` | `load_review_policy` reads `policies/REVIEW.md` ("" if unreadable); `policy_block` wraps it as a labelled prompt section; `default_policy_path`. |
 
 ## How it works

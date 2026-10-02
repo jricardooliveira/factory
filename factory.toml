@@ -1,0 +1,29 @@
+# Operator settings — the knobs you may tune without touching code.
+#
+# Read by factory.agent_config.settings. Precedence: environment variable > this file >
+# built-in default. FACTORY_CONFIG=/path/to/other.toml points at a different file; a missing
+# file means "all defaults". Unknown keys and non-positive numbers are errors, not ignored.
+#
+# Model choice does NOT live here — it is agents/tiers.toml, the only place model ids are
+# chosen. The values below are the defaults, spelled out so they are visible.
+
+# Per-story spend and remediation limits (EFFECTIVENESS.md §4: fail-fast, then queue).
+[budget]
+max_story_cost_usd = 10.0      # no model call is made once a story has spent this (list-price estimate)
+max_coder_attempts = 2         # build attempts per task before the run is parked
+max_tester_remediations = 1    # tester failures routed back to the coder before parking
+max_rearchitect_loops = 1      # infeasible-design bounces from coder back to architect
+max_boundary_redesigns = 1     # failed boundary reviews sent back to the architect
+
+# Seconds.
+[timeouts]
+command = 60       # generic verification subprocess
+test = 180         # a materialized test suite (only when run_tests is on)
+build = 180        # go build / go vet / tsc
+agent = 600        # one opencode agent call               (env: FACTORY_AGENT_TIMEOUT)
+probe = 120        # one `factory doctor` model probe
+stale_run = 3600   # a 'running' row older than this is reconciled as dead
+
+[features]
+run_tests = false  # execute the coder's tests — runs agent-written code  (env: FACTORY_RUN_TESTS)
+notify = false     # macOS desktop notifications                          (env: FACTORY_NOTIFY)

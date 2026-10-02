@@ -13,7 +13,8 @@ from __future__ import annotations
 from typing import Any
 
 from factory.domain.contracts import BoundaryOutput
-from factory.domain.gates import MAX_BOUNDARY_REDESIGNS, boundary_findings, boundary_overall
+from factory.agent_config.settings import settings
+from factory.domain.gates import boundary_findings, boundary_overall
 from factory.pipeline.agent_calls import ReplayGap, db_conn, run_agent_json, usage_kwargs
 from factory.pipeline.prompts.boundary import build_boundary_prompt
 from factory.pipeline.state import PipelineState
@@ -55,7 +56,7 @@ def node_boundary_agent(state: PipelineState) -> dict[str, Any]:
         out: dict[str, Any] = {"boundary_raw": result.output, "boundary": parsed,
                                "boundary_status": "reviewed", "boundary_redesign": False}
         redesigns = state.get("boundary_redesigns", 0)
-        if verdict == "fail" and redesigns < MAX_BOUNDARY_REDESIGNS:
+        if verdict == "fail" and redesigns < settings().budget.max_boundary_redesigns:
             out.update({
                 "boundary_redesign": True,
                 "boundary_redesigns": redesigns + 1,

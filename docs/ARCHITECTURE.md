@@ -68,7 +68,7 @@ both. `tiers.toml` loads on first use, so read-only verbs never need it.
 | Package | Owns | Must not |
 |---|---|---|
 | `domain/` | Pydantic agent contracts (`contracts.py`), gate policy and every `MAX_*` budget (`gates.py`), threshold-term ambiguity detection (`ambiguity.py`), task ordering + task-graph validation (`task_order.py`), the boss's authorization rules (`authorization.py`), AC ↔ tester traceability, `ProjectSpec`, agent-JSON parsing (`agent_output.py`) | do I/O or import anything else from `factory` |
-| `agent_config/` | the code side of `agents/`: `location.py` (checkout `agents/`, else the wheel's bundled copy, else `FACTORY_AGENTS_DIR`), `tiers.py` loads and validates `tiers.toml` lazily (`FACTORY_TIER_*` wins), `review_policy.py` loads `REVIEW.md` | choose a model anywhere but `tiers.toml` |
+| `agent_config/` | the code side of `agents/`: `location.py` (checkout `agents/`, else the wheel's bundled copy, else `FACTORY_AGENTS_DIR`), `tiers.py` loads and validates `tiers.toml` lazily (`FACTORY_TIER_*` wins), `settings.py` loads the operator's `factory.toml` (budget, timeouts, switches; env > file > default), `review_policy.py` loads `REVIEW.md` | choose a model anywhere but `tiers.toml` |
 | `pipeline/` | the LangGraph orchestrator: `state.py`, `graph.py` (edges, resume routing, ONE graph builder entered at any stage), `boss.py` (authorizes every agent stage before it runs), `nodes/` (one per stage + the gate nodes; `boundary.py` = the pre-implementation boundary review; `release.py` = the release-agent and the operator's release), `prompts/` (every prompt, byte-pinned), `agent_calls.py` (the single agent-call boundary), `evidence_writers.py` (chain/ADR/trust-package writes + their `factory:` commits). `__init__` is its public API | be imported past `factory.pipeline.__all__` from outside |
 | `verification/` | non-LLM build checks: `base.py` (check/result types, the subprocess runner, timeouts), `python.py`, `go.py`, `typescript.py`, `scope.py` (BOTH scope policies: declared-vs-changed, which blocks gate-build, and changed-vs-task-scope, which the trust package reports); `verify_changes` in `__init__` dispatches by file extension | judge with an LLM; run git plumbing (that is `workspace/git.py`) |
 | `evidence/` | `artifacts.py` (INTENT → SPEC → PLAN), `adr.py` (decision memory), `trust_package.py` + `schemas/`, `metrics.py`, `progress.py` (per-run stage flow + timeline, plain text), `pipeline_record.py` (each story's committed `PIPELINE.md`) | overstate evidence (see CLAUDE.md); render markup (that is `interfaces/render/`) |
@@ -87,7 +87,8 @@ both. `tiers.toml` loads on first use, so read-only verbs never need it.
 ```
 interfaces -> {selftest, preflight, runs}      selftest -> runs
 runs -> pipeline -> evidence -> verification -> workspace -> agent_config -> domain
-adapters, state -> domain
+adapters -> agent_config -> domain   (adapters and verification read settings.py)
+state -> domain
 ```
 
 - **`domain` imports nothing from `factory`.** Policy stays pure and unit-testable.

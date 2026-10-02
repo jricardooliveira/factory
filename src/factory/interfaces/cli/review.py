@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from factory import runs
+from factory.agent_config.settings import settings
 from factory.domain.agent_output import parse_agent_json
 from factory.interfaces import render
 from factory.interfaces.cli.common import db_path, fail, run_id_arg
 from factory.interfaces.render.review import render_flow, render_timeline
 from factory.runs import queries
-from factory.runs.lifecycle import DEFAULT_STALE_SECS
 
 
 def review_command(args: list[str]) -> None:
@@ -59,7 +59,7 @@ def dismiss_command(args: list[str]) -> None:
 
 def reconcile_command(args: list[str]) -> None:
     """`factory reconcile [--older-than S]`: mark stale 'running' runs (process died) failed."""
-    older_than = DEFAULT_STALE_SECS
+    older_than = float(settings().timeouts.stale_run)
     if "--older-than" in args:
         idx = args.index("--older-than")
         if idx + 1 < len(args):

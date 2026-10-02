@@ -11,7 +11,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from factory.agent_config.settings import settings
 from factory.domain.ambiguity import defined_threshold_terms
 from factory.domain.contracts import (
     ArchitectOutput,
@@ -20,8 +19,8 @@ from factory.domain.contracts import (
     SpecOutput,
     TesterOutput,
 )
+from factory.agent_config.settings import settings
 from factory.domain.gates import (
-    MAX_TESTER_REMEDIATIONS,
     gate_after_architect,
     gate_after_release,
     gate_after_spec,
@@ -265,7 +264,8 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
         # carrying the findings, unless the remediation or cost budget is spent.
         tester_attempt = state.get("tester_attempt", 1)
         conn.commit()  # the spend below is read on its own connection
-        if tester_attempt <= MAX_TESTER_REMEDIATIONS and budget_refusal_for(state) is None:
+        budget = settings().budget
+        if tester_attempt <= budget.max_tester_remediations and budget_refusal_for(state) is None:
             conn.commit()  # leave the run 'running'; route_after_gate_test → coder
             return {
                 "gate_test": gate_dict,
@@ -278,8 +278,8 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
 
         error = (
             f"Gate test failed after {tester_attempt} tester pass(es) "
-            f"(remediation budget {MAX_TESTER_REMEDIATIONS}; story spend "
-            f"~${spend_so_far(state).estimated_usd:.2f} of ${settings().budget.max_story_cost_usd:.2f}): "
+            f"(remediation budget {budget.max_tester_remediations}; story spend "
+            f"~${spend_so_far(state).estimated_usd:.2f} of ${budget.max_story_cost_usd:.2f}): "
             f"{result.reason}"
         )
         update_story_status(conn, state["story_id"], "failed")

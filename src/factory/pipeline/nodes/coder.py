@@ -10,9 +10,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from factory.agent_config.settings import settings
 from factory.domain.contracts import CoderOutput, SpecOutput, TaskDef
-from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_REARCHITECT_LOOPS
+from factory.agent_config.settings import settings
 from factory.domain.task_order import order_tasks
 from factory.pipeline.agent_calls import (
     budget_refusal_for,
@@ -248,7 +247,7 @@ def _design_feedback(
     log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
               verdict="design-infeasible", duration_secs=result.duration_secs,
               stage_type=task.id, **usage_kwargs(result))
-    if task_index == 0 and attempt == 1 and count < MAX_REARCHITECT_LOOPS:
+    if task_index == 0 and attempt == 1 and count < settings().budget.max_rearchitect_loops:
         conn.commit()
         return {
             "coder_raw": result.output, "coder": parsed,
@@ -260,7 +259,7 @@ def _design_feedback(
         }
     error = (
         f"coder reports the design is infeasible but re-architecture budget is "
-        f"spent (max {MAX_REARCHITECT_LOOPS}): {coder.design_feedback.strip()}"
+        f"spent (max {settings().budget.max_rearchitect_loops}): {coder.design_feedback.strip()}"
     )
     _fail_story(conn, state, error)
     return {"coder_raw": result.output, "coder": parsed,
@@ -292,7 +291,8 @@ def _route_after_build(
 
     # Task failed: retry the SAME task within budget, else give up + queue.
     conn.commit()  # the spend below is read on its own connection
-    budget_left = attempt < MAX_CODER_ATTEMPTS and budget_refusal_for(state) is None
+    budget = settings().budget
+    budget_left = attempt < budget.max_coder_attempts and budget_refusal_for(state) is None
     if not verify_passed and budget_left:
         conn.commit()  # keep run 'running'; same task_index -> retries this task
         return {
@@ -306,8 +306,8 @@ def _route_after_build(
     if not verify_passed:
         error = (
             f"gate-build failed on {task.id} after {attempt} attempt(s) "
-            f"(budget: {MAX_CODER_ATTEMPTS} attempts; story spend "
-            f"~${spend_so_far(state).estimated_usd:.2f} of ${settings().budget.max_story_cost_usd:.2f}): "
+            f"(budget: {budget.max_coder_attempts} attempts; story spend "
+            f"~${spend_so_far(state).estimated_usd:.2f} of ${budget.max_story_cost_usd:.2f}): "
             f"{gate_reason}"
         )
     else:

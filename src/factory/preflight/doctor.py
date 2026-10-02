@@ -41,8 +41,8 @@ from typing import Literal
 
 from factory.adapters.opencode import run_agent
 from factory.agent_config import tiers
-from factory.agent_config.settings import settings
 from factory.agent_config.location import checkout_root
+from factory.agent_config.settings import settings
 from factory.state.reports import read_only_summary
 from factory.workspace import layout
 

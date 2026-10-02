@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from factory.agent_config.settings import settings
+
 
 def _default_timeout() -> int:
-    """Per-agent subprocess timeout in seconds (override via FACTORY_AGENT_TIMEOUT)."""
-    try:
-        return max(1, int(os.environ.get("FACTORY_AGENT_TIMEOUT", "600")))
-    except ValueError:
-        return 600
+    """Per-agent subprocess timeout in seconds (factory.toml [timeouts] agent, or
+    the FACTORY_AGENT_TIMEOUT env var)."""
+    return settings().timeouts.agent
 
 
 @dataclass

@@ -16,7 +16,7 @@ callback and refusals are raised as `RunError`.
 | `service.py` | `run_pipeline`, `run_project_pipeline`, `replay_run`, `resume_run`, `retry_run`; private `_resume_state`, `_finish`, `_commit_pipeline_record`, `_notify_if_parked`, `_refuse_if_project_busy`, `_require_agents_link`, `_unresumable`. |
 | `events.py` | Event dataclasses `RunStarted`, `NodeCompleted`, `RetryStarted`, `ResumeEntered`, `RunFinished`; `RunOutcome`; the `RunEvent` union and `OnEvent` alias; `RunError`; `ignore_events` (default callback). |
 | `context.py` | Rebuilds resume inputs from the DB: `decision_from_response`, `build_resume_context` (latest spec + architecture), `last_boundary_review`, `park_unresumable`, `load_project_spec_text`. |
-| `lifecycle.py` | `dismiss_run` (archive; refuses `waiting_human` and `running`), `reconcile_stale` (mark runs stuck `running` past `DEFAULT_STALE_SECS` = 3600 as failed). One policy for CLI and TUI. |
+| `lifecycle.py` | `dismiss_run` (archive; refuses `waiting_human` and `running`), `reconcile_stale` (mark runs stuck `running` past `[timeouts] stale_run` (factory.toml, default 3600) as failed). One policy for CLI and TUI. |
 | `queries.py` | Read side: `all_runs`, `run_record`, `queue`, `board`, `board_entries` / `BoardEntry`, `review_bundle` / `RunReview`, `run_stages`, `factory_report` / `FactoryReport`, `factory_metrics`. |
 
 ## How it works

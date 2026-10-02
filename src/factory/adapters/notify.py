@@ -9,11 +9,12 @@ osascript; never raises, never blocks the pipeline.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
 import sys
+
+from factory.agent_config.settings import settings
 
 # Notifications are short; sanitize hard to avoid AppleScript injection from
 # agent/user-supplied text (story titles, gate reasons).
@@ -25,7 +26,7 @@ def _clean(text: str, maxlen: int = 180) -> str:
 
 
 def enabled() -> bool:
-    return os.environ.get("FACTORY_NOTIFY", "").strip().lower() in ("1", "true", "yes", "on")
+    return settings().features.notify
 
 
 def notify(title: str, message: str) -> bool:

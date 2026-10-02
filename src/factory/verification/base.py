@@ -7,25 +7,36 @@ typescript) can import it without a cycle back through the package that imports 
 
 from __future__ import annotations
 
-import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-COMMAND_TIMEOUT = 60
-TEST_TIMEOUT = 180
-# A build (`go build` resolving modules on a cold cache, `tsc -p` over a whole
-# project) gets more room than the 60s a py_compile needs.
-BUILD_TIMEOUT = 180
+from factory.agent_config.settings import settings
+
+# Timeouts come from factory.toml [timeouts]. A build (`go build` resolving modules on a
+# cold cache, `tsc -p` over a whole project) gets more room than the py_compile default.
+
+
+def command_timeout() -> int:
+    return settings().timeouts.command
+
+
+def suite_timeout() -> int:
+    return settings().timeouts.test
+
+
+def build_timeout() -> int:
+    return settings().timeouts.build
 
 
 def tests_enabled() -> bool:
     """Whether to actually RUN materialized tests (opt-in).
 
     Off by default: executing agent-generated code is risky without true OS-level
-    isolation. Operators who trust their setup opt in with FACTORY_RUN_TESTS=1.
+    isolation. Operators who trust their setup opt in with FACTORY_RUN_TESTS=1 or
+    ``run_tests = true`` in factory.toml.
     """
-    return os.environ.get("FACTORY_RUN_TESTS", "").strip().lower() in ("1", "true", "yes", "on")
+    return settings().features.run_tests
 
 
 @dataclass
@@ -60,10 +71,11 @@ class VerifyResult:
 
 
 def run_command(
-    cmd: list[str], cwd: Path, timeout: int = COMMAND_TIMEOUT
+    cmd: list[str], cwd: Path, timeout: int | None = None
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+        cmd, cwd=str(cwd), capture_output=True, text=True,
+        timeout=command_timeout() if timeout is None else timeout,
         # Never inherit stdin: agent-written code under test (`go test`, pytest)
         # reading it would block the gate. See adapters.opencode.run_agent.
         stdin=subprocess.DEVNULL,

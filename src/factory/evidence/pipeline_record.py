@@ -111,7 +111,8 @@ def render_pipeline_record(db_path: Path, run_id: int) -> str | None:
         f"**Stage:** {run.get('current_stage') or '—'}",
         f"- **Started:** {_when(run.get('started_at'))} UTC · "
         f"**Stopped:** {_when(run.get('finished_at'))} UTC",
-        f"- **Story spend:** ~${spend.estimated_usd:.2f} of ${settings().budget.max_story_cost_usd:.2f} "
+        f"- **Story spend:** ~${spend.estimated_usd:.2f} of "
+        f"${settings().budget.max_story_cost_usd:.2f} "
         "(estimated at API list prices"
         + (f"; {spend.unknown_calls} call(s) with unknown usage" if spend.unknown_calls else "")
         + ")",

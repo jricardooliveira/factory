@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from factory.agent_config.settings import settings
 from factory.runs.events import RunError
 from factory.state.db import archive_run, get_db, get_run, init_db, reconcile_stale_runs
 
@@ -17,8 +18,6 @@ _NOT_DISMISSIBLE = {
     "waiting_human": "is awaiting your decision — approve or reject it",
     "running": "is still running — let it finish, or `factory reconcile` it if its process died",
 }
-
-DEFAULT_STALE_SECS = 3600.0
 
 
 def dismiss_run(run_id: int, *, db_path: Path) -> None:
@@ -34,8 +33,11 @@ def dismiss_run(run_id: int, *, db_path: Path) -> None:
         archive_run(conn, run_id)
 
 
-def reconcile_stale(older_than_secs: float = DEFAULT_STALE_SECS, *, db_path: Path) -> list[int]:
-    """Mark runs stuck 'running' longer than the cutoff as failed (their process died)."""
+def reconcile_stale(older_than_secs: float | None = None, *, db_path: Path) -> list[int]:
+    """Mark runs stuck 'running' longer than the cutoff (default: factory.toml
+    [timeouts] stale_run) as failed (their process died)."""
+    if older_than_secs is None:
+        older_than_secs = float(settings().timeouts.stale_run)
     init_db(db_path)
     with get_db(db_path) as conn:
         return reconcile_stale_runs(conn, older_than_secs=older_than_secs)

@@ -1,95 +1,150 @@
-"""Operator settings: `factory.toml` at the checkout root (or $FACTORY_SETTINGS).
+"""The operator's settings file, ``factory.toml`` at the checkout root.
 
-Precedence is env > file > default. `settings()` re-reads on every call, never
-cached: a changed cap must apply to the next model call, not the next process.
-A value that is present but invalid is REFUSED (ValueError), never replaced by the
-default — a typo'd budget silently becoming $10 would spend money nobody approved.
+Everything an operator may reasonably tune without touching code: the per-story
+budget, subprocess timeouts and two opt-in switches. Precedence is
+``environment variable > factory.toml > built-in default``; ``FACTORY_CONFIG`` points
+at a different file. A missing file is fine (a wheel install has no checkout around
+it), but a malformed one raises :class:`SettingsError` — a typo'd budget key must not
+quietly leave the cap at its default.
 
-    [budget]
-    max_story_cost_usd = 10.0   # env FACTORY_MAX_STORY_COST_USD
-
-    [timeouts]
-    probe = 120                 # seconds per `factory doctor` model probe; env FACTORY_PROBE_TIMEOUT
+Model choice stays in ``agents/tiers.toml``; this file never names a model.
 """
 
 from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any
 
 from factory.agent_config.location import checkout_root
-from factory.domain.gates import MAX_STORY_COST_USD
+from factory.domain import gates
 
-SETTINGS_ENV = "FACTORY_SETTINGS"
-SETTINGS_FILENAME = "factory.toml"
+CONFIG_ENV = "FACTORY_CONFIG"
+FILENAME = "factory.toml"
+_TRUE = ("1", "true", "yes", "on")
+_FALSE = ("0", "false", "no", "off")
 
-# Far below the 10-minute agent default: a model that cannot say "OK" in two
-# minutes is not usable for a run either, and the preflight must not stall.
-DEFAULT_PROBE_TIMEOUT_SECS = 120
+
+class SettingsError(ValueError):
+    """factory.toml is unreadable or says something the factory cannot honour."""
 
 
 @dataclass(frozen=True)
 class Budget:
-    max_story_cost_usd: float
+    max_story_cost_usd: float = gates.MAX_STORY_COST_USD
+    max_coder_attempts: int = gates.MAX_CODER_ATTEMPTS
+    max_tester_remediations: int = gates.MAX_TESTER_REMEDIATIONS
+    max_rearchitect_loops: int = gates.MAX_REARCHITECT_LOOPS
+    max_boundary_redesigns: int = gates.MAX_BOUNDARY_REDESIGNS
 
 
 @dataclass(frozen=True)
 class Timeouts:
-    probe: int
+    """Seconds."""
+
+    command: int = 60
+    test: int = 180
+    build: int = 180
+    agent: int = 600
+    probe: int = 120
+    stale_run: int = 3600
+
+
+@dataclass(frozen=True)
+class Features:
+    run_tests: bool = False
+    notify: bool = False
 
 
 @dataclass(frozen=True)
 class Settings:
-    budget: Budget
-    timeouts: Timeouts
+    budget: Budget = Budget()
+    timeouts: Timeouts = Timeouts()
+    features: Features = Features()
 
 
-def settings_path() -> Path:
-    override = os.environ.get(SETTINGS_ENV, "").strip()
-    return Path(override).expanduser() if override else checkout_root() / SETTINGS_FILENAME
+def settings_path(environ: Mapping[str, str] | None = None) -> Path:
+    env = os.environ if environ is None else environ
+    override = env.get(CONFIG_ENV, "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return checkout_root() / FILENAME
 
 
-def _load(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {}
+def _section(name: str, cls: type, raw: object, path: Path) -> dict[str, object]:
+    if not isinstance(raw, dict):
+        raise SettingsError(f"{path}: [{name}] must be a table")
+    known = {f.name: f for f in fields(cls)}
+    unknown = sorted(set(raw) - set(known))
+    if unknown:
+        raise SettingsError(f"{path}: unknown key(s) in [{name}]: {', '.join(unknown)}")
+    out: dict[str, object] = {}
+    for key, value in raw.items():
+        default = getattr(cls(), key)
+        if isinstance(default, bool):
+            ok = isinstance(value, bool)
+        elif isinstance(default, float):
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        else:
+            ok = isinstance(value, int) and not isinstance(value, bool)
+        if not ok:
+            raise SettingsError(
+                f"{path}: [{name}] {key} must be {type(default).__name__}, got {value!r}"
+            )
+        if not isinstance(value, bool) and value <= 0:
+            raise SettingsError(f"{path}: [{name}] {key} must be positive, got {value!r}")
+        out[key] = float(value) if isinstance(default, float) else value
+    return out
+
+
+def _env_flag(environ: Mapping[str, str], name: str, current: bool) -> bool:
+    raw = environ.get(name, "").strip().lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    return current
+
+
+def load_settings(
+    path: Path | None = None, *, environ: Mapping[str, str] | None = None
+) -> Settings:
+    """Parse ``factory.toml`` (if present) and apply environment overrides."""
+    env = os.environ if environ is None else environ
+    path = settings_path(env) if path is None else path
+    data: dict[str, object] = {}
+    if path.is_file():
+        try:
+            data = tomllib.loads(path.read_text())
+        except (tomllib.TOMLDecodeError, OSError) as exc:
+            raise SettingsError(f"{path}: {exc}") from exc
+    sections = {"budget": Budget, "timeouts": Timeouts, "features": Features}
+    unknown = sorted(set(data) - set(sections))
+    if unknown:
+        raise SettingsError(f"{path}: unknown section(s): {', '.join(unknown)}")
+    built = {
+        name: cls(**_section(name, cls, data[name], path)) if name in data else cls()
+        for name, cls in sections.items()
+    }
+    timeouts: Timeouts = built["timeouts"]  # type: ignore[assignment]
+    features: Features = built["features"]  # type: ignore[assignment]
+    # Unparseable FACTORY_AGENT_TIMEOUT has always meant "ignore it", never a crash.
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
-        raise ValueError(f"{path}: not valid TOML: {exc}") from None
-
-
-def _value(data: dict[str, Any], table: str, key: str, env: str, default: Any, kind: type) -> Any:
-    raw, source = default, "default"
-    if key in (data.get(table) or {}):
-        raw, source = data[table][key], f"{table}.{key}"
-    if os.environ.get(env, "").strip():
-        raw, source = os.environ[env].strip(), env
-    try:
-        value = kind(raw)
-        # bool is an int subclass, and a string like "ten" fails kind() above.
-        if isinstance(raw, bool) or value <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        raise ValueError(f"{source} must be a positive number, got {raw!r}") from None
-    return value
+        agent = max(1, int(env["FACTORY_AGENT_TIMEOUT"]))
+    except (KeyError, ValueError):
+        agent = timeouts.agent
+    return Settings(
+        budget=built["budget"],  # type: ignore[arg-type]
+        timeouts=Timeouts(**{**timeouts.__dict__, "agent": agent}),
+        features=Features(
+            run_tests=_env_flag(env, "FACTORY_RUN_TESTS", features.run_tests),
+            notify=_env_flag(env, "FACTORY_NOTIFY", features.notify),
+        ),
+    )
 
 
 def settings() -> Settings:
-    data = _load(settings_path())
-    return Settings(
-        budget=Budget(
-            max_story_cost_usd=_value(
-                data, "budget", "max_story_cost_usd", "FACTORY_MAX_STORY_COST_USD",
-                MAX_STORY_COST_USD, float,
-            ),
-        ),
-        timeouts=Timeouts(
-            probe=_value(
-                data, "timeouts", "probe", "FACTORY_PROBE_TIMEOUT",
-                DEFAULT_PROBE_TIMEOUT_SECS, int,
-            ),
-        ),
-    )
+    """The live settings. Not cached: the file is tiny and tests flip env mid-run."""
+    return load_settings()
