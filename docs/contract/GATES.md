@@ -79,17 +79,20 @@ On failure the run routes back to the coder for ONE bounded remediation pass car
 
 ---
 
-## gate-release — Release readiness gate `⛔ to build`
+## gate-release — Release readiness gate `✅ built`
 
-**Runs:** before Checkpoint 3. **Requires:** release-agent.
+**Runs:** after `gate-test` passes and the `release-agent` has written the release notes. **Code:** `domain/gates.gate_after_release()`, wired by `pipeline/nodes/gates.node_gate_release`.
 
-Passes only if all four **trust-package** artifacts are present and green (tests+AC, real diff, ADR, security/boundary verdict — see EFFECTIVENESS §5).
+**It always parks for Checkpoint 3 — it ASKS, it never allows.** Its verdict is whether the evidence bar is met (`passed` = READY), never whether to release. The gaps it names:
 
-The package itself is built (`evidence/trust_package.assemble`) and now refuses to overstate itself: `tests.passed` requires an executed suite, `diff` is git-measured against the run's `base_commit` or reported as `"unavailable"`, and every unmet bar is named in `blockers` with `next_authorization: "operator-review"`. `evidence/trust_package.validate()` enforces the schema's constraints (not just required keys) so a non-git-measured package cannot pass.
+- every blocker of the **trust package** (`evidence/trust_package.assemble`): tests never executed / failed, a change set not measured from git, files changed outside the declared scope, acceptance criteria the tester never assessed;
+- **no usable release notes** (the release-agent failed, went off-script, or the run predates it);
+- **migration notes missing** when the design changes the database (`db_impact` / `migration_needed`), **rollback notes missing** when it changes the schema or breaks an API;
+- a **blocking concern** raised by the release-agent (`verdict: fail`). Its `warn` concerns are shown but do not count as gaps.
 
-**What remains:** a `gate_after_release()` that turns those blockers into a gate verdict with `needs_human=True`, and the checkpoint-3 resume dispatch. The gate should ASK, never allow — an agent must not pass the release gate.
+The trust package is written to `docs/releases/` *at* the checkpoint, so the operator reads it before deciding. The release-agent writes words only; it cannot pass this gate, and nothing else can either: `release` runs behind the boss, which requires the operator's APPROVAL on the newest gate-release row (`domain/authorization.authorize_release`). Approving a NOT READY release is permitted — the gaps were named — and is recorded as accepted risk.
 
-**Feeds → Checkpoint 3 (release sign-off).**
+**Feeds → Checkpoint 3 (release sign-off) `✅ built`.** Resume: approve → `release` (story completed, final trust package); reject → a remediation coder pass carrying the operator's words, then the tester and this gate again.
 
 ---
 
@@ -103,8 +106,10 @@ A gate judges a stage's **output** after it ran; authorization judges its **inpu
 |---|---|
 | `architect-agent` | a usable story with acceptance criteria and tasks; gate-1 passed, and if it parked, the operator approved (not rejected) |
 | `coder-agent` (per task) | an architecture with notes and affected modules; gate-2 passed / approved at Checkpoint 2; the task has a purpose; every task it depends on is already built |
-| `coder-agent` (remediation) | the newest gate-test FAILED and there are findings to resolve |
+| `coder-agent` (remediation) | the newest gate-test FAILED, or the operator REJECTED the release at Checkpoint 3 — and there are findings to resolve |
 | `tester-agent` | every task of the story is built and the newest gate-build passed |
+| `release-agent` | the newest gate-test passed |
+| `release` (not an agent) | the newest gate-release carries the operator's APPROVAL — no agent can release |
 
 A task with no allowed scope or no completion evidence is authorized with a **warning** (recorded, not blocking). A refusal **blocks** the run — `finish_run(..., "blocked")`, never left `running` — and the error names every missing prerequisite. Every decision, allowed or refused, is stored in the `authorizations` table and shown on the run timeline (`factory review`) and in the story's committed `docs/work/<story>/PIPELINE.md`.
 

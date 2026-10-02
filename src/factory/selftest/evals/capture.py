@@ -11,6 +11,20 @@ from factory.selftest.evals.cases import default_cases_dir
 from factory.state.db import get_db, get_run, get_run_logs
 
 
+def _expectation(run_status: str, expect_status: str | None) -> dict[str, Any]:
+    """What a replay of this run must reproduce.
+
+    Releasing is the operator's act at Checkpoint 3, not the agents'. A replay
+    re-drives the agents, so for a RELEASED run the agent configuration's outcome
+    is: reviewed (gate-test passed) and parked for release sign-off.
+    """
+    if expect_status:
+        return {"status": expect_status}
+    if run_status == "completed":
+        return {"status": "waiting_human", "gates": {"gate-test": True}}
+    return {"status": run_status}
+
+
 def capture_case(
     db_path: Path,
     run_id: int,
@@ -37,8 +51,8 @@ def capture_case(
     for log in logs:
         agent = log["agent"]
         text = log["output_text"] or ""
-        if not text.strip():
-            continue
+        if not text.strip() or log.get("verdict") == "skipped":
+            continue  # a skipped stage (replay gap) has no output to freeze
         if agent == "coder-agent":
             # stage_type carries the task id (or "remediation") the row belongs to.
             slot = log["stage_type"] if log["stage_type"] not in (None, "agent") else "T-0001"
@@ -57,7 +71,7 @@ def capture_case(
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "git": True,
         "agent_outputs": outputs,
-        "expect": {"status": expect_status or run["status"]},
+        "expect": _expectation(run["status"], expect_status),
     }
     cases_dir.mkdir(parents=True, exist_ok=True)
     path = cases_dir / f"{name}.json"

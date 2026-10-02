@@ -36,5 +36,22 @@ class SpecSummaryRobustnessTests(unittest.TestCase):
         )
 
 
+
+class GateResultLabelTests(unittest.TestCase):
+    """A release that is not ready is WAITING for the operator, not a failed run."""
+
+    def test_passed_and_failed_gates_keep_their_labels(self) -> None:
+        from factory.interfaces.render.run import gate_result_label
+
+        self.assertEqual(gate_result_label({"passed": 1, "needs_human": 0})[0], "PASS")
+        self.assertEqual(gate_result_label({"passed": 0, "needs_human": 0})[0], "FAIL")
+
+    def test_an_unready_gate_that_asks_the_operator_is_not_a_failure(self) -> None:
+        from factory.interfaces.render.run import gate_result_label
+
+        label, style = gate_result_label({"passed": 0, "needs_human": 1})
+        self.assertEqual(label, "NOT READY")
+        self.assertEqual(style, "yellow")
+
 if __name__ == "__main__":
     unittest.main()

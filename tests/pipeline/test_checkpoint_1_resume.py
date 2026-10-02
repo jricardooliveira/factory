@@ -93,7 +93,7 @@ class SpecResumePipelineTests(unittest.TestCase):
             for _node, out in event.items():
                 final.update(out)
 
-        self.assertEqual(final.get("status"), "completed", final.get("error"))
+        self.assertEqual(final.get("status"), "waiting_human", final.get("error"))  # Checkpoint 3
         with db.get_db(self.db_path) as conn:
             gate_names = [g["gate_name"] for g in db.get_run_gates(conn, new)]
             spec_log = db.get_agent_log(conn, new, "spec-agent")

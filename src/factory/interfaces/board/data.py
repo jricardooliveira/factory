@@ -51,6 +51,8 @@ class BoardRun:
         if self.status != "waiting_human":
             return ""
         stage = (self.stage or "").lower()
+        if "release" in stage:
+            return "the RELEASE — ship this reviewed change (Checkpoint 3)"
         if "architect" in stage or "gate-2" in stage:
             return "the ARCHITECTURE / design (before any code is written)"
         if "spec" in stage:

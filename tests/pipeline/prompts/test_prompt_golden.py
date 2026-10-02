@@ -25,6 +25,7 @@ from unittest.mock import patch
 from factory.pipeline import build_spec_prompt, build_tester_prompt
 from factory.pipeline.nodes.architect import node_architect_agent
 from factory.pipeline.nodes.coder import node_coder_agent
+from factory.pipeline.nodes.release import node_release_agent
 from factory.pipeline.nodes.spec import node_spec_agent
 from factory.pipeline.nodes.tester import node_tester_agent
 from factory.state import db
@@ -38,7 +39,9 @@ AGENT_BOUNDARY = "factory.pipeline.agent_calls._run_or_replay"
 DIFF_LOOKUPS = (
     "factory.pipeline.prompts.tester.collect_repo_diff",
     "factory.pipeline.nodes.coder.collect_repo_diff",
+    "factory.pipeline.prompts.release.collect_repo_diff",
 )
+RELEASE_GAPS = "factory.pipeline.nodes.release.release_evidence_gaps"
 
 PROJECT_SPEC = (
     "# Project: Ledger\n\n"
@@ -299,6 +302,39 @@ class PromptGoldenTests(unittest.TestCase):
         )
         prompt = self._capture(node_coder_agent, state, diff=FIXED_DIFF)
         self._assert_golden("coder_remediation", prompt)
+
+    def test_coder_remediation_prompt_after_a_rejected_release(self) -> None:
+        state = self._state(
+            full=False,
+            spec=SPEC,
+            architect=ARCHITECT,
+            remediation=True,
+            attempt_number=2,
+            triggered_by="release-rejected",
+            prior_findings=["The overdue list must show the customer name."],
+        )
+        prompt = self._capture(node_coder_agent, state, diff=FIXED_DIFF)
+        self.assertIn("the operator REJECTED the release at Checkpoint 3", prompt)
+        self._assert_golden("coder_remediation_release_rejected", prompt)
+
+    # ── release-agent ─────────────────────────────────────────────
+
+    def _release(self, name: str, gaps: list[str]) -> None:
+        state = self._state(full=False, spec=SPEC, architect=ARCHITECT, **TESTER_STATE_EXTRAS,
+                            tester={"overall": "pass", "qa_verdict": "pass",
+                                    "security_verdict": "pass", "highest_severity": "none",
+                                    "performance_verdict": "pass", "summary": "Covered."})
+        with patch(RELEASE_GAPS, return_value=gaps):
+            prompt = self._capture(node_release_agent, state, diff=FIXED_DIFF)
+        self._assert_golden(name, prompt)
+
+    def test_release_prompt_with_no_evidence_gaps(self) -> None:
+        self._release("release_ready", [])
+
+    def test_release_prompt_names_the_evidence_gaps(self) -> None:
+        self._release("release_gaps", [
+            "Tests were never executed (gate-build ran compile/collect only).",
+        ])
 
     # ── tester-agent ──────────────────────────────────────────────
 

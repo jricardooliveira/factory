@@ -17,6 +17,15 @@ from factory.pipeline.state import PipelineState
 from factory.state.db import connect, get_agent_log, get_agent_log_by_stage
 
 
+class ReplayGap(RuntimeError):
+    """A replayed run has no frozen output for this agent.
+
+    Every other node treats it as a failure (a replay must re-drive what really
+    happened). Agents added AFTER a run was recorded — the release-agent — catch
+    it and skip, recorded as `skipped`, so old runs and eval cases keep replaying.
+    """
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     """Extract JSON from agent output; synthesize a 'blocked' result on failure."""
     parsed = parse_agent_json(text)
@@ -82,7 +91,7 @@ def _run_or_replay(
         finally:
             conn.close()
         if log is None:
-            raise RuntimeError(
+            raise ReplayGap(
                 f"Cannot replay: no stored output for '{agent_name}' in run {replay_id}"
             )
         return AgentResult(

@@ -253,7 +253,10 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(len(loaded), 1)
             case = loaded[0]
             self.assertEqual(case.name, "captured-run")
-            self.assertEqual(case.expect_status, "completed")
+            # Released by the operator; replayed, the agents' outcome is a
+            # reviewed run parked at Checkpoint 3 (release is never an agent's).
+            self.assertEqual(case.expect_status, "waiting_human")
+            self.assertEqual(case.expect_gates, {"gate-test": True})
             self.assertEqual(case.source_run_id, rid)
             # Per-task coder outputs must be keyed by task id so replay picks the
             # right slot — otherwise a multi-task run captures unrunnably.

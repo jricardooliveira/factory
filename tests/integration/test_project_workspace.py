@@ -123,7 +123,7 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
 
     def test_run_completes_with_all_evidence_committed_in_the_product_repo(self) -> None:
         outcome = self._replay(_coder(("src/search.py", "def s():\n    return []\n")))
-        self.assertEqual(outcome.status, "completed", outcome.error)
+        self.assertEqual(outcome.status, "waiting_human", outcome.error)  # at Checkpoint 3
 
         tracked = set(_git_out(self.work, "ls-files").split())
         work = artifacts.work_dir_for(self.work, "US-0001")
@@ -187,7 +187,7 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
             path.write_text("operator notes\n", encoding="utf-8")
 
         outcome = self._replay(_coder(("src/search.py", "X = 1\n")), setup=notes)
-        self.assertEqual(outcome.status, "completed", outcome.error)
+        self.assertEqual(outcome.status, "waiting_human", outcome.error)  # at Checkpoint 3
 
     def test_a_real_undeclared_write_still_blocks(self) -> None:
         def rogue(work: Path) -> None:
@@ -221,7 +221,7 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
 
     def test_repo_prefixed_paths_land_at_the_repo_root(self) -> None:
         outcome = self._replay(_coder(("repo/src/search.py", "X = 1\n")))
-        self.assertEqual(outcome.status, "completed", outcome.error)
+        self.assertEqual(outcome.status, "waiting_human", outcome.error)  # at Checkpoint 3
         self.assertTrue((self.work / "src" / "search.py").is_file())
         self.assertFalse((self.work / "repo").exists())
 
@@ -241,7 +241,7 @@ class EvidenceCommitMessagesTests(unittest.TestCase):
             with patch("factory.pipeline.agent_calls.run_agent", _blocked):
                 orig = case._seed(_coder(("src/a.py", "A = 1\n")))
                 outcome = runs.replay_run(orig, db_path=db_path)
-            self.assertEqual(outcome.status, "completed", outcome.error)
+            self.assertEqual(outcome.status, "waiting_human", outcome.error)  # at Checkpoint 3
             # The replay committed into its scratch clone of the product.
             work = replay_sandbox(outcome.run_id, db_path)
             log = _git_out(work, "log", "--reverse", "--format=%s").splitlines()

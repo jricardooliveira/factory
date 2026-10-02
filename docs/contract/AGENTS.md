@@ -17,7 +17,7 @@ Agent definitions live in `agents/<name>.md` (resolved by opencode through one r
 | `boundary-agent` | project | Pre-impl gate: tenant/authz/API-contract/security sub-verdicts | ⛔ to build (Phase 5) |
 | `coder-agent` | project | Implement approved task within scope; write tests | ✅ built |
 | `tester-agent` | project | QA/security/performance verdicts; AC coverage | ✅ built (gate-test) |
-| `release-agent` | project | Assemble trust package, release readiness | ⛔ to build |
+| `release-agent` | project | Writes the release notes (`RELEASE.md`) read at Checkpoint 3 — decides nothing | ✅ built (fast tier) |
 
 **`boss` and `god` are intentionally not LLM agents.** Their real responsibilities are code. The boss is built as such:
 
@@ -40,7 +40,9 @@ Validated by Pydantic models in `src/factory/domain/contracts.py`:
 - **`coder-agent` → `CoderOutput`**: `verdict, files_created[], files_modified[], tests_added[], implementation_summary, code_blocks[CodeBlock], test_coverage, assumptions[], follow_ups[], design_feedback`.
 - **`tester-agent` → `TesterOutput`**: `overall, qa_verdict, ac_coverage[], missing_coverage[], security_verdict, highest_severity, security_findings[], performance_verdict, performance_findings[], summary`.
 
-To-build agents (`boundary`, `release`) require new models with **separate sub-verdicts**, per the original spec — a single `verdict` field is insufficient for trust.
+- **`release-agent` → `ReleaseOutput`**: `verdict, summary, changes[], how_to_verify[], migration_notes, rollback_notes, known_limitations[], concerns[]`. Of the brief's release-agent duties, everything that is a *check* — gates passed, pipeline complete, state updated, migration/rollback notes present — is deterministic code in `gate-release` and the boss; only *writing* the notes is the agent's. Its `verdict` is a concern level surfaced at Checkpoint 3, never an approval. A run recorded before the agent existed replays with the stage `skipped` (`agent_calls.ReplayGap`), so the frozen corpus keeps working.
+
+To-build agents (`boundary`) require new models with **separate sub-verdicts**, per the original spec — a single `verdict` field is insufficient for trust.
 
 ---
 

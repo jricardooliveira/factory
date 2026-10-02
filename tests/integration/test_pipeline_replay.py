@@ -112,7 +112,7 @@ class CleanPassTests(ReplayHarness):
         )
         final, gates = self._replay(orig)
 
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
         gate_map = {g["gate_name"]: bool(g["passed"]) for g in gates}
         self.assertTrue(gate_map.get("gate-1-spec"))
         self.assertTrue(gate_map.get("gate-2-architect"))
@@ -198,7 +198,7 @@ class DecisionMemoryTests(ReplayHarness):
         )
         final, _ = self._replay(orig, project_dir=str(self.root))
 
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
         # 2.1 — an ADR for the current story was persisted.
         current_adrs = list(adr_dir.glob("ADR-US-0001-*.md"))
         self.assertEqual(len(current_adrs), 1)
@@ -257,7 +257,7 @@ class PerTaskExecutionTests(ReplayHarness):
         )
         final, gates = self._replay(orig)
 
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
         # Both files materialized (each by its own task call)
         self.assertTrue((self.cwd / "calc" / "models.py").is_file())
         self.assertTrue((self.cwd / "calc" / "cli.py").is_file())
@@ -317,7 +317,7 @@ class GovernanceTests(ReplayHarness):
             }
         )
         final, _ = self._replay(orig)
-        self.assertEqual(final.get("status"), "completed")  # .opencode ignored
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3  # .opencode ignored
 
 
 class PerTaskGitRepoTests(ReplayHarness):
@@ -338,7 +338,7 @@ class PerTaskGitRepoTests(ReplayHarness):
             }
         )
         final, gates = self._replay(orig)
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
         build = [g for g in gates if g["gate_name"] == "gate-build"]
         self.assertTrue(all(g["passed"] for g in build))  # no governance false-positive
 
@@ -354,7 +354,7 @@ class TesterGateTests(ReplayHarness):
             }
         )
         final, gates = self._replay(orig)
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
         self.assertTrue(any(g["gate_name"] == "gate-test" and g["passed"] for g in gates))
 
     def test_tester_fail_downgrades_to_failed(self) -> None:
@@ -389,7 +389,7 @@ class RepoAwarenessTests(ReplayHarness):
             }
         )
         final, _ = self._replay(orig)
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
 
         with db.get_db(self.db_path) as conn:
             logs = db.get_run_logs(conn, self.new_run_id)
@@ -415,7 +415,7 @@ class TesterDiffTests(ReplayHarness):
             }
         )
         final, _ = self._replay(orig)
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
 
         with db.get_db(self.db_path) as conn:
             logs = db.get_run_logs(conn, self.new_run_id)
@@ -501,7 +501,7 @@ class ArchitectResumeTests(ReplayHarness):
             for _, out in event.items():
                 final.update(out)
 
-        self.assertEqual(final.get("status"), "completed")
+        self.assertEqual(final.get("status"), "waiting_human")  # reviewed → Checkpoint 3
         with db.get_db(self.db_path) as conn:
             logs = db.get_run_logs(conn, new_run_id)
         arch_input = next(l["input_text"] for l in logs if l["agent"] == "architect-agent")

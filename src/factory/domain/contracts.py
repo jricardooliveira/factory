@@ -98,3 +98,21 @@ class CoderOutput(BaseModel):
             "is wrong; the design will be revised. Leave empty during normal work."
         ),
     )
+
+
+class ReleaseOutput(BaseModel):
+    """release-agent: the release notes a person reads at Checkpoint 3.
+
+    The agent WRITES; it never decides readiness — `gates.gate_after_release`
+    does, from the evidence, and only the operator releases. `verdict` is the
+    agent's own concern level, surfaced at the checkpoint, never an approval.
+    """
+
+    verdict: str = "pass"  # pass | warn | fail — advisory concern level only
+    summary: str = ""
+    changes: list[str] = Field(default_factory=list)
+    how_to_verify: list[str] = Field(default_factory=list)
+    migration_notes: str = "none"
+    rollback_notes: str = ""
+    known_limitations: list[str] = Field(default_factory=list)
+    concerns: list[str] = Field(default_factory=list)

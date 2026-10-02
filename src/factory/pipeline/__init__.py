@@ -21,6 +21,7 @@ from factory.pipeline.graph import (
     compile_architect_resume_pipeline,
     compile_coder_only_pipeline,
     compile_pipeline,
+    compile_release_pipeline,
     compile_spec_resume_pipeline,
     resume_entry_for,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "compile_architect_resume_pipeline",
     "compile_coder_only_pipeline",
     "compile_pipeline",
+    "compile_release_pipeline",
     "compile_spec_resume_pipeline",
     "resume_entry_for",
     "settled_threshold_terms",

@@ -17,11 +17,11 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `619 passed` + `10/10 scenarios behaving as expected` + `44/44 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `619 passed` (~70s, offline, zero tokens) |
+| `make check` | `645 passed` + `10/10 scenarios behaving as expected` + `50/50 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `645 passed` (~90s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 10/10 scenario matrix, offline, zero tokens |
-| `.venv/bin/factory evals` | 44/44 agent-configuration checks; exits non-zero below 100% |
+| `.venv/bin/factory evals` | 50/50 agent-configuration checks; exits non-zero below 100% |
 | `.venv/bin/factory evals capture <run_id> <name>` | freeze a real run (or incident) as a permanent eval case |
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
@@ -35,7 +35,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 ## Architecture
 
 ```
-agents/                 The agent configuration: the 4 agent .md definitions (write/edit/bash/patch
+agents/                 The agent configuration: the 5 agent .md definitions (write/edit/bash/patch
                         all disabled), policies/REVIEW.md (injected into the tester prompt) and
                         tiers.toml (agent -> tier -> model, escalate-on-retry: the ONLY place
                         model ids are chosen).
@@ -57,13 +57,14 @@ src/factory/
     state.py            PipelineState.
     graph.py            Conditional edges, resume_entry_for, ONE build_pipeline(entry=…); the
                         build_*/compile_* resume names are that graph entered at another node.
-    boss.py             Wraps every agent node (graph._AGENT_NODES): authorizes it from the DB's
+    boss.py             Wraps every acting stage (graph._AUTHORIZED_STAGES): authorizes it from the DB's
                         gate verdicts before it runs; a refusal BLOCKS the run, agent never called.
     agent_calls.py      The single agent-call boundary (_run_or_replay, JSON repair). Tests
                         patch `factory.pipeline.agent_calls._run_or_replay` / `.run_agent`.
     nodes/              spec.py, architect.py, coder.py (+ remediation, scope diff), tester.py,
+                        release.py (release-agent notes + `release` = the operator's approval),
                         gates.py (gate-1/2/test, settled_threshold_terms), evidence.py.
-    prompts/            Every agent prompt: spec/architect/coder/tester.py, blocks.py,
+    prompts/            Every agent prompt: spec/architect/coder/tester/release.py, blocks.py,
                         context_pack.py. Byte-pinned by tests/pipeline/prompts/test_prompt_golden.py.
   verification/         Non-LLM build verification: python.py, go.py, typescript.py, scope.py
                         (declared-scope check); verify_changes in __init__.
@@ -185,7 +186,15 @@ input/output is stored, so any run replays offline for free. Evidence is version
   (architect / coder / tester entry) must seed the gate rows a real run would have — e.g. a
   passed `gate-1-spec` before the architect, a passed or operator-APPROVED `gate-2-architect`
   before the coder — or the boss (correctly) refuses with "never ran". Don't bypass it; seed the
-  record. A new agent node goes in `graph._AGENT_NODES` with a rule in `domain/authorization.py`.
+  record. A new agent node goes in `graph._AUTHORIZED_STAGES` with a rule in `domain/authorization.py`.
+- **A reviewed run ends PARKED, never `completed`.** gate-test pass → release-agent → gate-release,
+  which always parks (Checkpoint 3). Only `factory approve` at that checkpoint completes a story
+  (the boss refuses `release` without the operator's APPROVAL on the newest gate-release row).
+  A test that needs a completed run approves it: `runs.resume_run(run_id, "approve", ...)`.
+  `evals capture` of a released run therefore expects `waiting_human` + gate-test passed.
+- **An agent added after runs were recorded must survive their replay.** `_run_or_replay` raises
+  `agent_calls.ReplayGap` when a frozen output is missing; the release-agent catches it and logs
+  the stage `skipped`. Any new agent must do the same, or every captured eval case breaks.
 - **Every terminal state must call `finish_run`.** Returning `{"status": "failed"}` in graph
   state only is how a run ends up stuck `running`, invisible to `factory queue`, and later
   mislabelled by `reconcile` as a dead process.

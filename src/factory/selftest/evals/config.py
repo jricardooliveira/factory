@@ -19,6 +19,7 @@ from factory.domain.contracts import (
     ArchitectOutput,
     CodeBlock,
     CoderOutput,
+    ReleaseOutput,
     SpecOutput,
     TaskDef,
     TesterOutput,
@@ -38,6 +39,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "architect-agent": ArchitectOutput,
     "coder-agent": CoderOutput,
     "tester-agent": TesterOutput,
+    "release-agent": ReleaseOutput,
 }
 
 # Nested models, so a drifted key inside a list/object is caught too.

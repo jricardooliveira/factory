@@ -43,7 +43,9 @@ class TrustPackageTests(unittest.TestCase):
                     "diff", "adr", "security_boundary", "cost", "blockers",
                     "next_authorization"):
             self.assertIn(key, pkg)
-        self.assertEqual(pkg["verdict"], "pass")
+        # Two evidence bars are unmet (below), so the package's verdict is `warn`,
+        # not `pass` — it used to say `pass` here, overstating the evidence.
+        self.assertEqual(pkg["verdict"], "warn")
         self.assertEqual(len(pkg["tests"]["ac_coverage"]), 2)
         self.assertEqual([f["path"] for f in pkg["diff"]["files"]], ["c.py"])
         self.assertAlmostEqual(pkg["cost"]["usd"], 0.03)
@@ -67,7 +69,7 @@ class TrustPackageTests(unittest.TestCase):
             db.log_gate(conn, rid, "gate-build", False, "py_compile:fail")
             db.finish_run(conn, rid, "failed", error="gate-build failed")
         pkg = tp.assemble(self.db_path, rid)
-        self.assertEqual(pkg["verdict"], "failed")
+        self.assertEqual(pkg["verdict"], "fail")  # the schema's word; "failed" was invalid
         self.assertFalse(pkg["tests"]["passed"])
         self.assertEqual(pkg["next_authorization"], "operator-review")
         self.assertTrue(pkg["blockers"])

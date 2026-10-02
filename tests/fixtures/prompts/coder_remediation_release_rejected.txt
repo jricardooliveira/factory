@@ -1,0 +1,44 @@
+## Remediation pass — the operator REJECTED the release at Checkpoint 3
+
+The implementation already exists in the working directory. MODIFY the existing files to resolve every finding below. Do not rewrite unrelated code or add new features; return ONLY the changed files via code_blocks.
+
+### Findings to resolve
+- The overdue list must show the customer name.
+
+## Current implementation under review (real diff)
+
+```diff
+diff --git a/ledger/overdue.py b/ledger/overdue.py
+new file mode 100644
+--- /dev/null
++++ b/ledger/overdue.py
+@@ -0,0 +1,2 @@
++def overdue():
++    return []
+```
+
+## Story
+
+**Problem:** Operators cannot see which invoices are late.
+
+**Acceptance criteria:**
+- An invoice unpaid 30 days after issue is listed as overdue
+- The overdue list is sorted oldest first
+
+## Agreed architecture (follow this design)
+
+```json
+{
+  "verdict": "pass",
+  "architecture_notes": "Add ledger/overdue.py with a pure query over invoices.",
+  "modules_affected": [
+    "ledger/overdue.py",
+    "ledger/cli.py"
+  ],
+  "risks": [
+    "clock skew"
+  ]
+}
+```
+
+Set verdict 'complete' once all findings are addressed.

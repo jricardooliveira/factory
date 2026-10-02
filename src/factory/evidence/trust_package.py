@@ -171,7 +171,10 @@ def _blockers(
 ) -> list[str]:
     """Every unmet evidence bar, named rather than silently absent."""
     blockers: list[str] = []
-    if run["status"] != "completed":
+    # A run that STOPPED is a blocker. A run parked at Checkpoint 3 is not: the
+    # package is what the operator reads to make that decision, so it lists only
+    # evidence gaps — the pending sign-off is `next_authorization`.
+    if run["status"] in ("failed", "blocked"):
         blockers.append(run.get("error") or run["status"])
     if not tests_executed:
         blockers.append(
@@ -244,7 +247,11 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
         "parent_story": run["story_id"],
         "project_id": run.get("project_id") or "—",
         "stage": "release",
-        "verdict": "pass" if completed else (run["status"] or "fail"),
+        # The schema's verdicts: a stopped run is fail/blocked; otherwise the
+        # evidence verdict — warn while any bar is unmet, pass when all are.
+        "verdict": {"failed": "fail", "blocked": "blocked"}.get(
+            run["status"], "warn" if blockers else "pass"
+        ),
         "tests": tests_block,
         "ac_traceability": ac_traceability,
         "diff": diff_block,

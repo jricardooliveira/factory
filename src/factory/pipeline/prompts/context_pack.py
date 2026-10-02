@@ -75,6 +75,7 @@ def build_remediation_pack(
     *,
     project_context: str = "",
     memory_context: str = "",
+    rejected_release: bool = False,
 ) -> str:
     """Assemble the coder prompt for a tester-driven remediation pass.
 
@@ -84,10 +85,15 @@ def build_remediation_pack(
     findings_block = "\n".join(f"- {f}" for f in findings) or "- (see tester summary)"
     diff_block = f"```diff\n{diff}\n```\n\n" if diff else "(no diff available)\n\n"
     ac_block = "\n".join(f"- {ac}" for ac in spec.acceptance_criteria) or "- (see problem)"
+    header = (
+        "## Remediation pass — the operator REJECTED the release at Checkpoint 3\n\n"
+        if rejected_release
+        else "## Remediation pass — the QA / security / performance review FAILED\n\n"
+    )
     return (
         f"{project_context}"
         f"{memory_context}"
-        "## Remediation pass — the QA / security / performance review FAILED\n\n"
+        f"{header}"
         "The implementation already exists in the working directory. MODIFY the "
         "existing files to resolve every finding below. Do not rewrite unrelated "
         "code or add new features; return ONLY the changed files via code_blocks.\n\n"

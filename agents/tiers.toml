@@ -31,6 +31,7 @@ spec-agent = "frontier"       # planning / decomposition — "is this the right 
 architect-agent = "frontier"  # design trade-offs, risk, ADRs
 tester-agent = "frontier"     # risk analysis + security / QA review (≈ PR review)
 coder-agent = "fast"          # implementation — highest call volume
+release-agent = "fast"        # release notes — summarising evidence, deciding nothing
 
 # Agent -> tier on attempt 2+. A failed cheap attempt is the signal that the task
 # needs more reasoning, not another cheap pass.

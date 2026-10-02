@@ -50,4 +50,5 @@ def build_remediation_prompt(state: PipelineState, spec: SpecOutput, diff: str) 
         diff,
         project_context=project_context_block(state),
         memory_context=project_memory_block(state),
+        rejected_release=state.get("triggered_by") == "release-rejected",
     )

@@ -88,7 +88,7 @@ class ReplayIsolationTests(unittest.TestCase):
 
         outcome = runs.replay_run(orig, db_path=self.db_path)
 
-        self.assertEqual(outcome.status, "completed")
+        self.assertEqual(outcome.status, "waiting_human")  # reviewed → Checkpoint 3
         self.assertEqual(self._product_state(), before, "the replay mutated the product")
         sandbox = self.home / "replays" / f"run-{outcome.run_id}"
         self.assertTrue((sandbox / "convert.py").is_file(), "code lands in the sandbox")
@@ -125,8 +125,10 @@ class ReplayIsolationTests(unittest.TestCase):
 
         # run_agent is patched to raise: a live call would fail the run.
         resumed = runs.resume_run(parked.run_id, "approve", db_path=self.db_path)
-
-        self.assertEqual(resumed.status, "completed", resumed.error)
+        self.assertEqual(resumed.status, "waiting_human", resumed.error)  # now Checkpoint 3
+        # ...and releasing it is replayed too: still no live call, still the sandbox.
+        released = runs.resume_run(parked.run_id, "approve", db_path=self.db_path)
+        self.assertEqual(released.status, "completed", released.error)
         self.assertEqual(self._product_state(), before)
         sandbox = self.home / "replays" / f"run-{parked.run_id}"
         self.assertTrue((sandbox / "convert.py").is_file())
@@ -153,7 +155,7 @@ class ReplayIsolationTests(unittest.TestCase):
             finally:
                 os.chdir(old)
             self.assertEqual(os.listdir(cwd), [])
-        self.assertEqual(outcome.status, "completed")
+        self.assertEqual(outcome.status, "waiting_human")  # reviewed → Checkpoint 3
 
 
 if __name__ == "__main__":

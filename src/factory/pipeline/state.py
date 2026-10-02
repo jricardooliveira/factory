@@ -26,12 +26,15 @@ class PipelineState(TypedDict, total=False):
     coder: dict[str, Any]
     tester_raw: str
     tester: dict[str, Any]
+    release_raw: str
+    release: dict[str, Any]  # release notes (ReleaseOutput); {} when none were written
 
     # Gate results
     gate_1: dict[str, Any]
     gate_2: dict[str, Any]
     gate_build: dict[str, Any]
     gate_test: dict[str, Any]
+    gate_release: dict[str, Any]
 
     # Committed artifact chain (INTENT -> SPEC -> PLAN -> ADR)
     intent_path: str

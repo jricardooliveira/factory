@@ -50,6 +50,7 @@ def write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | N
             "intent": artifacts.write_intent,
             "spec": artifacts.write_spec,
             "plan": artifacts.write_plan,
+            "release": artifacts.write_release_notes,
         }[kind]
         path = writer(Path(project_dir), state["story_id"], *args)
     except (OSError, KeyError, ValueError):
@@ -81,3 +82,17 @@ def write_trust_package(state: PipelineState) -> None:
     except Exception:
         return  # never let release-note I/O fail the run
     commit_evidence(state, target, f"{state['story_id']} trust package (run {state['run_id']})")
+
+
+def release_evidence_gaps(state: PipelineState) -> list[str]:
+    """The trust package's named blockers for this run — what release must not paper over.
+
+    Never raises: if the package cannot be assembled, THAT is the gap.
+    """
+    try:
+        from factory.evidence import trust_package
+
+        pkg = trust_package.assemble(Path(state["db_path"]), state["run_id"])
+    except Exception as e:  # noqa: BLE001 — the failure is reported as a gap
+        return [f"The trust package could not be assembled: {e}"]
+    return list(pkg.get("blockers") or [])

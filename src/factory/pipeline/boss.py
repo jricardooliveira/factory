@@ -24,6 +24,8 @@ from factory.domain.authorization import (
     Authorization,
     GateRecord,
     authorize_architect,
+    authorize_release,
+    authorize_release_notes,
     authorize_remediation,
     authorize_task,
     authorize_tester,
@@ -66,7 +68,10 @@ def authorization_for(
         return authorize_architect(spec, gates.get("gate-1-spec"))
     if stage == "coder-agent":
         if state.get("remediation"):
-            return authorize_remediation(gates.get("gate-test"), state.get("prior_findings") or [])
+            return authorize_remediation(
+                gates.get("gate-test"), state.get("prior_findings") or [],
+                gate_release=gates.get("gate-release"),
+            )
         tasks = order_tasks(list(spec.tasks)) if spec else []
         index = state.get("task_index", 0)
         task = tasks[index] if 0 <= index < len(tasks) else None
@@ -77,6 +82,10 @@ def authorization_for(
     if stage == "tester-agent":
         task_ids = [t.id for t in spec.tasks] if spec else []
         return authorize_tester(task_ids, completed, gates.get("gate-build"))
+    if stage == "release-agent":
+        return authorize_release_notes(gates.get("gate-test"))
+    if stage == "release":
+        return authorize_release(gates.get("gate-release"))
     raise ValueError(f"the boss has no authorization rule for stage {stage!r}")
 
 

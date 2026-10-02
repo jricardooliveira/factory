@@ -83,7 +83,7 @@ At the release checkpoint, the operator must be able to trust the work **without
 3. **ADR / design rationale** — a short record of the design decisions and why, written to `docs/architecture/adr/`.
 4. **Security / boundary verdict** — explicit findings on tenant isolation, authorization, secrets-not-logged, and any breaking API changes.
 
-A release sign-off is offered only when all four are present and green. Anything missing keeps the task in the queue with the gap named. The machine-readable shape is [`trust-package.schema.json`](../../src/factory/evidence/schemas/trust-package.schema.json) (package data, shipped in `src/factory/evidence/schemas/`).
+The release sign-off is always asked for (Checkpoint 3) and is READY only when all four are present and green. Anything missing is named as a gap at the checkpoint; the operator may still release, and that acceptance of named gaps is recorded in the story's `PIPELINE.md` — never silent. The machine-readable shape is [`trust-package.schema.json`](../../src/factory/evidence/schemas/trust-package.schema.json) (package data, shipped in `src/factory/evidence/schemas/`).
 
 ---
 
@@ -132,7 +132,7 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | Governance: agents can't write files (tools disabled) + out-of-band write detection blocks the gate | ✅ built |
 | Trust-package assembly + schema validation + surfacing (`factory review`, saved to docs/releases) | ✅ built |
 | Checkpoint 1 (spec sign-off): open questions PARK the run for the operator instead of failing it; approve → architect, reject → re-specify with the answers (`gate_after_spec` needs_human, `resume_entry_for`, `compile_spec_resume_pipeline`) | ✅ built |
-| Checkpoint 3 (release sign-off) + `gate-release` | ⛔ to build |
+| Checkpoint 3 (release sign-off) + `gate-release`: a reviewed run never marks itself done — the release-agent writes `RELEASE.md`, `gate-release` names every evidence gap, the line parks; approve releases (the boss requires the operator's approval on record), reject sends the operator's words to the coder | ✅ built |
 | **The boss, as code**: every agent stage is authorized from the recorded verdicts before it starts (`domain/authorization.py`, `pipeline/boss.py`); a refusal blocks the run and names what is missing; each story's committed `docs/work/<story>/PIPELINE.md` is the run's trail, blockers and next authorized step; gate-1 rejects an unexecutable task graph (cycle, unknown dependency) | ✅ built |
 | **Deterministic ambiguity detection**: an acceptance criterion needing a threshold it was never given parks at Checkpoint 1 (`domain.ambiguity.unbound_criteria`), with terms a human already settled exempted (project spec, `PROJECT_RULES.md`, the operator's checkpoint answers, an approved ADR — never an agent-authored `proposed` one). Built because agent-reported ambiguity proved non-deterministic across two identical live runs | ✅ built |
 | **Go verification** in `gate-build`: `go build` → `go vet` → `go test` per module, with `gofmt -e` as a module-less parse fallback so Go can never pass unverified | ✅ built |
@@ -160,7 +160,7 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | Build gate FAILS on a real import error (vs WARN for a merely-absent third-party dep) | ✅ built (`verification.python._classify_collect_failure`) |
 | Brownfield awareness: architect + coder receive a real interface map of the existing repo | ✅ built (`workspace.repo_map.build_repo_inventory`) |
 | Coder → architect feedback: an infeasible design routes back for a bounded re-design (`MAX_REARCHITECT_LOOPS`) | ✅ built |
-| AC traceability: spec's real acceptance criteria cross-checked (deterministically) against the tester's claims; `unassessed` criteria surfaced in the trust package + gate-test reason (`domain/traceability.py`) | ✅ built (evidence; hard-enforce at release checkpoint ⛔) |
+| AC traceability: spec's real acceptance criteria cross-checked (deterministically) against the tester's claims; `unassessed` criteria surfaced in the trust package + gate-test reason (`domain/traceability.py`) | ✅ built (an unassessed criterion is a named gap at Checkpoint 3) |
 
 The build order that turns this contract into reality is the phased workflow in [`docs/design/plans/2026-06-02-factory-improvements-workflow.md`](../design/plans/2026-06-02-factory-improvements-workflow.md). How the code is laid out to deliver it: [ARCHITECTURE.md](../ARCHITECTURE.md).
 

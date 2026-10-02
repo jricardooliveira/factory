@@ -98,7 +98,7 @@
     }
   },
   "expect": {
-    "status": "completed",
+    "status": "waiting_human",
     "gates": {
       "gate-build": true,
       "gate-test": true

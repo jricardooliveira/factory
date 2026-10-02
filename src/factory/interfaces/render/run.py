@@ -262,14 +262,20 @@ def print_review_table(logs: list[dict], gates: list[dict]) -> None:
         table.add_column("Result", justify="center")
         table.add_column("Reason")
         for gate in gates:
-            passed = bool(gate["passed"])
-            table.add_row(
-                gate["gate_name"],
-                Text("PASS" if passed else "FAIL", style="green" if passed else "red"),
-                gate["reason"],
-            )
+            label, style = gate_result_label(gate)
+            table.add_row(gate["gate_name"], Text(label, style=style), gate["reason"])
         output.console.print(table)
     output.console.print()
+
+
+def gate_result_label(gate: dict) -> tuple[str, str]:
+    """(label, style) for one gate row. A gate that did not pass but parked for the
+    operator — gate-release when evidence is missing — is waiting, not failed."""
+    if gate["passed"]:
+        return "PASS", "green"
+    if gate.get("needs_human"):
+        return "NOT READY", "yellow"
+    return "FAIL", "red"
 
 
 def print_run_finished(outcome: RunOutcome, logs: list[dict], gates: list[dict]) -> None:

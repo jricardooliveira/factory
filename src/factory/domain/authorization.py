@@ -152,18 +152,27 @@ def authorize_task(
     return _decide(f"coder-agent:{task.id}", granted_by, missing, warnings)
 
 
-def authorize_remediation(gate_test: GateRecord | None, findings: Sequence[str]) -> Authorization:
-    """A remediation pass fixes a FAILED review; without one there is nothing to fix."""
+def authorize_remediation(
+    gate_test: GateRecord | None,
+    findings: Sequence[str],
+    gate_release: GateRecord | None = None,
+) -> Authorization:
+    """A remediation pass fixes a FAILED review — the tester's, or the operator's
+    rejection at Checkpoint 3. Without one there is nothing to fix."""
     missing: list[str] = []
-    if gate_test is None:
-        missing.append("a gate-test verdict to remediate")
-    elif gate_test.passed:
-        missing.append("a failed gate-test (it passed — there is nothing to remediate)")
+    if gate_release is not None and gate_release.rejected_by_operator and (
+        gate_test is None or gate_test.passed
+    ):
+        granted_by = f"the operator's rejection at Checkpoint 3 ({len(findings)} finding(s))"
+    else:
+        granted_by = f"gate-test failed with {len(findings)} finding(s)"
+        if gate_test is None:
+            missing.append("a gate-test verdict to remediate")
+        elif gate_test.passed:
+            missing.append("a failed gate-test (it passed — there is nothing to remediate)")
     if not findings:
-        missing.append("tester findings to resolve")
-    return _decide(
-        "coder-agent:remediation", f"gate-test failed with {len(findings)} finding(s)", missing
-    )
+        missing.append("findings to resolve")
+    return _decide("coder-agent:remediation", granted_by, missing)
 
 
 def authorize_tester(
@@ -180,3 +189,34 @@ def authorize_tester(
         f"gate-build passed with all {len(task_ids)} task(s) implemented",
         missing,
     )
+
+
+def authorize_release_notes(gate_test: GateRecord | None) -> Authorization:
+    """Release notes describe a change that passed review — nothing else."""
+    if gate_test is None:
+        return _decide("release-agent", "", ["a gate-test verdict (nothing was reviewed)"])
+    if not gate_test.passed:
+        return _decide("release-agent", "", ["gate-test to pass"])
+    return _decide("release-agent", "gate-test passed", [])
+
+
+def authorize_release(gate_release: GateRecord | None) -> Authorization:
+    """Only the operator releases: the newest gate-release must carry their APPROVAL.
+
+    Approving a release the gate judged NOT ready is allowed — the gaps were named
+    at the checkpoint — and is recorded as the operator accepting them.
+    """
+    if gate_release is None:
+        return _decide("release", "", ["a gate-release verdict (the release gate never ran)"])
+    if not gate_release.needs_human:
+        return _decide("release", "", [
+            "an operator decision — no agent may pass the release gate"
+        ])
+    if gate_release.awaiting_operator:
+        return _decide("release", "", ["the operator's decision at Checkpoint 3"])
+    if gate_release.rejected_by_operator:
+        return _decide("release", "", ["Checkpoint 3 was rejected by the operator"])
+    warnings = [] if gate_release.passed else [
+        "released NOT READY: the evidence gaps named at Checkpoint 3 were accepted by the operator"
+    ]
+    return _decide("release", "the operator's approval at Checkpoint 3", [], warnings)

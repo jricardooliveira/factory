@@ -12,17 +12,18 @@ from pathlib import Path
 from typing import Any
 
 from factory.domain.ambiguity import defined_threshold_terms
-from factory.domain.contracts import ArchitectOutput, SpecOutput, TesterOutput
+from factory.domain.contracts import ArchitectOutput, ReleaseOutput, SpecOutput, TesterOutput
 from factory.domain.gates import (
     MAX_TASK_COST_USD,
     MAX_TESTER_REMEDIATIONS,
     gate_after_architect,
+    gate_after_release,
     gate_after_spec,
     gate_after_tester,
 )
 from factory.domain.traceability import trace_criteria, unassessed_criteria
 from factory.pipeline.agent_calls import db_conn
-from factory.pipeline.evidence_writers import write_trust_package
+from factory.pipeline.evidence_writers import release_evidence_gaps, write_trust_package
 from factory.pipeline.state import PipelineState
 from factory.state.db import (
     finish_run,
@@ -242,11 +243,11 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
         log_gate(conn, state["run_id"], result.gate, result.passed, reason)
 
         if result.passed:
-            update_story_status(conn, state["story_id"], "completed")
-            finish_run(conn, state["run_id"], "completed")
-            write_trust_package(state)
+            # Reviewed is not released: the release-agent writes the notes and
+            # gate-release parks for the operator (Checkpoint 3). This node used to
+            # mark the story completed — the factory approving its own work.
             conn.commit()
-            return {"gate_test": gate_dict, "status": "completed"}
+            return {"gate_test": gate_dict, "remediation": False}
 
         # Tester failed — route back to the coder for a bounded remediation pass
         # carrying the findings, unless the remediation or cost budget is spent.
@@ -274,3 +275,45 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
         return {"gate_test": gate_dict, "status": "failed", "error": error}
     finally:
         conn.close()
+
+
+# ── gate-release → Checkpoint 3 ───────────────────────────────────
+
+
+def _parsed_or_none(model: type, data: Any) -> Any:
+    try:
+        return model.model_validate(data) if data else None
+    except ValueError:
+        return None
+
+
+def node_gate_release(state: PipelineState) -> dict[str, Any]:
+    """Judge release readiness and ALWAYS park: only the operator releases."""
+    if state.get("status") in ("failed", "blocked"):
+        return state
+
+    result = gate_after_release(
+        release_evidence_gaps(state),
+        _parsed_or_none(ReleaseOutput, state.get("release")),
+        _parsed_or_none(ArchitectOutput, state.get("architect")),
+    )
+    conn = db_conn(state)
+    try:
+        log_gate(
+            conn, state["run_id"], result.gate, result.passed, result.reason,
+            needs_human=True, human_questions="\n\n".join(result.human_questions),
+        )
+        finish_run(conn, state["run_id"], "waiting_human", error=None)
+        update_run_stage(conn, state["run_id"], "gate-release-human")
+        conn.commit()
+    finally:
+        conn.close()
+    # The package the operator reads to decide — written at the checkpoint.
+    write_trust_package(state)
+    return {
+        "gate_release": {
+            "gate": result.gate, "passed": result.passed, "reason": result.reason,
+            "needs_human": True, "human_questions": result.human_questions,
+        },
+        "status": "waiting_human",
+    }

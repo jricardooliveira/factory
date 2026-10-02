@@ -21,8 +21,8 @@ you only when you are the only one who can decide.
 
 - A **gate** is an automatic check. It can stop a run when requirements or quality
   rules are not met.
-- A **checkpoint** is a pause where you decide whether the story or design is
-  right before work continues.
+- A **checkpoint** is a pause where you decide: is this the right story, the right
+  design, and — at the end — should this change be released?
 - The **trust package** is the evidence gathered for you to review before you
   accept the result.
 
@@ -30,8 +30,10 @@ you only when you are the only one who can decide.
 
 ## How it works
 
-Four opencode agents, driven by a LangGraph pipeline, separated by **deterministic
-gates written in Python** — never by an LLM deciding whether an LLM did well.
+Five opencode agents, driven by a LangGraph pipeline, separated by **deterministic
+gates written in Python** — never by an LLM deciding whether an LLM did well. Before
+every agent starts, the **boss** (code, not an LLM) checks that what it needs exists
+and was approved; if not, the run stops and says what is missing.
 
 ```
 request
@@ -43,11 +45,15 @@ request
   → [gate-build]    it must actually compile
   → tester-agent    QA / security / performance sub-verdicts
   → [gate-test]     blocking quality gate
-  → trust package   the evidence you sign off against
+  → release-agent   writes RELEASE.md: what changed, how to verify, migrate, roll back
+  → [gate-release]  names every evidence gap ── ⏸ CHECKPOINT 3: "ship it?"
 ```
 
+A run never marks itself done: even a fully green release waits for you, with the
+trust package and the release notes in front of you.
+
 **Agents cannot write files.** `write`, `edit`, `bash` and `patch` are disabled on
-all four. Code reaches disk only through the coder's declared `code_blocks`, and any
+all five. Code reaches disk only through the coder's declared `code_blocks`, and any
 file that appears in the repo undeclared *blocks* the build gate. That single
 chokepoint also refuses credential-shaped paths (`.env`, `.git/`, key material).
 
@@ -117,7 +123,9 @@ factory reject 17 "use polling, not websockets; drop the admin screen"
 
 **Rejection is not a dead end.** Your feedback re-enters the pipeline as a new
 attempt: reject at Checkpoint 1 and the story is re-specified with your answers;
-reject at Checkpoint 2 and the design is redone with your objections.
+reject at Checkpoint 2 and the design is redone with your objections; reject at
+Checkpoint 3 and your words go to the coder as findings, then back through review
+to you.
 
 ---
 
@@ -168,6 +176,7 @@ baseline — and approving a parked replay keeps replaying there, zero tokens.
     │   ├── INTENT.md                 ← your raw request, with author and date
     │   ├── SPEC.md                   ← problem, acceptance criteria, non-goals, tasks
     │   ├── PLAN.md                   ← files that change, order of work, risks, proof
+    │   ├── RELEASE.md                ← release notes: what changed, verify, migrate, roll back
     │   └── PIPELINE.md               ← what happened: every step, who authorized it, why
     │                                   it stopped, and the next allowed step
     ├── architecture/adr/             ← the design decision and why
@@ -277,8 +286,9 @@ review behaviour without touching an agent definition — then run `make evals`.
    unattended.
 3. **It commits straight onto the generated repo's current branch.** No branch per
    story, no PR. Separation of duties is currently *you reading the trust package*.
-4. **There is no Checkpoint 3 (release sign-off).** `gate-release` is not built. You
-   are the final gate.
+4. **Approving a release with gaps is allowed — and recorded.** While tests are not
+   executed (point 1), every release reaches Checkpoint 3 *NOT READY* with that gap
+   named. Approving it is you accepting the risk, and the story's `PIPELINE.md` says so.
 5. **Verification (`src/factory/verification/`) covers Python, Go, JS and TS only.** Java and others need their own
    verification commands before the build gate means anything on those repos.
 6. **One workspace per `$FACTORY_HOME`.** Point it elsewhere to keep separate

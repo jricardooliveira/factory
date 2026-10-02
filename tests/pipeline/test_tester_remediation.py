@@ -104,7 +104,10 @@ class GateTestRemediationDecisionTests(unittest.TestCase):
                        "highest_severity": "none", "performance_verdict": "pass"},
         }
         out = node_gate_test(state)
-        self.assertEqual(out.get("status"), "completed")  # still passes — non-blocking
+        # Still passes — non-blocking. Passing no longer COMPLETES the story: it
+        # routes to release (Checkpoint 3), so no terminal status is set here.
+        self.assertTrue(out["gate_test"]["passed"])
+        self.assertNotIn("status", out)
         self.assertIn("unassessed", out["gate_test"]["reason"].lower())
         self.assertIn("beta is paginated", out["gate_test"]["reason"])
 

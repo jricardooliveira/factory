@@ -31,7 +31,7 @@ class StageStatus:
 
 
 # Canonical pipeline order. Gate stages use their gate_results name; agent stages
-# use the agent name. "release" isn't built yet (always pending).
+# use the agent name. "Release" is Checkpoint 3: done only once the operator released.
 _PIPELINE = [
     ("spec-agent", "Spec", "agent"),
     ("gate-1-spec", "Gate 1", "gate"),
@@ -41,7 +41,7 @@ _PIPELINE = [
     ("gate-build", "Build", "gate"),
     ("tester-agent", "Tester", "agent"),
     ("gate-test", "Test", "gate"),
-    ("release", "Release", "release"),
+    ("gate-release", "Release", "release"),  # Checkpoint 3: released only by the operator
 ]
 _DONE_VERDICTS = {"pass", "warn", "complete"}  # warn = passed-with-warnings, stage done
 _FAIL_VERDICTS = {"blocked", "error", "fail"}
@@ -67,7 +67,16 @@ def run_pipeline_progress(db_path: Path, run_id: int) -> list[StageStatus]:
     for key, label, kind in _PIPELINE:
         detail = ""
         if kind == "release":
-            st = "pending"  # release-agent not built yet
+            g = gate_by_name.get(key)
+            response = ((g or {}).get("human_response") or "").upper()
+            if g is not None and status == "completed":
+                st = "done"
+            elif g is not None and status == "waiting_human" and not response:
+                st = "waiting"
+            elif response.startswith("REJECTED"):
+                st = "current" if running else "failed"
+            else:
+                st = "pending"
         elif kind == "agent":
             ls = by_agent.get(key, [])
             verdicts = [(x.get("verdict") or "") for x in ls]

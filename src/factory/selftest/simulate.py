@@ -139,18 +139,19 @@ def _governance_setup(cwd: Path) -> None:
 
 CATALOG: list[Scenario] = [
     Scenario(
-        "greenfield_clean", "Single-task greenfield, clean code",
+        "greenfield_clean", "Single-task greenfield, clean code -> parks at Checkpoint 3 "
+        "(release sign-off)",
         {"spec-agent": _spec("Converter", [_task("T-1")]),
          "architect-agent": _arch(["c.py"]),
          "coder-agent": {"T-1": _coder("c.py", "def f():\n    return 1\n")}},
-        "completed",
+        "waiting_human",
     ),
     Scenario(
         "multi_task", "Two dependent tasks in a GIT repo, each its own coder call",
         {"spec-agent": _spec("Pkg", [_task("T-1"), _task("T-2", deps=["T-1"])]),
          "architect-agent": _arch(["a.py", "b.py"]),
          "coder-agent": {"T-1": _coder("a.py", "x = 1\n"), "T-2": _coder("b.py", "y = 2\n")}},
-        "completed",
+        "waiting_human",
         # Git-backed so the per-task scope check runs against the real diff —
         # this mirrors live projects and guards the "task 2 blocks" regression.
         setup=git_init,

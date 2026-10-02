@@ -39,7 +39,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from factory.domain.contracts import ArchitectOutput, SpecOutput
+from factory.domain.contracts import ArchitectOutput, ReleaseOutput, SpecOutput
 from factory.domain.task_order import order_tasks
 
 _UNKNOWN_AUTHOR = "operator"
@@ -334,3 +334,42 @@ def write_plan(
     architect: ArchitectOutput,
 ) -> Path | None:
     return _write(project_dir, story_id, "PLAN.md", render_plan(story_id, spec, architect))
+
+
+# ── Stage 4: RELEASE notes (written by the release-agent, read at Checkpoint 3) ──
+
+def render_release_notes(story_id: str, title: str, notes: ReleaseOutput) -> str:
+    """RELEASE.md: what changed and how to check it, for the person signing off.
+
+    The release-agent writes the words; it decides nothing. Readiness is
+    `gate_after_release`'s verdict and the release is the operator's.
+    """
+    concern = {"warn": "⚠️ the release-agent has concerns", "fail": "❌ the release-agent "
+               "raised a blocking concern"}.get(notes.verdict, "")
+    lines = [
+        f"# Release notes — {story_id}{': ' + title if title else ''}",
+        "",
+        "> Written by the release-agent from the story, the design, the real diff and the "
+        "review. It does not decide readiness: the release gate does, and only the operator "
+        "releases (Checkpoint 3).",
+        "",
+    ]
+    if concern:
+        lines += [f"**{concern}.**", ""]
+    lines += [
+        "## What changed", "", notes.summary.strip() or "(no summary written)", "",
+        *_bullets(notes.changes).splitlines(), "",
+        "## How to verify", "", *_bullets(notes.how_to_verify).splitlines(), "",
+        "## Migration", "", notes.migration_notes.strip() or "none", "",
+        "## Rollback", "", notes.rollback_notes.strip() or "(none written)", "",
+        "## Known limitations", "", *_bullets(notes.known_limitations, "- none").splitlines(), "",
+        "## Concerns", "", *_bullets(notes.concerns, "- none").splitlines(), "",
+    ]
+    return "\n".join(lines)
+
+
+def write_release_notes(
+    project_dir: Path | None, story_id: str, title: str, notes: ReleaseOutput
+) -> Path | None:
+    return _write(project_dir, story_id, "RELEASE.md",
+                  render_release_notes(story_id, title, notes))

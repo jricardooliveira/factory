@@ -1,0 +1,78 @@
+## Story
+
+```json
+{
+  "verdict": "pass",
+  "story_id": "US-0099",
+  "title": "Overdue invoices",
+  "problem": "Operators cannot see which invoices are late.",
+  "why": "Late invoices cost money.",
+  "acceptance_criteria": [
+    "An invoice unpaid 30 days after issue is listed as overdue",
+    "The overdue list is sorted oldest first"
+  ],
+  "tasks": [
+    {
+      "id": "T-0001",
+      "title": "Overdue query",
+      "purpose": "find late invoices"
+    },
+    {
+      "id": "T-0002",
+      "title": "Overdue listing",
+      "purpose": "show them",
+      "depends_on": [
+        "T-0001"
+      ]
+    }
+  ],
+  "questions": []
+}
+```
+
+## Architecture
+
+```json
+{
+  "verdict": "pass",
+  "architecture_notes": "Add ledger/overdue.py with a pure query over invoices.",
+  "modules_affected": [
+    "ledger/overdue.py",
+    "ledger/cli.py"
+  ],
+  "risks": [
+    "clock skew"
+  ]
+}
+```
+
+## The change being released (real git diff)
+
+```diff
+diff --git a/ledger/overdue.py b/ledger/overdue.py
+new file mode 100644
+--- /dev/null
++++ b/ledger/overdue.py
+@@ -0,0 +1,2 @@
++def overdue():
++    return []
+```
+
+## Review verdict (tester-agent)
+
+```json
+{
+  "overall": "pass",
+  "qa_verdict": "pass",
+  "security_verdict": "pass",
+  "highest_severity": "none",
+  "performance_verdict": "pass",
+  "summary": "Covered."
+}
+```
+
+## Evidence gaps the factory has already measured (do NOT contradict these)
+
+- none
+
+Write the release notes for this change as JSON.

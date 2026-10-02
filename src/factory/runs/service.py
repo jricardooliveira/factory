@@ -25,6 +25,7 @@ from factory.pipeline import (
     compile_architect_resume_pipeline,
     compile_coder_only_pipeline,
     compile_pipeline,
+    compile_release_pipeline,
     compile_spec_resume_pipeline,
     resume_entry_for,
 )
@@ -257,6 +258,23 @@ def resume_run(
                 "prior_findings": [decision],
                 "triggered_by": "architecture-rejected",
             })
+    elif entry == "release":
+        pipeline = compile_release_pipeline()
+    elif entry == "remediation":
+        # Checkpoint 3 rejected: every task is built; the operator's words become
+        # the findings of a remediation pass, then the tester, then release again.
+        if arch_parsed is None:
+            _unresumable(run_id, "missing architect log", db_path)
+        pipeline = compile_coder_only_pipeline()
+        state.update({
+            "architect": arch_parsed,
+            "remediation": True,
+            "prior_findings": [decision],
+            "triggered_by": "release-rejected",
+            "tasks_completed": [t.get("id") for t in spec_parsed.get("tasks", [])],
+            "tester_attempt": 1,
+            "attempt_number": 2,  # a rejected release is reasoning work: frontier coder
+        })
     else:
         if arch_parsed is None:
             _unresumable(run_id, "missing architect log", db_path)
@@ -369,11 +387,14 @@ def _finish(
     notify_operator: bool = True,
 ) -> RunOutcome:
     status = final_state.get("status", "unknown")
-    human_qs = (
-        final_state.get("gate_2", {}).get("human_questions")
-        if status == "waiting_human"
-        else None
-    )
+    # The questions of whichever checkpoint parked the run (newest stage first).
+    human_qs = None
+    if status == "waiting_human":
+        human_qs = next(
+            (qs for key in ("gate_release", "gate_2", "gate_1")
+             if (qs := (final_state.get(key) or {}).get("human_questions"))),
+            None,
+        )
     outcome = RunOutcome(
         run_id=run_id,
         story_id=story_id,

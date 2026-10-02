@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from factory.domain.ambiguity import is_bound, unbound_criteria
-from factory.domain.contracts import ArchitectOutput, CoderOutput, SpecOutput, TesterOutput
+from factory.domain.contracts import (
+    ArchitectOutput,
+    CoderOutput,
+    ReleaseOutput,
+    SpecOutput,
+    TesterOutput,
+)
 from factory.domain.task_order import dependency_problems
 
 
@@ -258,4 +264,78 @@ def gate_after_tester(tester: TesterOutput) -> GateResult:
         gate="gate-test",
         passed=True,
         reason=f"QA/security/performance passed{warn}. AC covered: {len(tester.ac_coverage)}",
+    )
+
+
+# ── Gate 7: release readiness → Checkpoint 3 ──────────────────────
+
+_NO = ("", "no", "none", "n/a", "not_applicable")
+
+
+def _says_yes(value: str) -> bool:
+    """Free-text fields ("yes — adds a table", "None.") — anything but a "no…" is yes."""
+    text = (value or "").strip().lower().rstrip(".!")
+    return text not in _NO and not text.startswith("no ") and not text.startswith("no,")
+
+
+def changes_schema(architect: ArchitectOutput | None) -> bool:
+    return bool(architect) and (
+        _says_yes(architect.db_impact) or _says_yes(architect.migration_needed)
+    )
+
+
+def gate_after_release(
+    evidence_blockers: list[str],
+    notes: ReleaseOutput | None,
+    architect: ArchitectOutput | None,
+) -> GateResult:
+    """Is the release ready for sign-off? ALWAYS parks for the operator (Checkpoint 3).
+
+    `passed` means the evidence bar is met; it never means "released". No agent
+    may pass the release gate (GATES.md), so even a fully green release waits
+    for a human, and an unready one is offered with every gap named — approving
+    it is the operator accepting those gaps, recorded as such by the boss.
+    """
+    gaps = list(evidence_blockers)
+    notices: list[str] = []
+    if notes is None:
+        gaps.append("Release notes were not written (the release-agent produced no usable notes)")
+    else:
+        if not notes.summary.strip():
+            gaps.append("The release notes have no summary of what changed")
+        if changes_schema(architect) and not _says_yes(notes.migration_notes):
+            gaps.append("Migration notes are missing, but the design changes the database")
+        if (changes_schema(architect) or (architect and architect.breaking_changes)) and (
+            not notes.rollback_notes.strip()
+        ):
+            gaps.append(
+                "Rollback notes are missing, but the change alters the schema or breaks an API"
+            )
+        if notes.verdict == "fail":
+            gaps += [f"Release-agent concern: {c}" for c in notes.concerns] or [
+                "The release-agent raised a blocking concern without detail"
+            ]
+        elif notes.concerns:
+            notices += [f"Release-agent note: {c}" for c in notes.concerns]
+
+    ready = not gaps
+    lines = ["🚀 RELEASE SIGN-OFF (Checkpoint 3) — " + (
+        "READY: every evidence bar is met." if ready
+        else f"NOT READY: {len(gaps)} gap(s) in the evidence:"
+    )]
+    lines += [f"  • {g}" for g in gaps]
+    lines += [f"  ◦ {n}" for n in notices]
+    lines.append(
+        "  → Approve to release" + (" accepting the gaps above as a known risk" if gaps else "")
+        + ", or reject with what must change — it goes back to the coder, then the tester."
+    )
+    reason = (
+        "READY for release sign-off" if ready else f"NOT READY for release ({len(gaps)} gap(s))"
+    ) + ". ⏸️ NEEDS HUMAN APPROVAL (release sign-off)"
+    return GateResult(
+        gate="gate-release",
+        passed=ready,
+        reason=reason,
+        needs_human=True,
+        human_questions=["\n".join(lines)],
     )

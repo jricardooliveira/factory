@@ -13,6 +13,8 @@ import unittest
 from factory.domain.authorization import (
     GateRecord,
     authorize_architect,
+    authorize_release,
+    authorize_release_notes,
     authorize_remediation,
     authorize_task,
     authorize_tester,
@@ -147,6 +149,48 @@ class RemediationAuthorizationTests(unittest.TestCase):
     def test_remediation_without_findings_is_refused(self) -> None:
         self.assertFalse(authorize_remediation(GateRecord("gate-test", False), []).allowed)
 
+
+    def test_an_operator_rejection_at_release_authorizes_remediation(self) -> None:
+        # Checkpoint 3 reject = "send it back": gate-test PASSED, the operator did not.
+        release = GateRecord("gate-release", True, needs_human=True,
+                             human_response="REJECTED: the error page leaks a stack trace")
+        auth = authorize_remediation(GateRecord("gate-test", True), ["leaks a stack trace"],
+                                     gate_release=release)
+        self.assertTrue(auth.allowed, auth.missing)
+        self.assertIn("Checkpoint 3", auth.granted_by)
+
+
+class ReleaseAuthorizationTests(unittest.TestCase):
+    def test_release_notes_need_a_passed_test_gate(self) -> None:
+        self.assertTrue(authorize_release_notes(GateRecord("gate-test", True)).allowed)
+        self.assertFalse(authorize_release_notes(GateRecord("gate-test", False)).allowed)
+        self.assertFalse(authorize_release_notes(None).allowed)
+
+    def test_only_an_operator_approval_releases(self) -> None:
+        approved = GateRecord("gate-release", True, needs_human=True,
+                              human_response="APPROVED: ship it")
+        auth = authorize_release(approved)
+        self.assertTrue(auth.allowed)
+        self.assertEqual(auth.stage, "release")
+        self.assertIn("operator", auth.granted_by)
+
+    def test_no_decision_or_a_rejection_does_not_release(self) -> None:
+        self.assertFalse(authorize_release(None).allowed)
+        self.assertFalse(authorize_release(
+            GateRecord("gate-release", True, needs_human=True)).allowed)
+        self.assertFalse(authorize_release(GateRecord(
+            "gate-release", True, needs_human=True, human_response="REJECTED: no")).allowed)
+
+    def test_a_release_gate_that_did_not_ask_cannot_release(self) -> None:
+        # No agent passes the release gate: a verdict with no operator in it is refused.
+        self.assertFalse(authorize_release(GateRecord("gate-release", True)).allowed)
+
+    def test_approving_an_unready_release_is_allowed_and_recorded_as_accepted_risk(self) -> None:
+        gate = GateRecord("gate-release", False, needs_human=True,
+                          human_response="APPROVED: tests run in CI")
+        auth = authorize_release(gate)
+        self.assertTrue(auth.allowed)
+        self.assertTrue(any("accepted" in w for w in auth.warnings))
 
 class TesterAuthorizationTests(unittest.TestCase):
     def test_every_task_built_and_a_green_build_authorizes_the_tester(self) -> None:
