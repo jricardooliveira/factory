@@ -158,7 +158,8 @@ class ReleaseCheckpointTests(unittest.TestCase):
     def test_approval_refuses_code_that_changed_after_the_review(self) -> None:
         parked = self._run()
         (self.work / "src" / "search.py").write_text("def s():\n    return ['unreviewed']\n")
-        subprocess.run(["git", "commit", "-qam", "manual edit"], cwd=self.work, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam",
+                        "manual edit"], cwd=self.work, check=True)
         outcome = runs.resume_run(parked.run_id, "approve", "ship it", db_path=self.db_path)
         self.assertEqual(outcome.status, "blocked")
         self.assertIn("changed", outcome.error or "")
