@@ -60,7 +60,7 @@ class ProjectSpecCliTests(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_spec_init_command_writes_project_spec_json(self) -> None:
-        from factory.interfaces.cli import main
+        from factory.interfaces.cli.main import main
 
         with patch(
             "sys.argv",

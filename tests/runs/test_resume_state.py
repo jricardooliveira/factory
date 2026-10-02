@@ -37,7 +37,7 @@ class LatestAgentLogTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_resume_state_uses_the_newest_architect_output(self) -> None:
-        from factory.interfaces.cli import build_resume_context
+        from factory.runs import build_resume_context
 
         rejected = json.dumps({"verdict": "pass", "architecture_notes": "THE REJECTED DESIGN",
                                "modules_affected": ["old.py"]})
@@ -64,7 +64,7 @@ class LatestAgentLogTests(unittest.TestCase):
         self.assertEqual(spec["title"], "V2")
 
     def test_resume_context_is_none_when_a_stage_never_ran(self) -> None:
-        from factory.interfaces.cli import build_resume_context
+        from factory.runs import build_resume_context
 
         with db.get_db(self.db_path) as conn:
             db.create_story(conn, "US-0002", "S", "do it")
@@ -186,7 +186,7 @@ class UsableLogRecoveryTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_an_error_row_is_skipped_in_favour_of_the_last_good_one(self) -> None:
-        from factory.interfaces.cli import build_resume_context
+        from factory.runs import build_resume_context
 
         good = json.dumps({"title": "Overdue", "problem": "p", "why": "w",
                            "acceptance_criteria": ["a", "b"], "tasks": []})
@@ -203,7 +203,7 @@ class UsableLogRecoveryTests(unittest.TestCase):
 
     def test_a_newer_GOOD_log_still_wins(self) -> None:
         """Skipping errors must not resurrect the old 'oldest log' bug."""
-        from factory.interfaces.cli import build_resume_context
+        from factory.runs import build_resume_context
 
         with db.get_db(self.db_path) as conn:
             db.create_story(conn, "US-0021", "S", "x")
@@ -217,7 +217,7 @@ class UsableLogRecoveryTests(unittest.TestCase):
         self.assertEqual(spec["title"], "SECOND")
 
     def test_all_rows_unusable_yields_none(self) -> None:
-        from factory.interfaces.cli import build_resume_context
+        from factory.runs import build_resume_context
 
         with db.get_db(self.db_path) as conn:
             db.create_story(conn, "US-0022", "S", "x")
@@ -245,7 +245,7 @@ class ResumeBailoutTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_an_unresumable_run_is_parked_not_left_running(self) -> None:
-        from factory.interfaces.cli import park_unresumable
+        from factory.runs import park_unresumable
 
         with db.get_db(self.db_path) as conn:
             db.create_story(conn, "US-0023", "S", "x")

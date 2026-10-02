@@ -2,12 +2,13 @@
 
 Select a parked run, read what it's asking, type feedback, and approve/reject
 without leaving the screen. Resume work runs in a worker thread (the pipeline can
-take minutes) with the CLI's rich output suppressed so it can't corrupt the TUI.
+take minutes) through `factory.runs` with no event callback: the service never
+prints, so nothing can corrupt the screen, and the board's own refresh tick picks
+up the progress from the DB.
 """
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 from rich.markup import escape
@@ -27,15 +28,15 @@ from textual.widgets import (
     TextArea,
 )
 
+from factory.evidence.progress import render_flow, run_pipeline_progress
 from factory.interfaces.board.data import (
     KANBAN_COLUMNS,
     BoardRun,
     group_by_column,
     list_projects_on_board,
     load_board_runs,
-    render_flow,
-    run_pipeline_progress,
 )
+from factory.runs import resume_run
 from factory.state.db import archive_run, get_db
 
 
@@ -355,20 +356,11 @@ class FactoryBoard(App):
 
     @work(thread=True, exclusive=True)
     def _do_resume(self, run_id: int, action: str, feedback: str | None) -> None:
-        # Suppress the CLI's rich output (writing to the terminal would corrupt
-        # the TUI) by swapping its console for a throwaway during the call.
-        import factory.interfaces.cli as fcli
-        from rich.console import Console
-
-        old_console = fcli.console
-        fcli.console = Console(file=io.StringIO())
         try:
-            fcli.resume_run(run_id, action, reason=feedback)
-        except Exception as exc:  # surface, don't crash the TUI
+            resume_run(run_id, action, reason=feedback, db_path=self.db_path)
+        except Exception as exc:  # a refusal (RunError) or a crash: surface, don't crash the TUI
             self.call_from_thread(self._after_resume, run_id, action, str(exc))
             return
-        finally:
-            fcli.console = old_console
         self.call_from_thread(self._after_resume, run_id, action, None)
 
     def _after_resume(self, run_id: int, action: str, error: str | None) -> None:

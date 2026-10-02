@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-import json
+from textual.widgets import Button, DataTable, Static, TextArea
 
-from factory.state import db
 from factory.interfaces.board.tui import FactoryBoard
-from textual.widgets import Button, DataTable, TextArea
+from factory.state import db
 
 
 class TuiMountTests(unittest.IsolatedAsyncioTestCase):
@@ -84,6 +85,59 @@ class TuiMountTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             # Refused -> not busy, no resume attempted.
             self.assertFalse(app._busy)
+
+    async def test_approve_drives_the_run_service_against_the_boards_own_db(self) -> None:
+        """The TUI resumes through factory.runs — not the CLI — and on ITS db_path
+        (it used to call the CLI's resume, which silently used the CLI's cwd DB)."""
+        app = FactoryBoard(self.db_path)
+        with patch("factory.interfaces.board.tui.resume_run") as resume:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await self._select_first_row(app, pilot)
+                app.query_one("#feedback", TextArea).text = "ship it"
+                app.action_approve()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertFalse(app._busy)
+                result = str(app.query_one("#result", Static).render())
+        resume.assert_called_once_with(1, "approve", reason="ship it", db_path=self.db_path)
+        self.assertIn("approve done", result)
+
+    async def test_a_refused_resume_is_shown_not_reported_as_done(self) -> None:
+        from factory.runs import RunError
+
+        app = FactoryBoard(self.db_path)
+        with patch("factory.interfaces.board.tui.resume_run",
+                   side_effect=RunError("Cannot resume: missing spec log")):
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await self._select_first_row(app, pilot)
+                app.action_approve()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                result = str(app.query_one("#result", Static).render())
+        self.assertIn("Cannot resume: missing spec log", result)
+        self.assertNotIn("done", result)
+
+
+class TuiLayeringTests(unittest.TestCase):
+    def test_the_board_never_imports_the_cli(self) -> None:
+        """Approving from the board used to `import factory.interfaces.cli` and swap
+        its console for a buffer. Both interfaces now sit on factory.runs."""
+        import ast
+
+        src = Path(__file__).resolve().parents[3] / "src" / "factory" / "interfaces" / "board"
+        for path in src.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                mods = []
+                if isinstance(node, ast.Import):
+                    mods = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    mods = [node.module]
+                for mod in mods:
+                    self.assertFalse(mod.startswith("factory.interfaces.cli"),
+                                     f"{path.name} imports {mod}")
 
 
 def _make_project(conn, pid: str, slug: str) -> None:

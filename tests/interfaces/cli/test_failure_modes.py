@@ -13,8 +13,10 @@ from pathlib import Path
 from rich.console import Console
 from rich.rule import Rule
 
-from factory.interfaces.cli import DB_PATH, run_pipeline
 from factory.domain.project_spec import ProjectSpec
+from factory.interfaces.cli.common import DB_PATH
+from factory.interfaces.cli.run import RunPrinter
+from factory.runs import run_pipeline
 from factory.state.db import init_db
 
 console = Console()
@@ -93,7 +95,8 @@ def main() -> None:
 
         try:
             init_db(DB_PATH)
-            run_pipeline(scenario["request"], opencode_cwd=repo_root, project_spec_text=spec_text)
+            run_pipeline(scenario["request"], opencode_cwd=repo_root, project_spec_text=spec_text,
+                         db_path=DB_PATH, on_event=RunPrinter())
         except Exception as e:
             console.print(f"  [bold red]CRASH:[/bold red] {e}")
 

@@ -96,32 +96,28 @@ class ReconcileTests(unittest.TestCase):
 
 class CliRunIdValidationTests(unittest.TestCase):
     def test_non_integer_run_id_exits_cleanly(self) -> None:
-        import factory.interfaces.cli as cli
+        from factory.interfaces.cli.common import run_id_arg
 
-        original = cli.sys.argv
-        try:
-            cli.sys.argv = ["factory", "review", "abc"]
-            with self.assertRaises(SystemExit):
-                cli._run_id_arg("Usage: factory review <run_id>")
-        finally:
-            cli.sys.argv = original
+        with self.assertRaises(SystemExit):
+            run_id_arg(["abc"], "Usage: factory review <run_id>")
+
+    def test_missing_run_id_exits_cleanly(self) -> None:
+        from factory.interfaces.cli.common import run_id_arg
+
+        with self.assertRaises(SystemExit):
+            run_id_arg([], "Usage: factory review <run_id>")
 
     def test_valid_run_id_parsed(self) -> None:
-        import factory.interfaces.cli as cli
+        from factory.interfaces.cli.common import run_id_arg
 
-        original = cli.sys.argv
-        try:
-            cli.sys.argv = ["factory", "review", "42"]
-            self.assertEqual(cli._run_id_arg("usage"), 42)
-        finally:
-            cli.sys.argv = original
+        self.assertEqual(run_id_arg(["42"], "usage"), 42)
 
 
 class SpecSummaryRobustnessTests(unittest.TestCase):
     """A blocked/off-script spec must never crash the CLI display layer."""
 
     def test_blocked_spec_does_not_raise(self) -> None:
-        from factory.interfaces.cli import print_spec_summary
+        from factory.interfaces.render import print_spec_summary
 
         # The synthetic blocked dict omits required SpecOutput fields (problem/why).
         print_spec_summary(
@@ -135,7 +131,7 @@ class SpecSummaryRobustnessTests(unittest.TestCase):
         )
 
     def test_valid_spec_still_renders(self) -> None:
-        from factory.interfaces.cli import print_spec_summary
+        from factory.interfaces.render import print_spec_summary
 
         print_spec_summary(
             {

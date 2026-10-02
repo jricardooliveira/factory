@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from factory.workspace.projects import create_project
+from factory.interfaces.board.html_report import generate_factory_visualization
 from factory.state.db import (
     create_story,
     finish_run,
@@ -18,7 +18,7 @@ from factory.state.db import (
     log_gate,
     start_run,
 )
-from factory.interfaces.board.html_report import generate_factory_visualization
+from factory.workspace.projects import create_project
 
 
 class FactoryVisualizationTests(unittest.TestCase):
@@ -86,7 +86,7 @@ class FactoryVisualizationCliTests(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_visualize_command_writes_default_report(self) -> None:
-        from factory.interfaces.cli import main
+        from factory.interfaces.cli.main import main
 
         with patch("sys.argv", ["factory", "visualize"]):
             main()
@@ -94,7 +94,7 @@ class FactoryVisualizationCliTests(unittest.TestCase):
         self.assertTrue(Path("factory-visualization.html").exists())
 
     def test_visualize_command_accepts_output_path(self) -> None:
-        from factory.interfaces.cli import main
+        from factory.interfaces.cli.main import main
 
         with patch("sys.argv", ["factory", "visualize", "--output", "reports/factory.html"]):
             main()
