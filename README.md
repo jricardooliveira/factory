@@ -277,17 +277,18 @@ review behaviour without touching an agent definition — then run `make evals`.
 
 ## Known limits — read before trusting it unattended
 
-1. **Test bodies are not executed by default.** `gate-build` compiles and collects.
+1. **Generated code is not executed by default.** `gate-build` compiles, typechecks and
+   checks imports statically — it does not even collect tests, since that imports them.
    Opt in with `FACTORY_RUN_TESTS=1`, but understand what that means: AI-generated
    code runs on your machine in a subprocess, with no hardened sandbox. Without it,
    the trust package reports `tests.executed: false` and withholds sign-off.
-2. **The $1-per-task budget does not bind.** `agent_logs.cost_usd` is NULL in every
-   row ever written — opencode's usage events are not being harvested — so only the
-   2-attempt cap is limiting the loop. `factory metrics` reports this under
-   *NOT MEASURABLE* rather than printing a reassuring `$0.00`. Don't leave long runs
-   unattended.
+2. **The $1-per-task budget does not bind on a subscription login.** Tokens and model
+   are recorded per call, but a ChatGPT/Codex login reports $0, so only the 2-attempt
+   cap limits the loop. `factory metrics` says so rather than printing a reassuring
+   `$0.00`. Don't leave long runs unattended.
 3. **It commits straight onto the generated repo's current branch.** No branch per
-   story, no PR. Separation of duties is currently *you reading the trust package*.
+   story, no PR — so only one live run per project is allowed at a time. Separation of
+   duties is *you* at Checkpoint 3, which releases exactly the code you reviewed.
 4. **Approving a release with gaps is allowed — and recorded.** While tests are not
    executed (point 1), every release reaches Checkpoint 3 *NOT READY* with that gap
    named. Approving it is you accepting the risk, and the story's `PIPELINE.md` says so.

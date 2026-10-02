@@ -1,9 +1,9 @@
 # The eval pass-rate as a merge check (AI-Native SDLC playbook, Stage 4:
 # "a pass-rate threshold gated as a merge check").
 #
-# NOTE: this repo currently has no git remote, so this workflow is inert until one
-# exists. It is committed anyway because the gate it encodes is the point: a change
-# to the AGENT CONFIGURATION (agents/*.md, agents/policies/REVIEW.md,
+# It runs on the GitHub remote (origin). Whether a merge REQUIRES it is a branch-
+# protection setting on GitHub, which this file cannot prove. The gate it encodes:
+# a change to the AGENT CONFIGURATION (agents/*.md, agents/policies/REVIEW.md,
 # src/factory/domain/{gates,ambiguity}.py, src/factory/agent_config/, prompt assembly
 # in src/factory/pipeline/) must not land without the eval suite passing at 100%.
 #
@@ -15,8 +15,9 @@ on:
     branches: ["**"]
   pull_request:
   schedule:
-    # The playbook asks for the eval suite to run on a schedule as well as on
-    # config changes, so model drift surfaces without a code change to trigger it.
+    # A weekly re-run of the OFFLINE suite on a fresh runner. It does NOT measure model
+    # drift: replays feed frozen agent outputs, so a worse model answer is invisible
+    # here. Live behavioural evals are not built (improvement-tasks T09).
     - cron: "0 6 * * 1"
 
 jobs:

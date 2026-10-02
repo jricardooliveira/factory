@@ -64,13 +64,13 @@ Between checkpoints, when a gate fails, the factory **auto-remediates within a t
 
 Attempt counting and routing are built (the Phase-3 remediation loop).
 
-> **⚠️ The $ cap is NOT enforced today.** `agent_logs.cost_usd` is NULL in every row
-> ever written — opencode's usage events are not being harvested by
-> `adapters.opencode._extract_usage_from_json_stream` — so `get_run_cost()` always
-> returns `0.0` and the `cost_so_far < MAX_TASK_COST_USD` comparison (`domain/gates.py`) is always true.
-> **Only `MAX_CODER_ATTEMPTS` is actually bounding the loop.** `factory metrics`
-> reports this under *NOT MEASURABLE* rather than printing a reassuring `$0.00`.
-> Fixing the harvest requires inspecting a live opencode event stream.
+> **⚠️ The $ cap does not bind on a subscription login.** Usage harvesting was broken
+> until 2026-10-02 (opencode reports usage on `step_finish` events, which the parser
+> ignored), so every earlier row is NULL. It now records tokens, model and the
+> provider's cost — but a ChatGPT/Codex login reports **$0** for real token use, so
+> `cost_so_far < MAX_TASK_COST_USD` stays true there. **Only `MAX_CODER_ATTEMPTS`
+> bounds the loop.** A token allowance is the honest budget for such a login; choosing
+> it is an operator decision (improvement-tasks T08). `factory metrics` names the gap.
 
 ---
 
@@ -148,14 +148,14 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | A failed gate-1 / architect PERSISTS the failure (`finish_run`) instead of leaving the run `running` until `reconcile` mislabels it a dead process | ✅ built |
 | Resume rebuilds state from the LATEST agent output, so the operator cannot approve one design while the coder builds an earlier one (`runs.build_resume_context`) | ✅ built |
 | The project's existing test suite runs after ANY Python change, not only when the task happened to write a test file | ✅ built |
-| Cost/token harvest from opencode (`agent_logs.cost_usd` is NULL in 100% of rows — see §4) | ⛔ to build |
+| Cost/token harvest from opencode: tokens, model and provider cost from `step_finish` events (rows before 2026-10-02 are NULL; a subscription login reports $0 — see §4) | ✅ built (a token budget ⛔) |
 | **Canonical workspace**: one resolver (`workspace.layout.home()`), `$FACTORY_HOME` default `~/.factory`, holds `factory.db` + `projects/<slug>/` — no CWD-relative path left (four stray `factory.db` files existed). `factory workspace` shows it; `factory workspace import-legacy` moves the old layout in | ✅ built |
 | **A product's evidence is versioned WITH its code**: the project directory IS its git repo; INTENT/SPEC/PLAN, ADRs, trust packages, rules and spec are committed as produced (`factory:`), refused as coder output, and excluded from every code measurement (scope check, trust-package diff, tester diff) | ✅ built |
 | Branch per story + PR-shaped review (the factory commits straight onto the current branch) | ⛔ to build |
 | tester-agent + gate-test (QA/AC-coverage, security, performance sub-verdicts) | ✅ built |
 | Run generated test bodies in the build gate (opt-in `FACTORY_RUN_TESTS`) | ✅ built (subprocess; hardened sandbox still ⛔) |
 | Per-agent model tiers — frontier for thinking (spec/architect/tester), cheap for coder, escalate-on-retry (`factory tiers`, policy in `agents/tiers.toml`; `factory doctor` probes every tier model before a run) | ✅ built |
-| Tester reviews the **real cumulative git diff** of every task (not the last task's self-report) | ✅ built (`workspace.git.collect_repo_diff`) |
+| Tester reviews the **real git diff of this run** (from its `base_commit`, not every story since the first; not the last task's self-report) | ✅ built (`workspace.git.collect_repo_diff`) |
 | Tester failure routes back to the coder for a bounded remediation pass (`MAX_TESTER_REMEDIATIONS`), findings carried, coder escalated to frontier | ✅ built |
 | Malformed-JSON agent output gets one repair retry before `blocked` (live runs) | ✅ built |
 | Build gate FAILS on a real import error (vs WARN for a merely-absent third-party dep) | ✅ built (`verification.python._classify_collect_failure`) |
@@ -170,7 +170,7 @@ The build order that turns this contract into reality is the phased workflow in 
 ## 9. Open questions (deliberately deferred)
 
 - **Brownfield stacks:** `src/factory/verification/` covers Python, **Go** (build + vet + test) and JS/TS. Java, Rust, C# etc. still need their own verification commands (see [ARCHITECTURE.md → a new toolchain](../ARCHITECTURE.md#a-new-toolchain-eg-java-rust)) before the factory can be trusted on those repos — until then `gate-build` reports "no verifiable files" and passes, which is a silent false PASS.
-- **Sandbox:** running agent-generated *test bodies* executes untrusted code; required before `gate-test` runs tests for real (today `gate-build` is compile/collect-only).
+- **Sandbox:** running agent-generated *test bodies* — or even collecting them, which imports them — executes untrusted code; required before tests run by default (today the default `gate-build` executes nothing it was given: compile, static import check, typecheck).
 - **Notification mechanism:** the macOS desktop-ping implementation (`osascript`,
   `src/factory/adapters/notify.py`) is implemented but opt-in via `FACTORY_NOTIFY=1`.
 

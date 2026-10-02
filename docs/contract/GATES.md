@@ -61,7 +61,7 @@ The boundary-agent returns four sub-verdicts — tenant, authorization, API cont
 **Runs:** after `coder-agent`, post-materialization. **Code:** `src/factory/verification/` → `verify_changes()`, called from `pipeline/nodes/coder.py`.
 
 Infers toolchain from materialized file extensions and runs deterministic checks:
-- **Python:** `py_compile`; `pytest --collect-only` (or the full suite when opted in).
+- **Python:** `py_compile` and a **static import check** (`python.static_import_check`: a local module or name the coder imports must exist — found by parsing, not importing). `pytest --collect-only` and the suite run only when opted in (`FACTORY_RUN_TESTS=1`): collection imports `conftest.py` and test modules, i.e. it EXECUTES generated code, so by default nothing the coder wrote is run.
 - **Go:** `go build ./...`, then `go vet ./...`, then `go test ./...` (opted in), run from
   each module root found by walking up from the changed `.go` files — a monorepo's module is
   `backend/go.mod`, not the repo root. An unresolvable import UNDER the module's own path
@@ -69,7 +69,7 @@ Infers toolchain from materialized file extensions and runs deterministic checks
 - **JS:** `node --check`. **TS:** `tsc --noEmit -p <nearest tsconfig.json>`, preferring the
   project's own pinned `node_modules/.bin/tsc`. No tsconfig anywhere ⇒ **warn**, not fail.
 
-**Verdict policy:** hard **fail** only on real syntax/compile errors. **warn** (never block) when a toolchain/dependency is missing or pytest collection fails (collection imports project deps that may be absent — not proof the code is broken). Running test **bodies** is deferred until a sandbox exists.
+**Verdict policy:** **fail** on real syntax/compile/import errors — and when the **toolchain itself is not installed** (`go`, `gofmt`, `node`, `tsc`): a check that cannot run cannot earn a pass, and it used to `skip` its files through. **warn** when a third-party dependency is missing (not proof the code is broken). Running test **bodies** is opt-in until a sandbox exists.
 
 Tests are run after **any** Python change once `FACTORY_RUN_TESTS=1` — not only when the task happened to write a test file, which used to leave a source-only change never exercising the project's existing suite.
 
@@ -85,7 +85,7 @@ Declared-scope violations (a changed file outside the tasks' `scope`) are measur
 
 Fails if: the tester's overall verdict is `fail`; `qa_verdict` is `fail` (an acceptance criterion has no test); `highest_severity` is `high` or `critical`, or `security_verdict` is `fail`; `performance_verdict` is `fail`.
 
-The tester reviews the **real cumulative git diff** of every task (`workspace.git.collect_repo_diff`), not the last task's self-report, and applies the versioned policy in [REVIEW.md](../../agents/policies/REVIEW.md) — passes, severity ladder, skip list and nit cap live there, so review behaviour is tunable without editing an agent definition. The severity ladder in that doc must stay in step with this gate's thresholds; `factory evals` checks the policy exists and covers every sub-verdict.
+The tester reviews the **real git diff of this run** — from the run's own `base_commit`, so a later story's review is not filled with earlier stories' code (`workspace.git.collect_repo_diff(base=…)`) — not the last task's self-report, and applies the versioned policy in [REVIEW.md](../../agents/policies/REVIEW.md) — passes, severity ladder, skip list and nit cap live there, so review behaviour is tunable without editing an agent definition. The severity ladder in that doc must stay in step with this gate's thresholds; `factory evals` checks the policy exists and covers every sub-verdict.
 
 Acceptance criteria the tester never mentioned are surfaced deterministically (`domain/traceability.unassessed_criteria`) and annotated on the gate reason — a silent drop is not neutral.
 
@@ -105,7 +105,7 @@ On failure the run routes back to the coder for ONE bounded remediation pass car
 - **migration notes missing** when the design changes the database (`db_impact` / `migration_needed`), **rollback notes missing** when it changes the schema or breaks an API;
 - a **blocking concern** raised by the release-agent (`verdict: fail`). Its `warn` concerns are shown but do not count as gaps.
 
-The trust package is written to `docs/releases/` *at* the checkpoint, so the operator reads it before deciding. The release-agent writes words only; it cannot pass this gate, and nothing else can either: `release` runs behind the boss, which requires the operator's APPROVAL on the newest gate-release row (`domain/authorization.authorize_release`). Approving a NOT READY release is permitted — the gaps were named — and is recorded as accepted risk.
+The trust package is written to `docs/releases/` *at* the checkpoint, so the operator reads it before deciding. The gate first **pins the candidate** (`pipeline_runs.candidate_commit`): the package names it and measures its change set up to it, so re-assembling it after later work cannot change its meaning, and the boss will release exactly that code — if any code changed after the checkpoint (another story, a manual edit; the factory's own evidence commits do not count), the approval is refused. After release the package says `next_authorization: none`. The release-agent writes words only; it cannot pass this gate, and nothing else can either: `release` runs behind the boss, which requires the operator's APPROVAL on the newest gate-release row (`domain/authorization.authorize_release`). Approving a NOT READY release is permitted — the gaps were named — and is recorded as accepted risk.
 
 **Feeds → Checkpoint 3 (release sign-off) `✅ built`.** Resume: approve → `release` (story completed, final trust package); reject → a remediation coder pass carrying the operator's words, then the tester and this gate again.
 
@@ -134,6 +134,6 @@ A task with no allowed scope or no completion evidence is authorized with a **wa
 ## Cross-gate policy
 
 - **Auto-remediation:** on `fail` between checkpoints, route back (implementation → coder, design → architect) carrying prior findings, up to **2 attempts or ~$1/task**, then stop and queue. `✅ built`
-- **Budget source:** `agent_logs.cost_usd` is summed per task to enforce the $ cap — **but that column is NULL in every row ever written**, so only the attempt cap actually binds. See EFFECTIVENESS.md §4; `factory metrics` reports it as NOT MEASURABLE.
+- **Budget source:** `agent_logs.cost_usd` is summed per run to enforce the $ cap. Usage is harvested from opencode's `step_finish` events (fixed 2026-10-02; every earlier row is NULL). On a subscription login the provider reports **$0** for real token use, so the $ cap still cannot bind there — only the attempt cap does. `factory metrics` says so instead of printing a reassuring `$0.00`.
 - **Thresholds** (`MAX_TASKS_PER_STORY`, `MAX_MODULES_PER_STORY`, attempt/cost caps) live as named constants in `src/factory/domain/gates.py`, not scattered in node logic.
 - **Every gate result is persisted** to `gate_results` (`state.db.log_gate`) (with `needs_human`, `human_questions`, `human_response`) and surfaced in `factory review`; every boss authorization to `authorizations` (`state.db.log_authorization`).
