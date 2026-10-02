@@ -10,9 +10,9 @@ factory had rich per-run telemetry and no readable memory of its own behaviour.
 **Why `not_measurable` is a first-class output.** The temptation is to print
 `$0.00` for cost and move on. Until 2026-10-02 `agent_logs.cost_usd` was NULL in
 every row (opencode reports usage on `step_finish` events, which the harvester did
-not read), so the `$1` per-task budget never bound. Harvesting now works — and on a
-subscription login the provider reports `$0` for real token use, so "$0.00 spent"
-is still not a working budget. A dashboard that hid either would present a broken
+not read), so the old `$1` budget never bound. Harvesting now works — and on a
+subscription login the provider reports `$0` for real token use, so spend is shown
+ESTIMATED at list prices, never as a reassuring "$0.00". A dashboard that hid either would present a broken
 instrument as a healthy reading; naming the gap in the tool itself is the
 difference between a metric and a decoration.
 
@@ -25,7 +25,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from factory.domain.gates import MAX_TASK_COST_USD
+from factory.agent_config import tiers
+from factory.domain.budget import story_spend
+from factory.domain.gates import MAX_STORY_COST_USD
 from factory.state import reports
 from factory.state.db import get_db
 
@@ -53,6 +55,8 @@ class FactoryMetrics:
     # ── Cost (Stage 3-5, and the gates.py budget) ─────────────────
     cost_measurable: bool = False
     cost_coverage: float = 0.0
+    estimated_cost_usd: float = 0.0  # tokens x list price (agents/tiers.toml [prices])
+    unknown_cost_calls: int = 0
     total_cost_usd: float = 0.0
     total_tokens_in: int = 0
     total_tokens_out: int = 0
@@ -102,22 +106,24 @@ def compute(db_path: Path) -> FactoryMetrics:
         m.total_cost_usd = round(float(usage["cost_usd"]), 6)
         m.total_tokens_in = int(usage["tokens_in"])
         m.total_tokens_out = int(usage["tokens_out"])
+        spend = story_spend(reports.live_usage_rows(conn), tiers.config().prices)
+        m.estimated_cost_usd = spend.estimated_usd
+        m.unknown_cost_calls = spend.unknown_calls
 
-    if not m.cost_measurable:
+    if m.unknown_cost_calls:
         m.not_measurable.append(
-            f"cost / tokens — 0 of {total_calls} agent calls recorded usage. Calls made "
-            "before usage harvesting was fixed (2026-10-02: opencode reports it on "
-            "`step_finish` events) stored none, so for them the $"
-            f"{MAX_TASK_COST_USD:.2f} per-task remediation budget in domain/gates.py never "
-            "bound. Only MAX_CODER_ATTEMPTS limited those loops."
+            f"cost of {m.unknown_cost_calls} of {total_calls} agent call(s) — no usage was "
+            "recorded (calls before usage harvesting was fixed on 2026-10-02, or failed "
+            "calls), or the model has no list price in agents/tiers.toml. They count as "
+            f"$0 toward the ${MAX_STORY_COST_USD:.2f} per-story cap, so it under-counts them."
         )
-    elif m.total_cost_usd == 0 and m.total_tokens_in + m.total_tokens_out > 0:
+    if m.total_cost_usd == 0 and m.total_tokens_in + m.total_tokens_out > 0:
         m.not_measurable.append(
-            f"currency spend — the provider reports $0 while "
+            f"real currency spend — the provider reports $0 while "
             f"{m.total_tokens_in + m.total_tokens_out:,} tokens were used (a subscription "
-            f"login, e.g. ChatGPT). Spend is real in tokens, not dollars, so the "
-            f"${MAX_TASK_COST_USD:.2f} per-task budget cannot bind on this login: only "
-            "MAX_CODER_ATTEMPTS limits the loop."
+            f"login, e.g. ChatGPT). Spend is shown ESTIMATED at API list prices "
+            f"(~${m.estimated_cost_usd:.2f}); the ${MAX_STORY_COST_USD:.2f} per-story cap "
+            "uses that estimate."
         )
     m.not_measurable.append(
         "time-to-first-review / review latency — gate_results.responded_at was only "

@@ -282,10 +282,10 @@ review behaviour without touching an agent definition — then run `make evals`.
    Opt in with `FACTORY_RUN_TESTS=1`, but understand what that means: AI-generated
    code runs on your machine in a subprocess, with no hardened sandbox. Without it,
    the trust package reports `tests.executed: false` and withholds sign-off.
-2. **The $1-per-task budget does not bind on a subscription login.** Tokens and model
-   are recorded per call, but a ChatGPT/Codex login reports $0, so only the 2-attempt
-   cap limits the loop. `factory metrics` says so rather than printing a reassuring
-   `$0.00`. Don't leave long runs unattended.
+2. **The $10-per-story cap is an estimate on a subscription login.** A ChatGPT/Codex
+   login reports $0, so spend is tokens × the model's public list price
+   (`agents/tiers.toml` [prices]); paid API providers report their real cost. Calls
+   with no recorded usage count as $0, and `factory metrics` says how many.
 3. **It commits straight onto the generated repo's current branch.** No branch per
    story, no PR — so only one live run per project is allowed at a time. Separation of
    duties is *you* at Checkpoint 3, which releases exactly the code you reviewed.

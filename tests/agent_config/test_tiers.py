@@ -118,6 +118,27 @@ class TiersTomlTests(unittest.TestCase):
             },
         )
 
+    def test_every_default_model_has_a_list_price(self) -> None:
+        """The $10-per-story cap estimates spend from tokens x list price, because the
+        ChatGPT/Codex login reports $0. A model without a price is unbudgetable."""
+        prices = mt.config().prices
+        for tier, model in mt.TIER_DEFAULTS.items():
+            with self.subTest(tier=tier):
+                self.assertIn(model, prices)
+        # OpenAI pricing page, 2026-10-02: Fast mode is 2.5x the standard rate.
+        self.assertEqual((prices["openai/gpt-5.5"].input_per_m,
+                          prices["openai/gpt-5.5"].output_per_m), (5.0, 30.0))
+        self.assertEqual((prices["openai/gpt-5.5-fast"].input_per_m,
+                          prices["openai/gpt-5.5-fast"].output_per_m), (12.5, 75.0))
+
+    def test_a_malformed_price_is_rejected_at_load(self) -> None:
+        path = self._write(
+            'default_tier = "big"\n[tiers]\nbig = "openai/y"\n[agents]\n'
+            '[prices."openai/y"]\ninput = "five"\noutput = 30\n'
+        )
+        with self.assertRaises(ValueError):
+            mt.load_tiers(path)
+
     def test_load_tiers_reads_an_arbitrary_file(self) -> None:
         path = self._write(
             'default_tier = "cheap"\n'

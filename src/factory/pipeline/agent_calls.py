@@ -11,10 +11,35 @@ import sqlite3
 from typing import Any
 
 from factory.adapters.opencode import AgentResult, run_agent
+from factory.agent_config import tiers
 from factory.agent_config.tiers import resolve_model
 from factory.domain.agent_output import parse_agent_json
+from factory.domain.budget import Spend, budget_refusal, story_spend
+from factory.domain.gates import MAX_STORY_COST_USD
 from factory.pipeline.state import PipelineState
-from factory.state.db import connect, get_agent_log, get_agent_log_by_stage
+from factory.state.db import connect, get_agent_log, get_agent_log_by_stage, usage_rows
+
+
+class BudgetExhausted(RuntimeError):
+    """The user story has spent MAX_STORY_COST_USD: no further model call is made."""
+
+
+def spend_so_far(state: PipelineState) -> Spend:
+    """What this run's user story has spent across all its live runs (estimated)."""
+    conn = db_conn(state)
+    try:
+        rows = usage_rows(conn, story_id=state.get("story_id"))
+    finally:
+        conn.close()
+    return story_spend(rows, tiers.config().prices)
+
+
+def budget_refusal_for(state: PipelineState) -> str | None:
+    """Why this story may make no further model call (None if it may). A replay
+    feeds frozen outputs and spends nothing, so it is never refused."""
+    if state.get("replay_run_id") or not state.get("story_id"):
+        return None
+    return budget_refusal(spend_so_far(state), MAX_STORY_COST_USD)
 
 
 class ReplayGap(RuntimeError):
@@ -58,16 +83,25 @@ def run_agent_json(
     dict is the parsed object, or the synthetic 'blocked' shape `_extract_json`
     produces — so callers' existing off-script handling is unchanged.
     """
+    _check_budget(state)
     result = _run_or_replay(state, agent_name, prompt, slot)
     parsed = parse_agent_json(result.output)
     if parsed is not None:
         return result, parsed
     if not state.get("replay_run_id"):
+        _check_budget(state)  # the repair retry is a model call too
         result = _run_or_replay(state, agent_name, prompt + _JSON_REPAIR_SUFFIX, slot)
         reparsed = parse_agent_json(result.output)
         if reparsed is not None:
             return result, reparsed
     return result, _extract_json(result.output)
+
+
+def _check_budget(state: PipelineState) -> None:
+    """Before EVERY live model call: the story's $ cap (operator decision 2026-10-02)."""
+    refusal = budget_refusal_for(state)
+    if refusal:
+        raise BudgetExhausted(refusal)
 
 
 def _run_or_replay(

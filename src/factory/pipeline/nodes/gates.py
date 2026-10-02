@@ -20,7 +20,7 @@ from factory.domain.contracts import (
     TesterOutput,
 )
 from factory.domain.gates import (
-    MAX_TASK_COST_USD,
+    MAX_STORY_COST_USD,
     MAX_TESTER_REMEDIATIONS,
     gate_after_architect,
     gate_after_release,
@@ -28,7 +28,7 @@ from factory.domain.gates import (
     gate_after_tester,
 )
 from factory.domain.traceability import trace_criteria, unassessed_criteria
-from factory.pipeline.agent_calls import db_conn
+from factory.pipeline.agent_calls import budget_refusal_for, db_conn, spend_so_far
 from factory.pipeline.evidence_writers import release_evidence_gaps, write_trust_package
 from factory.pipeline.state import PipelineState
 from factory.workspace.git import git_head
@@ -36,7 +36,6 @@ from factory.state.db import (
     finish_run,
     set_candidate_commit,
     get_human_responses,
-    get_run_cost,
     log_gate,
     update_run_stage,
     update_story_status,
@@ -265,8 +264,8 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
         # Tester failed — route back to the coder for a bounded remediation pass
         # carrying the findings, unless the remediation or cost budget is spent.
         tester_attempt = state.get("tester_attempt", 1)
-        cost_so_far = get_run_cost(conn, state["run_id"])
-        if tester_attempt <= MAX_TESTER_REMEDIATIONS and cost_so_far < MAX_TASK_COST_USD:
+        conn.commit()  # the spend below is read on its own connection
+        if tester_attempt <= MAX_TESTER_REMEDIATIONS and budget_refusal_for(state) is None:
             conn.commit()  # leave the run 'running'; route_after_gate_test → coder
             return {
                 "gate_test": gate_dict,
@@ -279,7 +278,8 @@ def node_gate_test(state: PipelineState) -> dict[str, Any]:
 
         error = (
             f"Gate test failed after {tester_attempt} tester pass(es) "
-            f"(remediation budget {MAX_TESTER_REMEDIATIONS}, spent ${cost_so_far:.4f}): "
+            f"(remediation budget {MAX_TESTER_REMEDIATIONS}; story spend "
+            f"~${spend_so_far(state).estimated_usd:.2f} of ${MAX_STORY_COST_USD:.2f}): "
             f"{result.reason}"
         )
         update_story_status(conn, state["story_id"], "failed")

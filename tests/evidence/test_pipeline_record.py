@@ -90,6 +90,14 @@ class PipelineRecordTests(unittest.TestCase):
         self.assertNotIn("T-1 declares no allowed scope",
                          text[text.index("## Blockers"):text.index("## Trail")])
 
+    def test_the_record_shows_the_story_spend_against_its_cap(self) -> None:
+        with db.get_db(self.db_path) as conn:
+            db.log_agent(conn, self.run_id, "coder-agent", "in", "{}", verdict="complete",
+                         tokens_in=0, tokens_out=100_000, cost_usd=0.0,
+                         model_name="openai/gpt-5.5")
+        text = self._render()
+        self.assertIn("~$3.00 of $10.00", text)
+
     def test_table_cells_cannot_break_the_table(self) -> None:
         trail = self._render().split("## Trail", 1)[1]
         self.assertIn("3 AC \\| 2 tasks", trail)

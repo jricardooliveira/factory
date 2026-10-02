@@ -61,6 +61,15 @@ def checkpoint_counts(conn: sqlite3.Connection) -> tuple[int, int]:
     return row["n"] or 0, row["pending"] or 0
 
 
+def live_usage_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Per-call usage over every live run — priced by `domain.budget.story_spend`."""
+    rows = conn.execute(
+        "SELECT tokens_in, tokens_out, cost_usd, model_name FROM agent_logs "
+        f"WHERE run_id IN ({_LIVE_RUNS})"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def usage_totals(conn: sqlite3.Connection, run_id: int | None = None) -> dict[str, Any]:
     """Agent-call usage, over one run or the whole history.
 

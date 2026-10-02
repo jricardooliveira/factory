@@ -288,6 +288,17 @@ class TierLeverageTests(unittest.TestCase):
         self.assertIn("coder-agent", check.detail)
         self.assertTrue(report.passed)
 
+    def test_a_tier_model_without_a_list_price_is_a_warning(self) -> None:
+        """The $10-per-story cap prices tokens from agents/tiers.toml [prices]; a model
+        without one is spent blind (its calls count as unknown)."""
+        with patch.dict(os.environ, {"FACTORY_TIER_FAST": "openai/unpriced-model"}), \
+                patch("factory.preflight.doctor.run_agent", side_effect=_ok):
+            report = doctor.run_doctor(offline=True, which=_which(ALL_TOOLS))
+        check = _by_name(report)["price list"]
+        self.assertEqual(check.status, "warn")
+        self.assertIn("openai/unpriced-model", check.detail)
+        self.assertTrue(report.passed)
+
     def test_distinct_models_are_ok(self) -> None:
         saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("FACTORY_TIER_")}
         try:

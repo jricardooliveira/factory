@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `717 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `717 passed` (~90s, offline, zero tokens) |
+| `make check` | `741 passed` + `12/12 scenarios behaving as expected` + `56/56 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `741 passed` (~90s, offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 56/56 agent-configuration checks; exits non-zero below 100% |
@@ -202,10 +202,11 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Resume must read the LATEST agent log** (`runs.build_resume_context` / `get_agent_log`, not
   `get_run_logs` + `next(...)` which is ascending). Otherwise the operator approves one
   design and the coder builds an earlier one.
-- **Usage comes from opencode's `step_finish` events** (`adapters.opencode`; rows before
-  2026-10-02 are NULL). On the ChatGPT/Codex login the provider reports cost **$0** for real
-  tokens, so the `$1` budget in `domain/gates.py` still never binds. Don't write code that
-  trusts a dollar figure; see `factory metrics` → NOT MEASURABLE.
+- **The budget is $10 per user story** (`MAX_STORY_COST_USD`), checked before EVERY live
+  model call (`agent_calls._check_budget` → `BudgetExhausted`) and by the boss before each
+  stage. Usage comes from opencode's `step_finish` events (rows before 2026-10-02 are NULL);
+  the ChatGPT/Codex login reports **$0**, so spend is tokens × list price from
+  `agents/tiers.toml` [prices] (`domain/budget.py`). A new model needs a price there.
 - **Default verification executes nothing the coder wrote.** No `pytest --collect-only`
   without `FACTORY_RUN_TESTS=1` (collection imports — runs — test modules); the static
   import check covers what it caught. A missing toolchain FAILS its files, never skips them.

@@ -31,10 +31,11 @@ MAX_TASKS_PER_STORY = 6
 MAX_MODULES_PER_STORY = 12
 
 # ── Remediation budget (EFFECTIVENESS.md §4): fail-fast, then queue ──
-# A task may be re-attempted up to MAX_CODER_ATTEMPTS times OR until the
-# cumulative spend crosses MAX_TASK_COST_USD, whichever comes first.
+# A task may be re-attempted up to MAX_CODER_ATTEMPTS times, and no model call is
+# made once the user story has spent MAX_STORY_COST_USD (estimated at API list
+# prices from recorded tokens — see domain/budget.py). Operator decision, 2026-10-02.
 MAX_CODER_ATTEMPTS = 2
-MAX_TASK_COST_USD = 1.0
+MAX_STORY_COST_USD = 10.0
 
 # How many times a tester (QA/security) failure may route back to the coder for a
 # remediation pass before the run is parked for the human. Bounded like the build

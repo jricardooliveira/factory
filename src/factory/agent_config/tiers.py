@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from factory.agent_config.location import TIERS_FILENAME, agents_dir
+from factory.domain.budget import ModelPrice
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class TierConfig:
     agent_tiers: dict[str, str]
     default_tier: str
     escalate_on_retry: dict[str, str] = field(default_factory=dict)
+    prices: dict[str, ModelPrice] = field(default_factory=dict)
 
 
 def default_tiers_path() -> Path:
@@ -99,7 +101,25 @@ def load_tiers(path: Path | None = None) -> TierConfig:
         agent_tiers=agent_tiers,
         default_tier=default_tier,
         escalate_on_retry=escalate,
+        prices=_prices(data, path),
     )
+
+
+def _prices(data: dict, path: Path) -> dict[str, ModelPrice]:
+    """`[prices."provider/model"] input/output` (USD per 1M tokens), validated."""
+    table = data.get("prices") or {}
+    if not isinstance(table, dict):
+        raise ValueError(f"{path}: [prices] must be a table")
+    out: dict[str, ModelPrice] = {}
+    for model, entry in table.items():
+        values = [entry.get(k) if isinstance(entry, dict) else None for k in ("input", "output")]
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+                   for v in values):
+            raise ValueError(
+                f"{path}: [prices.\"{model}\"] needs numeric input and output (USD per 1M tokens)"
+            )
+        out[model] = ModelPrice(float(values[0]), float(values[1]))
+    return out
 
 
 @cache

@@ -11,14 +11,19 @@ from pathlib import Path
 from typing import Any
 
 from factory.domain.contracts import CoderOutput, SpecOutput, TaskDef
-from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_REARCHITECT_LOOPS, MAX_TASK_COST_USD
+from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_REARCHITECT_LOOPS, MAX_STORY_COST_USD
 from factory.domain.task_order import order_tasks
-from factory.pipeline.agent_calls import db_conn, run_agent_json, usage_kwargs
+from factory.pipeline.agent_calls import (
+    budget_refusal_for,
+    db_conn,
+    run_agent_json,
+    spend_so_far,
+    usage_kwargs,
+)
 from factory.pipeline.prompts.coder import build_coder_task_prompt, build_remediation_prompt
 from factory.pipeline.state import PipelineState, factory_owned_paths
 from factory.state.db import (
     finish_run,
-    get_run_cost,
     log_agent,
     log_gate,
     update_run_stage,
@@ -285,8 +290,8 @@ def _route_after_build(
                 "attempt_number": 1, "prior_findings": [], "tasks_completed": completed}
 
     # Task failed: retry the SAME task within budget, else give up + queue.
-    cost_so_far = get_run_cost(conn, state["run_id"])
-    budget_left = attempt < MAX_CODER_ATTEMPTS and cost_so_far < MAX_TASK_COST_USD
+    conn.commit()  # the spend below is read on its own connection
+    budget_left = attempt < MAX_CODER_ATTEMPTS and budget_refusal_for(state) is None
     if not verify_passed and budget_left:
         conn.commit()  # keep run 'running'; same task_index -> retries this task
         return {
@@ -300,8 +305,9 @@ def _route_after_build(
     if not verify_passed:
         error = (
             f"gate-build failed on {task.id} after {attempt} attempt(s) "
-            f"(budget: {MAX_CODER_ATTEMPTS} attempts / ${MAX_TASK_COST_USD:.2f}, "
-            f"spent ${cost_so_far:.4f}): {gate_reason}"
+            f"(budget: {MAX_CODER_ATTEMPTS} attempts; story spend "
+            f"~${spend_so_far(state).estimated_usd:.2f} of ${MAX_STORY_COST_USD:.2f}): "
+            f"{gate_reason}"
         )
     else:
         error = f"coder reported verdict '{coder.verdict}' on {task.id}"

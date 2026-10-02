@@ -438,13 +438,23 @@ def reconcile_stale_runs(conn: sqlite3.Connection, older_than_secs: float = 3600
     return reconciled
 
 
-def get_run_cost(conn: sqlite3.Connection, run_id: int) -> float:
-    """Sum cost_usd across a run's agent logs (for the remediation budget)."""
-    row = conn.execute(
-        "SELECT COALESCE(SUM(cost_usd), 0.0) AS total FROM agent_logs WHERE run_id = ?",
-        (run_id,),
-    ).fetchone()
-    return float(row["total"]) if row else 0.0
+def usage_rows(
+    conn: sqlite3.Connection, *, run_id: int | None = None, story_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Per-call usage (tokens_in, tokens_out, cost_usd, model_name) for one run, or for
+    every LIVE run of a story — what `domain.budget.story_spend` prices. Replays are
+    excluded: they re-log frozen usage and spend nothing."""
+    if run_id is not None:
+        where, params = "run_id = ?", (run_id,)
+    else:
+        where = ("run_id IN (SELECT id FROM pipeline_runs WHERE story_id = ? "
+                 "AND replay_of IS NULL)")
+        params = (story_id,)
+    rows = conn.execute(
+        f"SELECT tokens_in, tokens_out, cost_usd, model_name FROM agent_logs WHERE {where}",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_agent_log(conn: sqlite3.Connection, run_id: int, agent: str) -> dict[str, Any] | None:

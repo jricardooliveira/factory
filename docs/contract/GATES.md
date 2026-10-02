@@ -133,7 +133,7 @@ A task with no allowed scope or no completion evidence is authorized with a **wa
 
 ## Cross-gate policy
 
-- **Auto-remediation:** on `fail` between checkpoints, route back (implementation → coder, design → architect) carrying prior findings, up to **2 attempts or ~$1/task**, then stop and queue. `✅ built`
-- **Budget source:** `agent_logs.cost_usd` is summed per run to enforce the $ cap. Usage is harvested from opencode's `step_finish` events (fixed 2026-10-02; every earlier row is NULL). On a subscription login the provider reports **$0** for real token use, so the $ cap still cannot bind there — only the attempt cap does. `factory metrics` says so instead of printing a reassuring `$0.00`.
+- **Auto-remediation:** on `fail` between checkpoints, route back (implementation → coder, design → architect) carrying prior findings, up to **2 attempts per task**, then stop and queue; and no model call once the story has spent **$10** (`MAX_STORY_COST_USD`). `✅ built`
+- **Budget source:** per-call usage harvested from opencode's `step_finish` events (rows before 2026-10-02 are NULL), priced by `domain/budget.py`: the provider's cost when it reports one, else tokens × the list price in `agents/tiers.toml` [prices] (a subscription login reports $0). Summed over every live run of the story; replays spend nothing. `factory doctor` warns about a tier model with no price.
 - **Thresholds** (`MAX_TASKS_PER_STORY`, `MAX_MODULES_PER_STORY`, attempt/cost caps) live as named constants in `src/factory/domain/gates.py`, not scattered in node logic.
 - **Every gate result is persisted** to `gate_results` (`state.db.log_gate`) (with `needs_human`, `human_questions`, `human_response`) and surfaced in `factory review`; every boss authorization to `authorizations` (`state.db.log_authorization`).

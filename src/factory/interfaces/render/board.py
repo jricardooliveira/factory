@@ -26,7 +26,7 @@ def print_queue(
             title = run.get("story_title") or run["story_id"]
             output.console.print(
                 f"  [bold]#{run['id']}[/bold] [cyan]{run['story_id']}[/cyan] "
-                f"{title}  [dim](stage: {stage}, spent ${cost:.4f})[/dim]"
+                f"{title}  [dim](stage: {stage}, spent ~${cost:.2f})[/dim]"
             )
             if gate and gate.get("reason"):
                 output.console.print(f"    [dim]why:[/dim] {gate['reason']}")
@@ -50,7 +50,7 @@ def print_queue(
             output.console.print(
                 f"  [bold]#{run['id']}[/bold] [cyan]{run['story_id']}[/cyan] {title}  "
                 f"[{output.verdict_style(run['status'])}]{run['status'].upper()}[/{output.verdict_style(run['status'])}] "
-                f"[dim](spent ${cost:.4f})[/dim]"
+                f"[dim](spent ~${cost:.2f})[/dim]"
             )
             if err:
                 output.console.print(f"    [dim]{err}[/dim]")
@@ -100,7 +100,7 @@ def board_renderable(
         )
         active_tbl.add_row(
             str(run["id"]), run.get("story_title") or run["story_id"], state,
-            detail, _elapsed(run["started_at"]), f"${cost:.4f}", move,
+            detail, _elapsed(run["started_at"]), f"~${cost:.2f}", move,
         )
     blocks.append(active_tbl)
 

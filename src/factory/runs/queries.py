@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from factory.agent_config import tiers
+from factory.domain.budget import story_spend
 from factory.evidence import metrics, trust_package
 from factory.evidence.progress import (
     StageStatus,
@@ -21,11 +23,11 @@ from factory.evidence.progress import (
 from factory.state import projects as project_rows
 from factory.state import reports
 from factory.state.db import (
+    usage_rows,
     get_agent_log,
     get_db,
     get_pending_human_gate,
     get_run,
-    get_run_cost,
     get_run_gates,
     get_run_logs,
     get_runs_by_status,
@@ -50,6 +52,11 @@ def run_record(run_id: int, *, db_path: Path) -> tuple[list[dict], list[dict]]:
         return get_run_logs(conn, run_id), get_run_gates(conn, run_id)
 
 
+def _spent(conn: Any, run_id: int) -> float:
+    """A run's spend, estimated at API list prices (a subscription reports $0)."""
+    return story_spend(usage_rows(conn, run_id=run_id), tiers.config().prices).estimated_usd
+
+
 def queue(
     *, db_path: Path
 ) -> tuple[list[tuple[dict, Gate, float]], list[tuple[dict, float]]]:
@@ -57,11 +64,11 @@ def queue(
     init_db(db_path)
     with get_db(db_path) as conn:
         parked = [
-            (run, get_pending_human_gate(conn, run["id"]), get_run_cost(conn, run["id"]))
+            (run, get_pending_human_gate(conn, run["id"]), _spent(conn, run["id"]))
             for run in get_runs_by_status(conn, ["waiting_human"])
         ]
         attention = [
-            (run, get_run_cost(conn, run["id"]))
+            (run, _spent(conn, run["id"]))
             for run in get_runs_by_status(conn, ["failed", "blocked"])
         ]
     return parked, attention
@@ -77,12 +84,12 @@ def board(
             (
                 r,
                 get_pending_human_gate(conn, r["id"]) if r["status"] == "waiting_human" else None,
-                get_run_cost(conn, r["id"]),
+                _spent(conn, r["id"]),
             )
             for r in get_runs_by_status(conn, ["running", "waiting_human"])
         ]
         attention = [
-            (r, get_run_cost(conn, r["id"])) for r in get_runs_by_status(conn, ["failed", "blocked"])
+            (r, _spent(conn, r["id"])) for r in get_runs_by_status(conn, ["failed", "blocked"])
         ]
     return active, attention
 
@@ -105,7 +112,7 @@ def board_entries(status_groups: list[list[str]], *, db_path: Path) -> list[Boar
         for group in status_groups:
             for run in get_runs_by_status(conn, group):
                 parked = run["status"] == "waiting_human"
-                entry = BoardEntry(run=run, cost=get_run_cost(conn, run["id"]))
+                entry = BoardEntry(run=run, cost=_spent(conn, run["id"]))
                 if parked:
                     entry.gate = get_pending_human_gate(conn, run["id"])
                     alog = get_agent_log(conn, run["id"], "architect-agent")

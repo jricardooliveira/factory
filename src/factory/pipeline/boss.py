@@ -35,7 +35,7 @@ from factory.domain.authorization import (
 )
 from factory.domain.contracts import ArchitectOutput, SpecOutput
 from factory.domain.task_order import order_tasks
-from factory.pipeline.agent_calls import db_conn
+from factory.pipeline.agent_calls import budget_refusal_for, db_conn
 from factory.pipeline.state import PipelineState, factory_owned_paths
 from factory.workspace.git import code_changed_since
 from factory.state.db import (
@@ -117,10 +117,15 @@ def authorized(stage: str, node: Node) -> Node:
     def run(state: PipelineState) -> dict[str, Any]:
         if state.get("status") in _STOPPED:
             return node(state)
+        # `release` makes no model call; every other stage would spend.
+        refusal = budget_refusal_for(state) if stage != "release" else None
         conn = db_conn(state)
         try:
-            decision = authorization_for(
-                state, stage, latest_gates(get_run_gates(conn, state["run_id"]))
+            decision = (
+                Authorization(stage=stage, allowed=False, missing=(refusal,)) if refusal
+                else authorization_for(
+                    state, stage, latest_gates(get_run_gates(conn, state["run_id"]))
+                )
             )
             log_authorization(
                 conn, state["run_id"], decision.stage, decision.allowed,

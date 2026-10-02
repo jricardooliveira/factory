@@ -167,9 +167,10 @@ def print_metrics(m: Any, db_path: Path) -> None:
 
     if m.cost_measurable:
         output.console.print(
-            f"  [bold]Cost[/bold]: ${m.total_cost_usd:.4f} "
-            f"({m.total_tokens_in:,} in / {m.total_tokens_out:,} out tokens, "
-            f"{round(m.cost_coverage * 100)}% of calls instrumented)\n"
+            f"  [bold]Spend[/bold]: ~${m.estimated_cost_usd:.2f} estimated at API list prices "
+            f"(provider reported ${m.total_cost_usd:.2f}; {m.total_tokens_in:,} in / "
+            f"{m.total_tokens_out:,} out tokens, {round(m.cost_coverage * 100)}% of calls "
+            "instrumented)\n"
         )
 
     output.console.print(Panel(

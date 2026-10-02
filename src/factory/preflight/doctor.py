@@ -121,6 +121,21 @@ def _escalation_check() -> Check:
                  blocking=False)
 
 
+def _prices_check() -> Check:
+    """Warn when a tier's model has no list price: the $10-per-story cap estimates spend
+    as tokens x price (a subscription login reports $0), so it would be spent blind."""
+    prices = tiers.config().prices
+    missing = sorted(m for m in tiers.distinct_models() if m not in prices)
+    if missing:
+        return Check(
+            "price list", "warn",
+            f"no list price in agents/tiers.toml [prices] for {', '.join(missing)} — "
+            "their calls count as unknown toward the per-story budget",
+            blocking=False,
+        )
+    return Check("price list", "ok", "every tier model has a list price", blocking=False)
+
+
 def _first_line(text: str, limit: int = 200) -> str:
     line = text.strip().splitlines()[0] if text.strip() else ""
     return line if len(line) <= limit else line[: limit - 1] + "…"
@@ -235,6 +250,7 @@ def run_doctor(
     else:
         report.checks.append(Check("tiers", "ok", str(tiers.default_tiers_path())))
         report.checks.append(_escalation_check())
+        report.checks.append(_prices_check())
         models = tiers.distinct_models()
 
     for model, model_tiers in models.items():

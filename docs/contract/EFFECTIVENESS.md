@@ -58,19 +58,20 @@ See [REVIEW_QUEUE.md](./REVIEW_QUEUE.md) for the queue + notification contract.
 
 Between checkpoints, when a gate fails, the factory **auto-remediates within a tight budget**:
 
-- **Budget: 2 attempts OR ~$1 (USD) per task**, whichever comes first.
+- **Budget: 2 attempts per task, and never more than $10 (USD) per user story** (operator decision, 2026-10-02).
 - Remediation routes back to the stage that can fix it (implementation failure → coder; design failure → architect), carrying the prior findings.
 - On budget exhaustion, the factory **stops and queues the failure** for the operator — it does not loop indefinitely or silently burn money.
 
 Attempt counting and routing are built (the Phase-3 remediation loop).
 
-> **⚠️ The $ cap does not bind on a subscription login.** Usage harvesting was broken
-> until 2026-10-02 (opencode reports usage on `step_finish` events, which the parser
-> ignored), so every earlier row is NULL. It now records tokens, model and the
-> provider's cost — but a ChatGPT/Codex login reports **$0** for real token use, so
-> `cost_so_far < MAX_TASK_COST_USD` stays true there. **Only `MAX_CODER_ATTEMPTS`
-> bounds the loop.** A token allowance is the honest budget for such a login; choosing
-> it is an operator decision (improvement-tasks T08). `factory metrics` names the gap.
+> **How the $10 cap is measured.** Usage is harvested per call from opencode's
+> `step_finish` events (tokens, model, provider cost; rows before 2026-10-02 are NULL).
+> A ChatGPT/Codex login reports **$0** for real tokens, so spend is ESTIMATED as
+> tokens × the model's public list price (`agents/tiers.toml` [prices]; a provider cost,
+> e.g. Requesty's, wins when reported). The story's spend over all its live runs is
+> checked before EVERY model call (`pipeline/agent_calls`) and by the boss before every
+> stage: at `MAX_STORY_COST_USD` the run is blocked with the spend named. Calls with
+> no recorded usage count as $0 — `factory metrics` reports how many.
 
 ---
 
@@ -123,7 +124,7 @@ ADRs are required evidence anyway (§5.3) — so they are also **fed back in**. 
 | Offline replay + fixtures (test orchestration cheaply) | ✅ built |
 | Checkpoint 2 human-needs detection (breaking/sensitivity) | ✅ built (gate-2) |
 | Checkpoint 2 resume: approve→coder, reject→re-architect w/ feedback | ✅ built |
-| Remediation loop (2-attempt / $1 budget, re-entry) | ✅ built |
+| Remediation loop (2-attempt budget, re-entry) + the $10-per-story cap, checked before every model call | ✅ built |
 | ADR persistence + consult-on-next-task | ✅ built |
 | Async review queue (`factory queue`) + desktop notify | ✅ built |
 | Per-task coder execution (one task per call, dependency-ordered) | ✅ built |
@@ -212,7 +213,7 @@ gate in `make evals`.
 
 - A task reaches release sign-off missing any of the four trust artifacts.
 - A checkpoint is skipped or auto-approved without the operator.
-- Remediation loops past the 2-attempt / $1 budget.
+- Remediation loops past the 2-attempt budget, or a story past its $10 cap.
 - An agent receives the whole repo instead of a context pack.
 - The real git diff diverges from the agent's claimed file list and it isn't flagged.
 - A "complete" coder verdict ships code that doesn't pass `gate-build`.

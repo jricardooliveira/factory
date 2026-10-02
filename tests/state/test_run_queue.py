@@ -44,14 +44,20 @@ class RunsByStatusTests(unittest.TestCase):
             rows = db.get_runs_by_status(conn, ["failed", "blocked"])
         self.assertEqual([r["story_id"] for r in rows], ["US-0003"])
 
-    def test_run_cost_sums_agent_logs(self) -> None:
+    def test_usage_rows_cover_a_run_or_every_live_run_of_a_story(self) -> None:
         with db.get_db(self.db_path) as conn:
             db.create_story(conn, "US-0009", "Cost", "req")
             rid = db.start_run(conn, "US-0009")
-            db.log_agent(conn, rid, "spec-agent", "p", "o", cost_usd=0.01)
-            db.log_agent(conn, rid, "architect-agent", "p", "o", cost_usd=0.02)
-            cost = db.get_run_cost(conn, rid)
-        self.assertAlmostEqual(cost, 0.03)
+            db.log_agent(conn, rid, "spec-agent", "p", "o", cost_usd=0.01, tokens_in=10,
+                         tokens_out=2, model_name="openai/x")
+            second = db.start_run(conn, "US-0009")
+            db.log_agent(conn, second, "architect-agent", "p", "o", cost_usd=0.02)
+            replay = db.start_run(conn, "US-0009", replay_of=rid)
+            db.log_agent(conn, replay, "spec-agent", "p", "o", cost_usd=0.01)
+            self.assertEqual(len(db.usage_rows(conn, run_id=rid)), 1)
+            story = db.usage_rows(conn, story_id="US-0009")
+        self.assertEqual(len(story), 2)  # the replay spends nothing
+        self.assertEqual(story[0]["model_name"], "openai/x")
 
 
 class ReconcileTests(unittest.TestCase):

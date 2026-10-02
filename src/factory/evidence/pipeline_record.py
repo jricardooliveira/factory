@@ -15,9 +15,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from factory.agent_config import tiers
+from factory.domain.budget import story_spend
+from factory.domain.gates import MAX_STORY_COST_USD
 from factory.evidence.artifacts import work_dir_for
 from factory.evidence.progress import TimelineEvent, run_timeline
-from factory.state.db import get_db, get_pending_human_gate, get_run, get_run_authorizations
+from factory.state.db import (
+    get_db,
+    get_pending_human_gate,
+    get_run,
+    get_run_authorizations,
+    usage_rows,
+)
 
 FILENAME = "PIPELINE.md"
 
@@ -69,6 +78,7 @@ def render_pipeline_record(db_path: Path, run_id: int) -> str | None:
             return None
         pending = get_pending_human_gate(conn, run_id)
         authorizations = get_run_authorizations(conn, run_id)
+        spend = story_spend(usage_rows(conn, story_id=run["story_id"]), tiers.config().prices)
     events = run_timeline(db_path, run_id)
 
     blockers: list[str] = []
@@ -101,6 +111,10 @@ def render_pipeline_record(db_path: Path, run_id: int) -> str | None:
         f"**Stage:** {run.get('current_stage') or '—'}",
         f"- **Started:** {_when(run.get('started_at'))} UTC · "
         f"**Stopped:** {_when(run.get('finished_at'))} UTC",
+        f"- **Story spend:** ~${spend.estimated_usd:.2f} of ${MAX_STORY_COST_USD:.2f} "
+        "(estimated at API list prices"
+        + (f"; {spend.unknown_calls} call(s) with unknown usage" if spend.unknown_calls else "")
+        + ")",
         "",
         "## Next authorized step",
         "",
