@@ -102,9 +102,10 @@ def run_pipeline(
     }
     if project_spec_text:
         initial_state["project_spec"] = project_spec_text
-    # Project runs get a project_dir (parent of repo/) so ADRs + decision memory work.
+    # Project runs get a project_dir so ADRs + decision memory work. The project
+    # directory IS the repository (evidence under its docs/), so it is the cwd.
     if project_id and opencode_cwd:
-        initial_state["project_dir"] = str(Path(opencode_cwd).parent)
+        initial_state["project_dir"] = str(opencode_cwd)
     if replay_run_id:
         initial_state["replay_run_id"] = replay_run_id
 
@@ -221,7 +222,7 @@ def resume_run(
         project = get_project(db_path, run["project_id"])
         opencode_cwd = project["repo_path"]
         project_spec_text = load_project_spec_text(project)
-        project_dir = str(Path(opencode_cwd).parent)
+        project_dir = opencode_cwd
 
     state: dict[str, Any] = {
         "request": run["request"],

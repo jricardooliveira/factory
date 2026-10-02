@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from factory import runs
 from factory.domain.project_spec import ProjectSpec
 from factory.interfaces import render
-from factory.interfaces.cli.common import DB_PATH, fail, run_id_arg
+from factory.interfaces.cli.common import db_path, fail, run_id_arg
 from factory.runs import (
     NodeCompleted,
     ResumeEntered,
@@ -93,7 +93,7 @@ def request_command(args: list[str]) -> None:
         project_spec_text = project_spec.to_architect_context()
 
     runs.run_pipeline(
-        request, project_spec_text=project_spec_text, db_path=DB_PATH, on_event=RunPrinter()
+        request, project_spec_text=project_spec_text, db_path=db_path(), on_event=RunPrinter()
     )
 
 
@@ -108,7 +108,7 @@ def run_command(args: list[str]) -> None:
         fail("Run request cannot be empty")
 
     try:
-        runs.run_project_pipeline(project_ref, request, db_path=DB_PATH, on_event=RunPrinter())
+        runs.run_project_pipeline(project_ref, request, db_path=db_path(), on_event=RunPrinter())
     except ValueError as exc:
         fail(str(exc))
 
@@ -116,7 +116,7 @@ def run_command(args: list[str]) -> None:
 def replay_command(args: list[str]) -> None:
     run_id = run_id_arg(args, "Usage: factory replay <run_id>")
     try:
-        runs.replay_run(run_id, db_path=DB_PATH, on_event=RunPrinter())
+        runs.replay_run(run_id, db_path=db_path(), on_event=RunPrinter())
     except RunError as exc:
         fail(str(exc))
 
@@ -140,7 +140,7 @@ def _resume(run_id: int, action: str, reason: str | None) -> None:
     # been reported without a non-zero exit; keep that.
     try:
         runs.resume_run(
-            run_id, action, reason=reason, db_path=DB_PATH, on_event=RunPrinter(resumed=True)
+            run_id, action, reason=reason, db_path=db_path(), on_event=RunPrinter(resumed=True)
         )
     except RunError as exc:
         render.print_error(str(exc))
@@ -150,7 +150,7 @@ def retry_command(args: list[str]) -> None:
     run_id = run_id_arg(args, "Usage: factory retry <run_id>")
     printer = RunPrinter(resumed=True)
     try:
-        runs.retry_run(run_id, db_path=DB_PATH, on_event=printer)
+        runs.retry_run(run_id, db_path=db_path(), on_event=printer)
     except RunError as exc:
         if not printer.retry_started:
             fail(str(exc))  # retry itself refused: nothing was re-opened

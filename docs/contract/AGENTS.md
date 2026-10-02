@@ -47,7 +47,7 @@ Each stage produces a handoff that the next stage and the gates consume. Today t
 
 **Review policy:** the tester's passes, severity ladder, skip list and nit cap live in [REVIEW.md](./REVIEW.md) and are injected into its prompt by `review_policy.policy_block()`. `tester-agent.md` keeps only the role and the JSON contract, so review behaviour is tunable in one committed file instead of split between agent prose and `gates.py`.
 
-**Committed artifacts:** the spec-agent's story and the architect's plan are written to `docs/work/<story>/{INTENT,SPEC,PLAN}.md` (`artifacts.py`) alongside the ADR — so the requirements, the order of work and the declared scope are readable off disk without the (gitignored) database.
+**Committed artifacts:** the spec-agent's story and the architect's plan are written to `docs/work/<story>/{INTENT,SPEC,PLAN}.md` (`artifacts.py`) alongside the ADR — so the requirements, the order of work and the declared scope are readable off disk without the (gitignored) database. They live inside the product's own git repository (`$FACTORY_HOME/projects/<slug>/`) and are committed by the factory as they are written; agents never author them.
 
 ---
 

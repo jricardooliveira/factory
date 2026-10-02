@@ -59,7 +59,7 @@ Infers toolchain from materialized file extensions and runs deterministic checks
 
 Tests are run after **any** Python change once `FACTORY_RUN_TESTS=1` — not only when the task happened to write a test file, which used to leave a source-only change never exercising the project's existing suite.
 
-A `complete` coder verdict does **not** win if `gate-build` fails. Also computes a **scope-mismatch** note by comparing the real git diff against the agent's claimed files, and **blocks** on any file that landed in the repo but was not declared in `code_blocks` (an out-of-band write).
+A `complete` coder verdict does **not** win if `gate-build` fails. Also computes a **scope-mismatch** note by comparing the real git diff against the agent's claimed files, and **blocks** on any file that landed in the repo but was not declared in `code_blocks` (an out-of-band write). The factory's own evidence inside a project repo (`workspace.layout.EVIDENCE_PATHS`: `docs/work/`, `docs/architecture/adr/`, `docs/releases/`, `PROJECT_RULES.md`, `project-spec.json`) is committed by the factory as it is produced and excluded from this check — and a code block that targets one of those paths is refused outright, since gate-1 reads `PROJECT_RULES.md` as operator-authored.
 
 Declared-scope violations (a changed file outside the tasks' `scope`) are measured by `verify.paths_outside_scope` but reported in the trust package rather than blocking here — see EFFECTIVENESS.md §6 for why that is deliberate. Test files and toolchain manifests (`go.mod`, `package.json`, `tsconfig.json`, `pyproject.toml`, …) are exempt: the coder is *required* to add tests, and a build manifest must sit where the toolchain looks for it, so flagging either trains the operator to ignore the signal.
 

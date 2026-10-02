@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import NoReturn
 
 from factory.interfaces.render import print_error
+from factory.workspace import db_path
 
-# Relative to the working directory, as it always has been: run `factory` from
-# the directory that holds (or should hold) factory.db and projects/.
-DB_PATH = Path("factory.db")
+# The DB is $FACTORY_HOME/factory.db (default ~/.factory), resolved at CALL time —
+# never relative to the working directory, and never frozen at import, so a test
+# (or an operator) that sets FACTORY_HOME is always honoured.
+__all__ = ["db_path", "fail", "report_path", "run_id_arg"]
 
 
 def fail(message: str) -> NoReturn:

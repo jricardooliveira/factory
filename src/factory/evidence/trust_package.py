@@ -13,11 +13,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from factory.domain.agent_output import parse_agent_json
+from factory.domain.traceability import trace_criteria
+from factory.evidence.adr import adr_dir_for
+from factory.state.db import get_db, get_run_gates, get_run_logs
 from factory.verification import scope as scope_policy
 from factory.workspace import git
-from factory.state.db import get_db, get_run_gates, get_run_logs
-from factory.domain.traceability import trace_criteria
-from factory.domain.agent_output import parse_agent_json
+from factory.workspace.layout import EVIDENCE_PATHS
 
 # Package data (shipped in the wheel), not a repo doc: the code validates against it.
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "trust-package.schema.json"
@@ -151,9 +153,12 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
         "unassessed": [e["criterion"] for e in trace if e["status"] == "unassessed"],
     }
 
+    # A registered project's directory IS its repository, with the factory's own
+    # evidence (ADRs, the artifact chain, earlier trust packages, rules, spec)
+    # committed inside it. None of that is code an agent changed.
     adr_path = ""
     if run.get("repo_path"):
-        adr_dir = Path(run["repo_path"]).parent / "docs" / "architecture" / "adr"
+        adr_dir = adr_dir_for(Path(run["repo_path"]))
         adrs = sorted(adr_dir.glob(f"ADR-{run['story_id']}-*.md")) if adr_dir.is_dir() else []
         if adrs:
             adr_path = str(adrs[0])
@@ -166,7 +171,9 @@ def assemble(db_path: Path, run_id: int) -> dict[str, Any]:
     # up as measured evidence.
     diff_files: list[dict[str, str]] | None = None
     if run.get("repo_path"):
-        diff_files = git.git_changed_files(Path(run["repo_path"]), run.get("base_commit"))
+        diff_files = git.git_changed_files(
+            Path(run["repo_path"]), run.get("base_commit"), exclude=EVIDENCE_PATHS
+        )
     if diff_files is None:
         diff_block = {
             "source": "unavailable",

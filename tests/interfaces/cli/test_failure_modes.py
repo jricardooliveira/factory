@@ -14,12 +14,16 @@ from rich.console import Console
 from rich.rule import Rule
 
 from factory.domain.project_spec import ProjectSpec
-from factory.interfaces.cli.common import DB_PATH
 from factory.interfaces.cli.run import RunPrinter
 from factory.runs import run_pipeline
 from factory.state.db import init_db
+from factory.workspace import home
 
 console = Console()
+
+# A throwaway DB beside — never instead of — $FACTORY_HOME/factory.db: main()
+# deletes it before each sweep, and that must never be the operator's history.
+DB_PATH = home() / "failure-modes.db"
 
 SPEC_FILE = Path(__file__).resolve().parents[3] / "examples" / "specs" / "taskflow.json"
 

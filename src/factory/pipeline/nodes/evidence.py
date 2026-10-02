@@ -1,7 +1,13 @@
-"""Best-effort evidence writers the nodes call: the artifact chain and the trust package.
+"""Best-effort evidence writers the nodes call: the artifact chain, the ADR and the
+trust package — each committed to the product repo the moment it is written.
 
-Evidence must never be able to fail a run, so both writers swallow I/O errors —
+Evidence must never be able to fail a run, so the writers swallow I/O errors —
 the chain writer returns None so the caller can record the gap.
+
+The project directory IS the product's git repository, so every piece of
+evidence is committed as it is produced (subject prefix ``factory:``). Left
+uncommitted, the coder's governance check would see it as an undeclared write,
+and the next task's checkpoint commit would bury it inside a code commit.
 """
 
 from __future__ import annotations
@@ -12,6 +18,18 @@ from typing import Any
 
 from factory.evidence import artifacts
 from factory.pipeline.state import PipelineState
+from factory.workspace.git import git_commit_paths
+
+
+def _commit_evidence(state: PipelineState, path: Path | str | None, what: str) -> None:
+    """Commit one evidence file to the project repo (best-effort, never raises)."""
+    project_dir = state.get("project_dir")
+    if not project_dir or not path:
+        return
+    try:
+        git_commit_paths(Path(project_dir), [Path(path)], f"factory: {what}")
+    except Exception:
+        pass  # evidence is best-effort; a failed commit must not fail the run
 
 
 def _write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | None:
@@ -31,9 +49,17 @@ def _write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | 
             "plan": artifacts.write_plan,
         }[kind]
         path = writer(Path(project_dir), state["story_id"], *args)
-        return str(path) if path else None
     except (OSError, KeyError, ValueError):
         return None
+    if not path:
+        return None
+    _commit_evidence(state, path, f"{state['story_id']} {kind.upper()}")
+    return str(path)
+
+
+def _commit_adr(state: PipelineState, adr_path: Path | str) -> None:
+    """Commit the ADR the architect node just wrote."""
+    _commit_evidence(state, adr_path, f"{state['story_id']} ADR")
 
 
 def _write_trust_package(state: PipelineState) -> None:
@@ -47,8 +73,8 @@ def _write_trust_package(state: PipelineState) -> None:
         pkg = trust_package.assemble(Path(state["db_path"]), state["run_id"])
         releases = Path(project_dir) / "docs" / "releases"
         releases.mkdir(parents=True, exist_ok=True)
-        (releases / f"run-{state['run_id']}-trust-package.json").write_text(
-            json.dumps(pkg, indent=2), encoding="utf-8"
-        )
+        target = releases / f"run-{state['run_id']}-trust-package.json"
+        target.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
     except Exception:
-        pass  # never let release-note I/O fail the run
+        return  # never let release-note I/O fail the run
+    _commit_evidence(state, target, f"{state['story_id']} trust package (run {state['run_id']})")

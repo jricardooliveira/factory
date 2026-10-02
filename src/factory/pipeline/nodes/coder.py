@@ -15,7 +15,7 @@ from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_REARCHITECT_LOOPS, MAX_
 from factory.domain.task_order import order_tasks
 from factory.pipeline.agent_calls import _get_db_conn, _run_agent_json, _usage_kwargs
 from factory.pipeline.prompts.coder import build_coder_task_prompt, build_remediation_prompt
-from factory.pipeline.state import PipelineState
+from factory.pipeline.state import PipelineState, factory_owned_paths
 from factory.state.db import (
     finish_run,
     get_run_cost,
@@ -29,14 +29,18 @@ from factory.workspace.git import collect_repo_diff, git_changed_paths, git_comm
 from factory.workspace.materialize import materialize_code_blocks, normalize_block_path
 
 
-def _scope_diff(coder: CoderOutput, written: list[Path], root: Path) -> tuple[set[str], set[str]]:
+def _scope_diff(
+    coder: CoderOutput, written: list[Path], root: Path, *, exclude: tuple[str, ...] = ()
+) -> tuple[set[str], set[str]]:
     """Return (unclaimed, missing) file sets, preferring the git-measured truth.
 
     `unclaimed` = files that changed in the repo but the coder did NOT declare in
     code_blocks — i.e. out-of-band writes (an agent scribbling outside the
     factory's controlled materialize path). `missing` = declared but not on disk.
+    `exclude` = the factory-owned evidence paths of a project repo: the factory
+    wrote those, so they are never an agent's undeclared write.
     """
-    git_changed = git_changed_paths(root)
+    git_changed = git_changed_paths(root, exclude=exclude)
     if git_changed is None:
         root_resolved = root.resolve()
         actual: set[str] = set()
@@ -69,7 +73,8 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
     """
     spec = SpecOutput.model_validate(state["spec"])
     root = Path(state.get("opencode_cwd") or ".")
-    diff = collect_repo_diff(root) or ""
+    owned = factory_owned_paths(state)
+    diff = collect_repo_diff(root, exclude=owned) or ""
     prompt = build_remediation_prompt(state, spec, diff)
 
     result, parsed = _run_agent_json(state, "coder-agent", prompt, slot="remediation")
@@ -87,14 +92,14 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
 
     coder = CoderOutput.model_validate(parsed)
     for block in coder.code_blocks:
-        block.path = normalize_block_path(root, block.path)
-    written = materialize_code_blocks(list(coder.code_blocks), root=root)
+        block.path = normalize_block_path(root, block.path, repo_root=bool(owned))
+    written = materialize_code_blocks(list(coder.code_blocks), root=root, reserved=owned)
     log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
               verdict=coder.verdict, duration_secs=result.duration_secs,
               stage_type="remediation", **_usage_kwargs(result))
 
     verify_result = verify_changes(written, root=root)
-    unclaimed, _missing = _scope_diff(coder, written, root)
+    unclaimed, _missing = _scope_diff(coder, written, root, exclude=owned)
     if unclaimed:
         gate_reason = (
             f"[remediation] GOVERNANCE: out-of-band file writes not declared in "
@@ -222,11 +227,14 @@ def node_coder_agent(state: PipelineState) -> dict[str, Any]:
                     "next_action": "give_up", "status": "failed", "error": error}
 
         root = Path(state.get("opencode_cwd") or ".")
+        # Paths the factory owns in a project repo (its evidence): never the
+        # coder's to write, never counted as the coder's change.
+        owned = factory_owned_paths(state)
         # Agents prefix paths with 'repo/' but cwd IS the repo -> de-double so
         # files land at the repo root and claimed==actual for the scope check.
         for block in coder.code_blocks:
-            block.path = normalize_block_path(root, block.path)
-        written = materialize_code_blocks(list(coder.code_blocks), root=root)
+            block.path = normalize_block_path(root, block.path, repo_root=bool(owned))
+        written = materialize_code_blocks(list(coder.code_blocks), root=root, reserved=owned)
 
         log_agent(
             conn, state["run_id"], "coder-agent", prompt, result.output,
@@ -236,7 +244,7 @@ def node_coder_agent(state: PipelineState) -> dict[str, Any]:
 
         # ── gate-build: verify the cumulative repo after this task ──
         verify_result = verify_changes(written, root=root)
-        unclaimed, missing = _scope_diff(coder, written, root)
+        unclaimed, missing = _scope_diff(coder, written, root, exclude=owned)
         scope_note = _scope_note(unclaimed, missing)
         gate_reason = f"[{task.id}] {verify_result.summary}"
         if scope_note:

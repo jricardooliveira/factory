@@ -24,6 +24,7 @@
     "deny": [
       "Read(./mvp/projects/*/.secrets/**)",
       "Read(./projects/*/.secrets/**)",
+      "Read(~/.factory/projects/*/.secrets/**)",
       "Read(./**/.env)",
       "Read(./**/.env.*)"
     ]

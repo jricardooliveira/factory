@@ -18,6 +18,7 @@ from factory.state.db import (
     log_gate,
     start_run,
 )
+from factory.workspace import layout
 from factory.workspace.projects import create_project
 
 
@@ -32,7 +33,7 @@ class FactoryVisualizationTests(unittest.TestCase):
 
         project = create_project(
             self.db_path,
-            factory_root=self.root,
+            home=self.root,
             slug="demo-app",
             name="Demo App",
         )
@@ -79,7 +80,7 @@ class FactoryVisualizationCliTests(unittest.TestCase):
         self.root = Path(self._tmpdir.name)
         self.old_cwd = Path.cwd()
         os.chdir(self.root)
-        init_db(Path("factory.db"))
+        init_db(layout.db_path())
 
     def tearDown(self) -> None:
         os.chdir(self.old_cwd)

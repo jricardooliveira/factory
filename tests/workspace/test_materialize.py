@@ -64,6 +64,48 @@ class NormalizeBlockPathTests(unittest.TestCase):
         self.assertEqual(normalize_block_path(root, "app/main.py"), "app/main.py")
         self.assertEqual(normalize_block_path(root, "main.py"), "main.py")
 
+    def test_strips_leading_repo_at_a_project_repo_root_of_any_name(self) -> None:
+        # A project directory IS its repo now ($FACTORY_HOME/projects/<slug>/), so
+        # its name is the slug — but agents trained on "Source root: repo/" still
+        # emit repo/-prefixed paths, which must land at the root.
+        root = Path("/tmp/factory-home/projects/bookmarks")
+        self.assertEqual(
+            normalize_block_path(root, "repo/app/main.py", repo_root=True), "app/main.py"
+        )
+        self.assertEqual(normalize_block_path(root, "app/main.py", repo_root=True), "app/main.py")
+
+
+class ReservedPathTests(unittest.TestCase):
+    """The coder may not author the factory's evidence inside a product repo."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmpdir.name)
+
+    def tearDown(self) -> None:
+        self._tmpdir.cleanup()
+
+    def test_reserved_paths_are_refused_and_nothing_is_written(self) -> None:
+        from factory.workspace.layout import EVIDENCE_PATHS
+
+        for owned in ("PROJECT_RULES.md", "project-spec.json", "docs/work/US-1/SPEC.md",
+                      "docs/architecture/adr/ADR-x.md", "docs/releases/run-1.json",
+                      "./PROJECT_RULES.md"):
+            with self.subTest(path=owned):
+                with self.assertRaisesRegex(ValueError, "factory-owned"):
+                    materialize_code_blocks(
+                        [{"path": "ok.py", "content": "X = 1\n", "action": "create"},
+                         {"path": owned, "content": "forged", "action": "create"}],
+                        root=self.root, reserved=EVIDENCE_PATHS,
+                    )
+                self.assertFalse((self.root / "ok.py").exists(), "all-or-nothing")
+
+    def test_without_reservations_the_same_paths_are_ordinary_files(self) -> None:
+        written = materialize_code_blocks(
+            [{"path": "docs/work/notes.md", "content": "n", "action": "create"}], root=self.root
+        )
+        self.assertEqual(len(written), 1)
+
 
 class CoderAgentMaterializationTests(unittest.TestCase):
     """Coder node writes completed code blocks into the project repo."""

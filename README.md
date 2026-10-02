@@ -58,21 +58,21 @@ uv sync --dev
 make check
 ```
 
-`make check` should print `397 passed`, `9/9 scenarios behaving as expected` and
+`make check` should print `469 passed`, `9/9 scenarios behaving as expected` and
 `43/43 checks green`. That is the whole verification loop in one command.
 
 ---
 
 ## Your first project
 
-**Always run from the repo root** — the state database (`factory.db`) and `projects/` are
-resolved relative to your working directory. (Moving them to `$FACTORY_HOME`, default
-`~/.factory`, is in progress; legacy state from before the restructure still sits in
-`mvp/factory.db` + `mvp/projects/`.)
+The factory keeps its state in **`$FACTORY_HOME`** (default `~/.factory`), never in
+the directory you run it from: `factory.db` (every run, gate and agent output) and
+`projects/<slug>/` (every product). `factory workspace` shows where that is.
 
 ```bash
-# Register a project. Creates projects/PROJ-00X-bookmarks/ with repo/, docs/
-# and a project-spec.json from the stack template.
+# Register a project. Creates ~/.factory/projects/bookmarks/ — a git repository —
+# with PROJECT_RULES.md and a project-spec.json from the stack template, committed
+# as its first "factory:" commit.
 .venv/bin/factory project create bookmarks --stack fastapi
 
 # Ask for one thing.
@@ -102,8 +102,10 @@ reject at Checkpoint 2 and the design is redone with your objections.
 ## What the factory hands you
 
 ```
-projects/PROJ-00X-bookmarks/
-├── repo/                             ← your software (own git repo, "factory:" commits)
+~/.factory/projects/bookmarks/        ← ONE git repository: your software + its audit trail
+├── <your code>                       ← written by the coder, one "factory:" commit per task
+├── PROJECT_RULES.md                  ← your standing rules (agents read them)
+├── project-spec.json                 ← stack, conventions, constraints
 └── docs/
     ├── work/US-0001/
     │   ├── INTENT.md                 ← your raw request, with author and date
@@ -111,6 +113,22 @@ projects/PROJ-00X-bookmarks/
     │   └── PLAN.md                   ← files that change, order of work, risks, proof
     ├── architecture/adr/             ← the design decision and why
     └── releases/                     ← the trust package (JSON)
+```
+
+Every piece of evidence is committed by the factory the moment it is written, so
+`git log` in the product reads as its audit trail and a clone carries it. The factory
+owns those paths: the coder may not write them, and they are left out of every
+*code* measurement (the coder's scope check, the trust package's change set, the
+diff the tester reviews).
+
+**Coming from the old layout?** State used to sit beside the factory checkout
+(`mvp/factory.db` + `mvp/projects/PROJ-*/{repo,docs}`), with each product's evidence
+outside its repository. One command moves it into `$FACTORY_HOME`, merging each
+product's evidence into its repo and committing it:
+
+```bash
+.venv/bin/factory workspace import-legacy mvp --dry-run   # see the plan; nothing moves
+.venv/bin/factory workspace import-legacy mvp
 ```
 
 The **trust package** is the point. Four artifacts are non-negotiable for release
@@ -131,10 +149,11 @@ Everything here is offline, deterministic and free — no model calls:
 | Command | What it does |
 |---|---|
 | `factory simulate` | drives 9 representative stories through the real pipeline |
-| `factory evals` | 36 regression checks on the **agent configuration** |
+| `factory evals` | 43 regression checks on the **agent configuration** |
 | `factory replay <run_id>` | re-runs a past run's orchestration on its frozen outputs |
 | `factory metrics` | how the factory has actually been performing |
 | `factory tiers` | which model each agent runs at |
+| `factory workspace` | where the state lives: `$FACTORY_HOME`, its `factory.db`, every product repo |
 
 **`factory evals` is worth understanding.** The factory *is* an agent configuration
 — the agent markdown files, the gate policy, the model tiers, the prompt assembly —
@@ -192,8 +211,8 @@ review behaviour without touching an agent definition — then run `make evals`.
    are the final gate.
 5. **Verification (`src/factory/verification/`) covers Python, Go, JS and TS only.** Java and others need their own
    verification commands before the build gate means anything on those repos.
-6. **Four `factory.db` files exist on this machine** because the path is
-   working-directory relative. Always run from the repo root.
+6. **One workspace per `$FACTORY_HOME`.** Point it elsewhere to keep separate
+   histories (e.g. a scratch home for experiments); the factory never merges two.
 
 The full built-vs-todo table, and the playbook plays deliberately **rejected** as
 ceremony for a one-person team, are in

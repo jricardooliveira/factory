@@ -8,7 +8,7 @@ from typing import Any
 from factory.domain.contracts import ArchitectOutput, SpecOutput
 from factory.evidence.adr import write_adr
 from factory.pipeline.agent_calls import _get_db_conn, _run_agent_json, _usage_kwargs
-from factory.pipeline.nodes.evidence import _write_chain_artifact
+from factory.pipeline.nodes.evidence import _commit_adr, _write_chain_artifact
 from factory.pipeline.prompts.architect import build_architect_prompt
 from factory.pipeline.state import PipelineState
 from factory.state.db import finish_run, log_agent, update_run_stage, update_story_status
@@ -74,6 +74,7 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
             adr_path = str(
                 write_adr(Path(state["project_dir"]), state["story_id"], spec.title, arch)
             )
+            _commit_adr(state, adr_path)
 
         out: dict[str, Any] = {"architect_raw": result.output, "architect": parsed}
         if adr_path:

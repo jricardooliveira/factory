@@ -7,14 +7,17 @@ from pathlib import Path
 
 from factory.agent_config import review_policy
 from factory.pipeline.prompts.blocks import _project_context, _project_memory_block
-from factory.pipeline.state import PipelineState
+from factory.pipeline.state import PipelineState, factory_owned_paths
 from factory.workspace.git import collect_repo_diff
 
 
 def _changes_under_review_block(state: PipelineState) -> str:
     """The artifact the tester judges: the REAL cumulative git diff of every task's
-    change when available, falling back to the agent's self-report off-git."""
-    diff = collect_repo_diff(Path(state.get("opencode_cwd") or "."))
+    change when available, falling back to the agent's self-report off-git. A
+    project's factory-owned evidence is left out: the tester reviews code."""
+    diff = collect_repo_diff(
+        Path(state.get("opencode_cwd") or "."), exclude=factory_owned_paths(state)
+    )
     if diff:
         return f"## Cumulative changes under review (real git diff)\n\n```diff\n{diff}\n```\n\n"
     if diff == "":

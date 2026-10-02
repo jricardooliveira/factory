@@ -1,24 +1,25 @@
-"""Factory-level project registry and scaffolding."""
+"""Factory-level project registry and scaffolding.
+
+A project lives at ``$FACTORY_HOME/projects/<slug>/`` and that directory IS its
+git repository: code at the root, the factory's evidence under ``docs/``,
+``PROJECT_RULES.md`` and ``project-spec.json`` beside the code. It used to be
+split in two — code in ``projects/<P>/repo/`` and its audit trail one level up,
+outside that repository — so a product's history lived partly in the factory.
+"""
 
 from __future__ import annotations
 
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from factory.state.db import get_db, init_db
+from factory.workspace import layout
 
-
-PROJECT_DIRS = (
-    "state",
-    "docs/work/tasks",
-    "docs/pipeline",
-    "docs/context",
-    "docs/architecture/adr",
-    "docs/releases",
-    "repo",
-)
+RULES_FILENAME = "PROJECT_RULES.md"
+SPEC_FILENAME = "project-spec.json"
 
 
 def normalize_slug(value: str) -> str:
@@ -52,9 +53,20 @@ def _package_root() -> Path:
 
 
 def _link_opencode_agents(repo_path: Path) -> None:
+    """Point <repo>/.opencode at the factory's agent definitions.
+
+    An existing SYMLINK is re-pointed (a repo moved by `import-legacy` still
+    links to wherever the factory used to live); a real directory is left alone.
+    """
     agents_dir = _package_root() / ".opencode"
     target = repo_path / ".opencode"
-    if target.exists() or not agents_dir.exists():
+    if not agents_dir.exists():
+        return
+    if target.is_symlink():
+        if target.resolve() == agents_dir.resolve():
+            return
+        target.unlink()
+    elif target.exists():
         return
     try:
         target.symlink_to(agents_dir, target_is_directory=True)
@@ -63,64 +75,98 @@ def _link_opencode_agents(repo_path: Path) -> None:
         return
 
 
+def render_project_rules(project_id: str, slug: str, name: str) -> str:
+    """The scaffolded PROJECT_RULES.md.
+
+    Agents read this file (it heads the project-memory block), so what it says
+    about paths is prompt text: "Source root: repo/" is what taught them to
+    prefix every path with ``repo/``. It now names the repo root, and lists the
+    paths the factory owns so no agent tries to author them.
+    """
+    owned = ", ".join(f"`{p}`" for p in layout.EVIDENCE_PATHS)
+    return "\n".join(
+        [
+            f"# {name} Project Rules",
+            "",
+            f"- Project ID: {project_id}",
+            f"- Slug: {slug}",
+            "- Source root: the repository root (write repo-relative paths, e.g. `app/main.py`)",
+            f"- Factory-owned evidence (never write these): {owned}",
+            "",
+        ]
+    )
+
+
 def _write_project_rules(project_dir: Path, project_id: str, slug: str, name: str) -> None:
-    rules_path = project_dir / "PROJECT_RULES.md"
+    rules_path = project_dir / RULES_FILENAME
     if rules_path.exists():
         return
-    rules_path.write_text(
-        "\n".join(
-            [
-                f"# {name} Project Rules",
-                "",
-                f"- Project ID: {project_id}",
-                f"- Slug: {slug}",
-                "- Source root: repo/",
-                "- Pipeline artifacts: docs/pipeline/",
-                "- Project tasks: docs/work/tasks/",
-                "",
-            ]
-        )
-    )
+    rules_path.write_text(render_project_rules(project_id, slug, name), encoding="utf-8")
 
 
 def create_project(
     db_path: Path,
     *,
-    factory_root: Path,
+    home: Path | None = None,
     slug: str,
     name: str | None = None,
     spec_path: Path | None = None,
     stack: str | None = None,
 ) -> dict[str, Any]:
-    """Create a project directory and persist it in the factory registry."""
+    """Create a project repository under <home>/projects/<slug>/ and register it.
+
+    `home` defaults to $FACTORY_HOME. An explicit `spec_path` is COPIED into the
+    repo as project-spec.json (so the spec the architect designed against is part
+    of the product's history); otherwise `stack` writes the stack template there.
+    Either way the scaffold is committed as the repo's first ``factory:`` commit.
+    """
 
     init_db(db_path)
     normalized_slug = normalize_slug(slug)
     project_name = name or normalized_slug.replace("-", " ").title()
+    root = Path(home) if home is not None else layout.home()
+    project_dir = root / "projects" / normalized_slug
 
     with get_db(db_path) as conn:
+        # Refuse BEFORE touching disk, so a refusal never leaves a half-made repo.
+        taken = conn.execute(
+            "SELECT 1 FROM projects WHERE slug = ?", (normalized_slug,)
+        ).fetchone()
+        if taken:
+            raise ValueError(f"Project slug already exists: {normalized_slug}")
+        if project_dir.exists() and any(project_dir.iterdir()):
+            raise ValueError(f"Project directory already exists and is not empty: {project_dir}")
+        if spec_path is not None and not Path(spec_path).is_file():
+            raise ValueError(f"Project spec not found: {spec_path}")
+
         project_id = _next_project_id(conn)
-        project_dir = factory_root / "projects" / f"{project_id}-{normalized_slug}"
-        repo_path = project_dir / "repo"
+        project_dir.mkdir(parents=True, exist_ok=True)
 
-        for dirname in PROJECT_DIRS:
-            (project_dir / dirname).mkdir(parents=True, exist_ok=True)
+        from factory.workspace.git import git_commit_paths, git_init
+
+        git_init(project_dir)
         _write_project_rules(project_dir, project_id, normalized_slug, project_name)
-        _link_opencode_agents(repo_path)
+        _link_opencode_agents(project_dir)
 
-        # Git baseline so materialization diffs are measurable from the repo itself.
-        from factory.workspace.git import git_init
-
-        git_init(repo_path)
-
-        resolved_spec_path = spec_path
-        if stack and not resolved_spec_path:
+        resolved_spec_path: Path | None = None
+        if spec_path is not None:
+            resolved_spec_path = project_dir / SPEC_FILENAME
+            shutil.copyfile(spec_path, resolved_spec_path)
+        elif stack:
             from factory.workspace.templates import create_project_spec, write_project_spec
 
             resolved_spec_path = write_project_spec(
-                project_dir / "project-spec.json",
+                project_dir / SPEC_FILENAME,
                 create_project_spec(stack, name=project_name, slug=normalized_slug),
             )
+
+        # The scaffold is the repo's first factory: commit — the baseline every
+        # later measurement of the factory's CODE change is taken from.
+        git_commit_paths(
+            project_dir,
+            [RULES_FILENAME, SPEC_FILENAME],
+            f"factory: scaffold {project_id} {normalized_slug}",
+        )
 
         now = conn.execute("SELECT datetime('now') AS now").fetchone()["now"]
         try:
@@ -135,7 +181,7 @@ def create_project(
                     project_id,
                     normalized_slug,
                     project_name,
-                    str(repo_path),
+                    str(project_dir),
                     str(resolved_spec_path) if resolved_spec_path else None,
                     now,
                     now,

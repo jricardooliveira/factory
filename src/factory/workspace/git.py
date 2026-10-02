@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
+
+from factory.workspace.layout import is_evidence_path
 
 _TIMEOUT = 60
 
@@ -91,6 +94,57 @@ def git_commit_all(root: Path, message: str) -> bool:
         return False
 
 
+def git_commit_paths(root: Path, paths: Iterable[str | Path], message: str) -> bool:
+    """Commit ONLY `paths` (relative to root, or absolute under it); best-effort.
+
+    How the factory commits the evidence it writes into a product repo (the
+    artifact chain, ADRs, trust packages, rules, spec) the moment it is produced.
+    Deliberately not `git add -A`: sweeping the whole tree into an evidence commit
+    would also commit any file an agent wrote out of band, hiding it from the
+    coder's governance check. Returns True if a commit was made.
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return False
+    rels: list[str] = []
+    root_resolved = root.resolve()
+    for raw in paths:
+        path = Path(raw)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(root_resolved)
+            except ValueError:
+                continue  # outside this repo: not ours to commit
+        if (root / path).exists():
+            rels.append(path.as_posix())
+    if not rels:
+        return False
+    _exclude_factory_infra(root)
+    try:
+        _run(["git", "add", "--", *rels], root)
+        staged = _run(["git", "diff", "--cached", "--quiet", "--", *rels], root)
+        if staged.returncode == 0:
+            return False  # already committed as-is
+        proc = _run(
+            ["git", "-c", "user.name=factory", "-c", "user.email=factory@local",
+             "commit", "-m", message, "--no-gpg-sign", "--", *rels],
+            root,
+        )
+        return proc.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def _excluded(path: str, exclude: tuple[str, ...]) -> bool:
+    return bool(exclude) and is_evidence_path(path, exclude)
+
+
+def _exclude_pathspecs(exclude: tuple[str, ...]) -> list[str]:
+    """`-- . :(exclude)<p>...` so git itself leaves the excluded paths out of a diff."""
+    if not exclude:
+        return []
+    return ["--", ".", *(f":(exclude){e.rstrip('/')}" for e in exclude)]
+
+
 # Git's well-known empty-tree object — a valid "diff from nothing" baseline.
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _DIFF_MAX_CHARS = 16000
@@ -124,14 +178,18 @@ def _factory_baseline(root: Path) -> str:
     return _EMPTY_TREE
 
 
-def collect_repo_diff(root: Path, *, max_chars: int = _DIFF_MAX_CHARS) -> str | None:
+def collect_repo_diff(
+    root: Path, *, max_chars: int = _DIFF_MAX_CHARS, exclude: tuple[str, ...] = ()
+) -> str | None:
     """Real cumulative diff of the factory's changes, for the tester to review.
 
     Returns the git diff from the pre-factory baseline to the current repo state
     (committed + any working-tree changes), so the tester sees EVERY task's change
     — not just the last one's self-report. None when not a git repo (caller then
     falls back to the agent's self-reported implementation); ``""`` when the repo
-    is clean. Truncated to ``max_chars`` to bound prompt cost.
+    is clean. Truncated to ``max_chars`` to bound prompt cost. Paths matching
+    `exclude` (a project's factory-owned evidence) are left out: the tester
+    reviews code, not the factory's paperwork.
     """
     if not is_git_repo(root) or shutil.which("git") is None:
         return None
@@ -139,8 +197,9 @@ def collect_repo_diff(root: Path, *, max_chars: int = _DIFF_MAX_CHARS) -> str | 
         return None  # no commits yet — nothing to diff
     base = _factory_baseline(root)
     try:
-        committed = _run(["git", "diff", base, "HEAD"], root)
-        working = _run(["git", "diff"], root)
+        spec = _exclude_pathspecs(exclude)
+        committed = _run(["git", "diff", base, "HEAD", *spec], root)
+        working = _run(["git", "diff", *spec], root)
     except (subprocess.SubprocessError, OSError):
         return None
     parts = [p.stdout for p in (committed, working) if p.returncode == 0 and p.stdout.strip()]
@@ -165,13 +224,17 @@ def git_head(root: Path) -> str | None:
 _STATUS_MAP = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "added"}
 
 
-def git_changed_files(root: Path, base: str | None) -> list[dict[str, str]] | None:
+def git_changed_files(
+    root: Path, base: str | None, *, exclude: tuple[str, ...] = ()
+) -> list[dict[str, str]] | None:
     """Real per-file change set from `base` to the current state, or None if it
     cannot be measured from git.
 
     Returns ``[{"path": ..., "change": "added|modified|deleted|renamed"}]``. This
     is the trust package's Evidence 2: what git saw, not what the agent claimed.
     A file both committed and then edited appears once, with its committed status.
+    Paths matching `exclude` (a project's factory-owned evidence) are not part of
+    the change set: the factory wrote them, no agent did.
     """
     if not is_git_repo(root) or shutil.which("git") is None:
         return None
@@ -197,13 +260,13 @@ def git_changed_files(root: Path, base: str | None) -> list[dict[str, str]] | No
                 continue
             # Rename lines are "R100\told\tnew" — the new path is what changed.
             status, path = parts[0][:1], parts[-1].strip()
-            if _is_noise(path):
+            if _is_noise(path) or _excluded(path, exclude):
                 continue
             files.setdefault(path, _STATUS_MAP.get(status, "modified"))
     if untracked.returncode == 0:
         for path in untracked.stdout.splitlines():
             path = path.strip()
-            if path and not _is_noise(path):
+            if path and not _is_noise(path) and not _excluded(path, exclude):
                 files.setdefault(path, "added")
     return [{"path": p, "change": c} for p, c in sorted(files.items())]
 
@@ -215,8 +278,13 @@ def _is_noise(path: str) -> bool:
     return path.split("/", 1)[0] in {".opencode", ".git", ".sandbox", ".venv"}
 
 
-def git_changed_paths(root: Path) -> list[str] | None:
-    """Return changed paths from `git status --porcelain`, or None if not a repo."""
+def git_changed_paths(root: Path, *, exclude: tuple[str, ...] = ()) -> list[str] | None:
+    """Return changed paths from `git status --porcelain`, or None if not a repo.
+
+    Paths matching `exclude` (a project's factory-owned evidence) are omitted, so
+    the coder's out-of-band-write check never mistakes the factory's own evidence
+    for an undeclared agent write.
+    """
     if not is_git_repo(root) or shutil.which("git") is None:
         return None
     try:
@@ -233,6 +301,8 @@ def git_changed_paths(root: Path) -> list[str] | None:
             continue
         # Infra/tooling noise — not application code the agent claims to author.
         if path.split("/", 1)[0] in {".opencode", ".git", ".sandbox", ".venv"}:
+            continue
+        if _excluded(path, exclude):
             continue
         paths.append(path)
     return paths

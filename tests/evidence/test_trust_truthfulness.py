@@ -41,7 +41,7 @@ class GitMeasuredDiffTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
-        self.repo = self.root / "proj" / "repo"
+        self.repo = self.root / "proj"
         self.repo.mkdir(parents=True)
         self.db_path = self.root / "f.db"
         db.init_db(self.db_path)
