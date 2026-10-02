@@ -33,7 +33,7 @@ factory_home="${FACTORY_HOME:-$HOME/.factory}"
 factory_home="${factory_home%/}"
 
 case "$path" in
-  "$factory_home"/projects/*|*/.factory/projects/*|*/projects/*/repo/*|*/mvp/repo/*|"$repo_root"/repo/*)
+  "$factory_home"/projects/*|*/.factory/projects/*|*/projects/*/repo/*|"$repo_root"/repo/*)
     deny "Protected path: this is generated factory OUTPUT, not source. It is produced by a pipeline run (products live in \$FACTORY_HOME/projects/, each its own git repo); hand-editing it invalidates that run's trust package and git baseline. Route: change the agent definition, the gates, or the project spec and re-run the pipeline (\`factory run --project <id> \"...\"\`). To edit deliberately anyway, do it outside Claude Code."
     ;;
 esac

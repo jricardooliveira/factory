@@ -60,7 +60,7 @@ class WorkspaceCommandTests(unittest.TestCase):
         from factory.interfaces.cli.main import main
 
         buf = io.StringIO()
-        with patch("factory.interfaces.cli.main.console", Console(file=buf, width=200)):
+        with patch("factory.interfaces.render.output.console", Console(file=buf, width=200)):
             with patch("sys.argv", ["factory", "--help"]):
                 with self.assertRaises(SystemExit):
                     main()

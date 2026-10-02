@@ -14,9 +14,11 @@ import sys
 from collections.abc import Callable
 from typing import NoReturn
 
+from rich.markup import escape
+
+from factory.interfaces import render
 from factory.interfaces.cli import board, project, review, run, selftest, workspace
 from factory.interfaces.cli.common import fail
-from factory.interfaces.render import console
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "project": project.project_command,
@@ -42,34 +44,51 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
 }
 
 
-def print_usage(exit_code: int = 1) -> NoReturn:
-    console.print("[bold]Usage:[/bold]")
-    console.print("  factory [bold cyan]\"Your request here\"[/bold cyan]          Run pipeline")
-    console.print("  factory [bold cyan]run --project <id> \"...\"[/bold cyan]      Run pipeline for project")
-    console.print("  factory [bold cyan]spec init <slug> --stack fastapi[/bold cyan] Create project spec")
-    console.print("  factory [bold cyan]project create <slug>[/bold cyan]          Create/register project")
-    console.print("  factory [bold cyan]project list[/bold cyan]                   List projects")
-    console.print("  factory [bold cyan]project show <id>[/bold cyan]              Show project")
-    console.print("  factory [bold cyan]list[/bold cyan]                           List all runs")
-    console.print("  factory [bold cyan]queue[/bold cyan]                          Show runs awaiting review / needing attention")
-    console.print("  factory [bold cyan]board[/bold cyan]                          Interactive board: approve/reject in place ([dim]--once / --plain[/dim])")
-    console.print("  factory [bold cyan]review <run_id>[/bold cyan]               Review a run")
-    console.print("  factory [bold cyan]review <run_id> --raw[/bold cyan]         Review with raw output")
-    console.print("  factory [bold cyan]replay <run_id>[/bold cyan]               Re-run orchestration on frozen outputs (no LLM)")
-    console.print("  factory [bold cyan]visualize [--output path][/bold cyan]      Generate HTML flow report")
-    console.print("  factory [bold cyan]dismiss <run_id>[/bold cyan]              Archive a run off the board")
-    console.print("  factory [bold cyan]reconcile [--older-than S][/bold cyan]     Fail runs stuck 'running' (dead process)")
-    console.print("  factory [bold cyan]simulate [--report path][/bold cyan]        Offline scenario matrix (no tokens)")
-    console.print("  factory [bold cyan]evals [--report path][/bold cyan]           Regression-test the agent configuration (no tokens)")
-    console.print("  factory [bold cyan]evals capture <run_id> <name>[/bold cyan]   Freeze a real run as a permanent eval case")
-    console.print("  factory [bold cyan]metrics [--report path][/bold cyan]         SDLC indicators over the factory's own history")
-    console.print("  factory [bold cyan]approve <run_id>[/bold cyan]              Approve paused run")
-    console.print("  factory [bold cyan]reject <run_id> [reason][/bold cyan]      Reject paused run")
-    console.print("  factory [bold cyan]retry <run_id>[/bold cyan]                Re-drive a run that died after you answered")
-    console.print("  factory [bold cyan]tiers[/bold cyan]                          Show per-agent model tiers (leverage allocation)")
-    console.print("  factory [bold cyan]workspace[/bold cyan]                      Show $FACTORY_HOME (default ~/.factory): DB + projects")
-    console.print("  factory [bold cyan]workspace import-legacy <dir>[/bold cyan]  Move an old factory.db + projects/ into it ([dim]--dry-run[/dim])")
-    console.print("  factory [bold cyan]doctor [--offline][/bold cyan]             Preflight: opencode, tier models reachable, toolchains")
+# (syntax after `factory`, description). `factory <verb> --help` prints the rows
+# whose syntax starts with that verb, so every verb in COMMANDS needs at least one
+# (tests/interfaces/cli/test_verb_help.py enforces it).
+USAGE: tuple[tuple[str, str], ...] = (
+    ('"Your request here"', "Run pipeline"),
+    ('run --project <id> "..."', "Run pipeline for project"),
+    ("spec init <slug> --stack fastapi", "Create project spec"),
+    ("project create <slug>", "Create/register project"),
+    ("project list", "List projects"),
+    ("project show <id>", "Show project"),
+    ("list", "List all runs"),
+    ("queue", "Show runs awaiting review / needing attention"),
+    ("board [--once | --plain] [--interval S]", "Interactive board: approve/reject in place"),
+    ("review <run_id>", "Review a run"),
+    ("review <run_id> --raw", "Review with raw output"),
+    ("replay <run_id>", "Re-run orchestration on frozen outputs (no LLM)"),
+    ("visualize [--output path]", "Generate HTML flow report"),
+    ("dismiss <run_id>", "Archive a run off the board"),
+    ("reconcile [--older-than S]", "Fail runs stuck 'running' (dead process)"),
+    ("simulate [--report path]", "Offline scenario matrix (no tokens)"),
+    ("evals [--report path]", "Regression-test the agent configuration (no tokens)"),
+    ("evals capture <run_id> <name>", "Freeze a real run as a permanent eval case"),
+    ("metrics [--report path]", "SDLC indicators over the factory's own history"),
+    ("approve <run_id>", "Approve paused run"),
+    ("reject <run_id> [reason]", "Reject paused run"),
+    ("retry <run_id>", "Re-drive a run that died after you answered"),
+    ("tiers", "Show per-agent model tiers (leverage allocation)"),
+    ("workspace", "Show $FACTORY_HOME (default ~/.factory): DB + projects"),
+    ("workspace import-legacy <dir> [--dry-run]", "Move an old factory.db + projects/ into it"),
+    ("doctor [--offline]", "Preflight: opencode, tier models reachable, toolchains"),
+)
+
+_HELP_FLAGS = ("-h", "--help")
+
+
+def print_usage(exit_code: int = 1, verb: str | None = None) -> NoReturn:
+    """Print usage — every row, or only `verb`'s rows — then exit."""
+    rows = [r for r in USAGE if verb is None or r[0] == verb or r[0].startswith(f"{verb} ")]
+    width = max(len(syntax) for syntax, _ in rows)
+    render.console.print("[bold]Usage:[/bold]")
+    for syntax, description in rows:
+        padding = " " * (width - len(syntax))
+        render.console.print(
+            f"  factory [bold cyan]{escape(syntax)}[/bold cyan]{padding}  {description}"
+        )
     sys.exit(exit_code)
 
 
@@ -127,7 +146,12 @@ def main() -> None:
 
     command = COMMANDS.get(cmd)
     if command is not None:
-        command(sys.argv[2:])
+        args = sys.argv[2:]
+        # No verb parses --help itself; passed through, it was EXECUTED instead
+        # (`factory reject 20 --help` rejected run 20 with the reason "--help").
+        if any(a in _HELP_FLAGS for a in args):
+            print_usage(exit_code=0, verb=cmd)
+        command(args)
         return
     refusal = request_refusal(_request_words(sys.argv[1:]))
     if refusal:

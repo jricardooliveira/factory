@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -13,17 +14,40 @@ from factory.interfaces.cli.common import db_path, fail
 from factory.runs import queries
 
 
+def _has_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _board_interval(args: list[str]) -> float:
+    """Validate board options and return `--interval` (seconds, default 2)."""
+    interval, i = 2.0, 0
+    while i < len(args):
+        if args[i] in ("--once", "--plain"):
+            i += 1
+        elif args[i] == "--interval":
+            value = args[i + 1] if i + 1 < len(args) else ""
+            try:
+                interval = float(value)
+            except ValueError:
+                fail(f"--interval needs a number of seconds, got '{value}'")
+            i += 2
+        else:
+            # An ignored option used to fall through to the TUI (`board --help`).
+            fail(f"Unknown board option: {args[i]}")
+    return interval
+
+
 def board_command(args: list[str]) -> None:
     """`factory board [--once | --plain] [--interval S]`."""
-    interval = 2.0
-    if "--interval" in args:
-        idx = args.index("--interval")
-        if idx + 1 < len(args):
-            interval = float(args[idx + 1])
+    interval = _board_interval(args)
     if "--once" in args:
         show_board(once=True)
     elif "--plain" in args:
         show_board(once=False, interval=interval)
+    elif not _has_terminal():
+        # A full-screen TUI with no terminal (a pipe, a script) never exits and
+        # spins a CPU core; one snapshot is the only useful thing to print.
+        show_board(once=True)
     else:
         try:
             from factory.interfaces.board.tui import run_board_tui

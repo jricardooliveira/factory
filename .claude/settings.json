@@ -16,13 +16,14 @@
       "Bash(.venv/bin/factory review*)",
       "Bash(.venv/bin/factory list*)",
       "Bash(.venv/bin/factory queue*)",
+      "Bash(.venv/bin/factory workspace)",
+      "Bash(.venv/bin/factory doctor*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
       "Bash(git show*)"
     ],
     "deny": [
-      "Read(./mvp/projects/*/.secrets/**)",
       "Read(./projects/*/.secrets/**)",
       "Read(~/.factory/projects/*/.secrets/**)",
       "Read(./**/.env)",

@@ -3,7 +3,7 @@ name: tdd
 description: Use when implementing any feature or bugfix in the software factory (src/factory/) — write the failing test first, watch it fail, then implement. Triggers on "implement X", "add Y", "fix Z" in this repo.
 ---
 
-# Test-Driven Development (factory MVP)
+# Test-Driven Development (factory)
 
 Write the test first. Watch it fail. Write the minimal code to pass. Refactor.
 

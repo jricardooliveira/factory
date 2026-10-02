@@ -1,6 +1,4 @@
-# Runtime state — file-backed DBs, logs, queues
-state/*.duckdb
-state/*.duckdb.wal
+# Runtime state — logs
 state/factory.log.jsonl
 
 # SQLite runtime state (factory + sample-project data DBs are regenerated, never committed)
@@ -10,9 +8,7 @@ state/factory.log.jsonl
 *.sqlite
 *.sqlite3
 
-# Per-project runtime state and live workspaces
-projects/*/state/*.duckdb
-projects/*/state/*.duckdb.wal
+# Per-project secrets (legacy in-repo layout)
 projects/*/.secrets/
 projects/*/.secrets/*
 
@@ -46,6 +42,9 @@ build/
 
 # Node (in case opencode pulls anything in)
 node_modules/
+
+# Claude Code: git worktrees created for parallel agents (always transient)
+.claude/worktrees/
 
 # OS / editors
 .DS_Store
