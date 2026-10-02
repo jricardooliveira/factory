@@ -116,6 +116,12 @@ input/output is stored, so any run replays offline for free. Evidence is version
   default path. Products are `$FACTORY_HOME/projects/<slug>/` — factory *output*, not source:
   never hand-edit them. `tests/conftest.py` points `FACTORY_HOME` at a tmp dir for EVERY test
   (autouse), so no test can touch the operator's real products.
+- **`factory replay <id>` of a PROJECT run writes into the live product.** It re-generates the
+  run's evidence (same content, today's date) and commits it into the product repo, and a run
+  that parked at a checkpoint parks again as a NEW `waiting_human` run. `factory approve` on
+  that replay run resumes with LIVE agents (resume is not replay-aware) and spends tokens. To
+  replay a real run for inspection, copy `$FACTORY_HOME`, rewrite `projects.repo_path` in the
+  copy, and point `FACTORY_HOME` at it.
 - **A project directory IS its git repository** (`projects.repo_path` == project dir ==
   `opencode_cwd` == `state["project_dir"]`). Its evidence (`workspace.layout.EVIDENCE_PATHS`:
   `docs/work/`, `docs/architecture/adr/`, `docs/releases/`, `PROJECT_RULES.md`,

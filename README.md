@@ -134,6 +134,9 @@ product's evidence into its repo and committing it:
 .venv/bin/factory workspace import-legacy mvp
 ```
 
+`factory doctor` warns while an un-imported `factory.db` is still in the checkout, and
+flags any product whose `.opencode` link points at another checkout.
+
 The **trust package** is the point. Four artifacts are non-negotiable for release
 sign-off (EFFECTIVENESS §5): passing tests with acceptance-criteria coverage, the
 real git diff, the ADR, and a security verdict. It will **not** overstate itself — if
