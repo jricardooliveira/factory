@@ -246,3 +246,29 @@ class ServiceIsHeadlessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NodeDetailTests(unittest.TestCase):
+    """The live "coder-agent running…" line says WHICH task and attempt."""
+
+    def _state(self, **extra) -> dict:
+        tasks = [{"id": "T-0001", "title": "Model", "purpose": "p"},
+                 {"id": "T-0002", "title": "Routes", "purpose": "p", "depends_on": ["T-0001"]}]
+        return {"spec": {"title": "t", "problem": "p", "why": "w",
+                         "acceptance_criteria": ["a"], "tasks": tasks}, **extra}
+
+    def test_coder_detail_names_task_and_attempt(self) -> None:
+        from factory.runs.service import node_detail
+
+        self.assertEqual(node_detail("coder-agent", self._state(task_index=1, attempt_number=2)),
+                         "task 2/2 T-0002 Routes (attempt 2)")
+        self.assertEqual(node_detail("coder-agent", self._state()),
+                         "task 1/2 T-0001 Model (attempt 1)")
+
+    def test_remediation_and_other_nodes(self) -> None:
+        from factory.runs.service import node_detail
+
+        self.assertEqual(node_detail("coder-agent", self._state(remediation=True)),
+                         "remediation pass")
+        self.assertEqual(node_detail("spec-agent", self._state()), "")
+        self.assertEqual(node_detail("coder-agent", {}), "")

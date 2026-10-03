@@ -1,6 +1,5 @@
-"""Python checks: py_compile and a static import check by default; pytest collection
-and the test suite only on opt-in (FACTORY_RUN_TESTS), because both import — and so
-execute — agent-written code."""
+"""Python checks: py_compile and a static import check by default; the test suite only
+on opt-in (FACTORY_RUN_TESTS), because running it executes agent-written code."""
 
 from __future__ import annotations
 
@@ -155,6 +154,10 @@ def static_import_check(py_files: list[Path], root: Path) -> VerifyCheck:
     return VerifyCheck("py_imports", "pass", f"{len(py_files)} file(s)")
 
 
+# Quoted for an import inside a test, bare for `python -m pytest` without pytest.
+_MISSING_MODULE = re.compile(r"No module named ['\"]?([\w.]+)")
+
+
 def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
     """Decide whether a pytest collection failure is a real bug (fail) or an
     environmental missing-dependency (warn).
@@ -170,7 +173,7 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
     if "cannot import name" in output:
         return VerifyCheck("pytest_collect", "fail", tail)
 
-    m = re.search(r"No module named ['\"]([^'\"]+)['\"]", output)
+    m = _MISSING_MODULE.search(output)
     if m:
         top = m.group(1).split(".")[0]
         if _is_local_module(top, root):
@@ -181,21 +184,6 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
         return VerifyCheck("pytest_collect", "fail", tail)
 
     return VerifyCheck("pytest_collect", "warn", tail)
-
-
-def pytest_collect(root: Path) -> VerifyCheck | None:
-    python = product_python(root)
-    if not _has_pytest(python):
-        return VerifyCheck("pytest_collect", "skip", "pytest not installed")
-    try:
-        proc = run_command([python, "-m", "pytest", "--collect-only", "-q"], root)
-    except subprocess.TimeoutExpired:
-        return VerifyCheck("pytest_collect", "warn", "timed out")
-    if proc.returncode != 0:
-        # A real bug in the coder's own code must FAIL; a merely-absent third-party
-        # dep stays a WARN. Distinguishing the two closes a silent-failure crack.
-        return _classify_collect_failure((proc.stdout or "") + "\n" + (proc.stderr or ""), root)
-    return VerifyCheck("pytest_collect", "pass", f"collected (with {python})")
 
 
 def run_tests(root: Path) -> VerifyCheck:
@@ -218,7 +206,13 @@ def run_tests(root: Path) -> VerifyCheck:
     except subprocess.TimeoutExpired:
         return VerifyCheck("pytest_run", "fail", f"tests timed out after {TEST_TIMEOUT}s ({python})")
     if proc.returncode != 0:
-        tail = (proc.stdout or proc.stderr).strip()[-600:]
+        output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        tail = output.strip()[-600:]
+        verdict = _classify_collect_failure(output, root)
+        if verdict.status == "warn" and _MISSING_MODULE.search(output):
+            # The product's interpreter lacks a dependency (or pytest): an environment
+            # problem, not the coder's bug — and the tests never ran, so never a pass.
+            return VerifyCheck("pytest_run", "warn", f"tests did not run: {python} {verdict.detail}")
         return VerifyCheck("pytest_run", "fail", f"with {python}: {tail}")
     return VerifyCheck("pytest_run", "pass", f"tests passed (with {python})")
 

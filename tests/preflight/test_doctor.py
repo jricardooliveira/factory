@@ -222,8 +222,20 @@ class DoctorWorkspaceTests(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertFalse(check.blocking)
         self.assertIn("factory's interpreter", check.detail)
-        self.assertIn("uv venv && uv pip install -r requirements.txt", check.detail)
+        # No manifest yet: nothing to install, so no command that cannot work.
+        self.assertNotIn("requirements.txt", check.detail)
+        self.assertIn("create .venv once a story adds a dependency manifest", check.detail)
         self.assertTrue(report.passed)
+
+    def test_venv_advice_follows_the_manifest(self) -> None:
+        project = create_project(db_path(), slug="shop", stack="fastapi")
+        repo = Path(project["repo_path"])
+        (repo / "pyproject.toml").write_text("[project]\nname = 'shop'\n")
+        detail = _by_name(self._run())["project shop python"].detail
+        self.assertIn("uv venv && uv pip install -e .", detail)
+        (repo / "requirements.txt").write_text("fastapi\n")
+        detail = _by_name(self._run())["project shop python"].detail
+        self.assertIn("uv venv && uv pip install -r requirements.txt", detail)
 
     def test_python_product_with_a_venv_has_no_warning(self) -> None:
         project = create_project(db_path(), slug="shop", stack="fastapi")

@@ -14,7 +14,7 @@ judges the result.
 |---|---|
 | `__init__.py` | `verify_changes(written_paths, *, root) -> VerifyResult`: picks checks by file extension. Re-exports `VerifyCheck`, `VerifyResult`, `tests_enabled`. |
 | `base.py` | `VerifyCheck(name, status, detail)` with status `pass`/`fail`/`warn`/`skip`; `VerifyResult` (`passed`, `verdict`, `summary`); `run_command` (subprocess with `stdin=DEVNULL`); `tests_enabled()` (`FACTORY_RUN_TESTS`); timeouts `COMMAND_TIMEOUT=60`, `TEST_TIMEOUT=180`, `BUILD_TIMEOUT=180`. |
-| `python.py` | `py_compile_check`, `static_import_check` (AST only), `run_tests` (opt-in), `has_tests`, `is_py_test`, plus `pytest_collect` / `_classify_collect_failure`. |
+| `python.py` | `py_compile_check`, `static_import_check` (AST only), `run_tests` (opt-in; a dependency or pytest missing from the product interpreter is a `warn`, never a pass), `has_tests`, `is_py_test`, `_classify_collect_failure`. |
 | `go.py` | `go_module_dirs` (nearest `go.mod` per file), `go_build`, `go_parse` (`gofmt -e`, no module needed), `go_vet`, `run_go_tests` (opt-in), `_classify_go_failure`. |
 | `typescript.py` | `node_check` (`node --check` for `.js/.mjs/.cjs`), `tsc_check` (`tsc --noEmit -p <dir>` per owning `tsconfig.json`), `_resolve_tsc` (prefers the project's own `node_modules/.bin/tsc`). |
 | `scope.py` | `declared_scope_mismatch` + `scope_note` (declared `code_blocks` vs git-measured change set), `paths_outside_scope` (change set vs a task's `scope`), `is_test_path`, `_MANIFEST_NAMES`. |
@@ -49,15 +49,12 @@ Invariants:
   `tsc`: "not installed ... see `factory doctor`"). A check that cannot run cannot earn a pass.
   Exceptions that do `skip`: `go_vet`/`go_test` without `go`, and pytest not installed for the
   opt-in test run.
-- **Nothing the coder wrote is executed by default.** `pytest --collect-only` is not called from
-  `verify_changes` (collection imports test modules); `pytest_collect` still exists in `python.py`
-  but is unwired. Pytest and `go test` run only with `FACTORY_RUN_TESTS=1|true|yes|on`. This is a
+- **Nothing the coder wrote is executed by default.** `pytest --collect-only` is never called
+  (collection imports test modules). Pytest and `go test` run only with `FACTORY_RUN_TESTS=1|true|yes|on`. This is a
   subprocess with a timeout, not an OS sandbox.
-- `scope.py` has uncommitted edits in the working tree (adds `__init__.py` to `_MANIFEST_NAMES`
-  and the `repo/`-prefix normalization of `changed`). Its module docstring still says the
-  out-of-scope check "does not block"; in `pipeline/nodes/coder.py` (also uncommitted) `_outside_scope`
-  now refuses out-of-scope `code_blocks` before they are written, while the trust package still
-  reports `scope_violations`.
+- `scope.py` judges in one path space (`repo/` stripped, `__init__.py` structural). The coder node
+  refuses out-of-scope `code_blocks` before they are written (`pipeline/nodes/coder.py::_outside_scope`);
+  the trust package also reports `scope_violations`.
 
 ## Imports / imported by
 

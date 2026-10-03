@@ -6,6 +6,7 @@ from typing import Any
 import re
 
 from pydantic import ValidationError
+from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
@@ -23,9 +24,10 @@ def print_header(request: str) -> None:
     output.console.print()
 
 
-def print_agent_start(agent: str) -> None:
+def print_agent_start(agent: str, detail: str = "") -> None:
     # Its own line, not a "\r" overwrite: a piped or logged run keeps both lines.
-    output.console.print(f"  🤖 [bold cyan]{agent}[/bold cyan] running…")
+    suffix = f" {escape(detail)}" if detail else ""
+    output.console.print(f"  🤖 [bold cyan]{agent}[/bold cyan] running…{suffix}")
 
 
 def print_agent_done(
@@ -118,6 +120,8 @@ def print_run_started(event: RunStarted) -> None:
     if event.project_spec_text:
         output.console.print(Panel(event.project_spec_text, title="📐 Project Spec", border_style="magenta"))
         output.console.print()
+    if not event.tests_run:
+        output.console.print("  [yellow]⚠ tests will not execute (set FACTORY_RUN_TESTS=1 to run them)[/yellow]")
     output.console.print(f"  📦 Run [bold]#{event.run_id}[/bold] | Story [bold]{event.story_id}[/bold]\n")
 
 

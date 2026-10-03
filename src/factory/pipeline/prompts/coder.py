@@ -39,7 +39,7 @@ def build_coder_task_prompt(
         repo_context=repo_inventory_block(state),
         retry_context=retry_context_block(state, attempt),
         boundary_context=boundary_rules_block(state),
-        scope_files_context=scope_files_block(state, task),
+        scope_files_context=scope_files_block(state, task.scope),
         completed=completed,
         position=(task_index + 1, task_count),
     )
@@ -54,5 +54,9 @@ def build_remediation_prompt(state: PipelineState, spec: SpecOutput, diff: str) 
         diff,
         project_context=project_context_block(state),
         memory_context=project_memory_block(state),
+        repo_context=repo_inventory_block(state),
+        # Every task's scope: the pass is cross-cutting, and it must edit what exists.
+        scope_files_context=scope_files_block(
+            state, list(dict.fromkeys(s for t in spec.tasks for s in t.scope))),
         rejected_release=state.get("triggered_by") == "release-rejected",
     )

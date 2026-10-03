@@ -256,8 +256,9 @@ class TestsClaimTests(unittest.TestCase):
         self._assert_proves_nothing("[T-1] py_compile:pass, pytest_collect:pass, pytest_run:skip")
 
     def test_a_warning_is_not_a_pass(self) -> None:
-        pkg = tp.assemble(self.db_path, self._run("[T-1] pytest_run:warn"))
-        self.assertFalse(pkg["tests"]["passed"])
+        # run_tests warns when the product's interpreter lacks a dependency: the
+        # suite never ran, so a warn is not even an execution.
+        self._assert_proves_nothing("[T-1] py_compile:pass, pytest_run:warn")
 
     def test_a_pass_followed_by_a_skip_is_not_proof_for_the_final_candidate(self) -> None:
         pkg = tp.assemble(self.db_path, self._builds("[T-1] pytest_run:pass",

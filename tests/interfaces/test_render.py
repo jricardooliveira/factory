@@ -133,6 +133,21 @@ class AgentTimingTests(unittest.TestCase):
 
         self.assertIn("coder-agent running…", self._printed(print_agent_start, "coder-agent"))
 
+    def test_an_agent_start_shows_its_detail(self) -> None:
+        from factory.interfaces.render.run import print_agent_start
+
+        text = self._printed(print_agent_start, "coder-agent", "task 2/5 T-0002 Routes (attempt 1)")
+        self.assertIn("coder-agent running… task 2/5 T-0002 Routes (attempt 1)", text)
+
+    def test_run_header_says_when_tests_will_not_execute(self) -> None:
+        from factory.interfaces.render.run import print_run_started
+        from factory.runs import RunStarted
+
+        off = self._printed(print_run_started, RunStarted(1, "US-1", "req"))
+        self.assertIn("tests will not execute (set FACTORY_RUN_TESTS=1 to run them)", off)
+        on = self._printed(print_run_started, RunStarted(1, "US-1", "req", tests_run=True))
+        self.assertNotIn("tests will not execute", on)
+
 
 class TrustPackageCoverageTests(unittest.TestCase):
     """`factory review` said "AC covered: 3" before any tester had run: it counted

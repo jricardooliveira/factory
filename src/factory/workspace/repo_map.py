@@ -103,7 +103,7 @@ def _go_interfaces(text: str) -> list[str]:
     return out
 
 
-def _iter_code_files(root: Path):
+def iter_code_files(root: Path):
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix not in _CODE_SUFFIXES:
             continue
@@ -115,7 +115,7 @@ def _iter_code_files(root: Path):
 
 def build_repo_inventory(root: Path, *, max_files: int = 60, max_chars: int = 6000) -> str:
     """A compact interface map of the repo, or "" if there is no code yet."""
-    files = list(_iter_code_files(root))
+    files = list(iter_code_files(root))
     if not files:
         return ""
 

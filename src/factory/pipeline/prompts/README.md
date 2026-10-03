@@ -15,7 +15,7 @@ Assembles every agent prompt from `PipelineState`. Prompt TEXT is production beh
 | `context_pack.py` | `build_task_pack`, `build_remediation_pack`: the rendered per-task / remediation packs the coder prompts wrap. |
 | `tester.py` | `build_tester_prompt` (public API): embeds `agents/policies/REVIEW.md` (`review_policy.policy_block()`), the real git diff from `base_commit`, boundary rules, the gate-build result. |
 | `release.py` | `build_release_prompt(state, evidence_gaps)`: story, architecture, real diff, tester verdict, measured evidence gaps the notes must not contradict. |
-| `blocks.py` | Shared blocks, each `""` when not applicable: `project_context_block`, `project_memory_block` (the approved `docs/work/BRIEF.md` first, then rules + ADRs), `repo_inventory_block`, `scope_files_block` (current text of a task's in-scope files, for the coder), `reviewer_feedback_block`, `retry_context_block`, `boundary_rules_block`. |
+| `blocks.py` | Shared blocks, each `""` when not applicable: `project_context_block`, `project_memory_block` (the approved `docs/work/BRIEF.md` first, then rules + ADRs), `repo_inventory_block`, `scope_files_block` (current text of the in-scope files — a task's scope, or every task's for a remediation pass; `repo/` stripped, a directory expanded under one size budget), `reviewer_feedback_block`, `retry_context_block`, `boundary_rules_block`. |
 
 ## How it works
 

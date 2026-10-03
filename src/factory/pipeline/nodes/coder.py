@@ -53,6 +53,10 @@ def _changed_files(
     git_changed = git_changed_paths(root, exclude=exclude)
     if git_changed is not None:
         return set(git_changed)
+    return _relative(written, root)
+
+
+def _relative(written: list[Path], root: Path) -> set[str]:
     root_resolved = root.resolve()
     actual: set[str] = set()
     for p in written:
@@ -64,11 +68,19 @@ def _changed_files(
 
 
 def _scope_diff(
-    coder: CoderOutput, written: list[Path], root: Path, *, exclude: tuple[str, ...] = ()
+    coder: CoderOutput, written: list[Path], root: Path, *, exclude: tuple[str, ...] = (),
+    earlier: set[str] = frozenset(),
 ) -> tuple[set[str], set[str]]:
-    """(unclaimed, missing) for this pass — see `verification.scope`."""
+    """(unclaimed, missing) for this pass — see `verification.scope`.
+
+    `earlier` = what the factory materialized on this task's failed attempts: it is
+    only committed once the task passes, so git still lists it as changed, but the
+    factory wrote it — never this agent's out-of-band write.
+    """
     claimed = {c.path for c in coder.code_blocks}
-    return declared_scope_mismatch(_changed_files(written, root, exclude=exclude), claimed)
+    unclaimed, missing = declared_scope_mismatch(
+        _changed_files(written, root, exclude=exclude), claimed)
+    return unclaimed - earlier, missing
 
 
 def _materialize(state: PipelineState, coder: CoderOutput) -> tuple[Path, tuple[str, ...], list[Path]]:
@@ -270,7 +282,7 @@ def _design_feedback(
 def _route_after_build(
     conn: sqlite3.Connection, state: PipelineState, tasks: list[TaskDef], task: TaskDef,
     coder: CoderOutput, base: dict[str, Any], verify_passed: bool, gate_reason: str,
-    root: Path,
+    root: Path, written: list[Path] | None = None,
 ) -> dict[str, Any]:
     """After a clean gate-build log: advance, retry the same task, or give up."""
     task_index = state.get("task_index", 0)
@@ -286,9 +298,11 @@ def _route_after_build(
         conn.commit()
         if task_index + 1 >= len(tasks):
             # Coding done — hand to the tester gate, which finalizes the run.
-            return {**base, "next_action": "complete", "tasks_completed": completed}
+            return {**base, "next_action": "complete", "tasks_completed": completed,
+                    "attempt_written": []}
         return {**base, "next_action": "next_task", "task_index": task_index + 1,
-                "attempt_number": 1, "prior_findings": [], "tasks_completed": completed}
+                "attempt_number": 1, "prior_findings": [], "tasks_completed": completed,
+                "attempt_written": []}
 
     # Task failed: retry the SAME task within budget, else give up + queue.
     conn.commit()  # the spend below is read on its own connection
@@ -301,6 +315,10 @@ def _route_after_build(
             "attempt_number": attempt + 1,
             "triggered_by": "gate-build",
             "prior_findings": [gate_reason],
+            # Uncommitted until the task passes: the retry's scope check must
+            # not read the factory's own earlier writes as the agent's.
+            "attempt_written": sorted(
+                set(state.get("attempt_written") or []) | _relative(written or [], root)),
         }
 
     if not verify_passed:
@@ -363,7 +381,8 @@ def _implement_task(
 
     # ── gate-build: verify the cumulative repo after this task ──
     verify_result = verify_changes(written, root=root)
-    unclaimed, missing = _scope_diff(coder, written, root, exclude=owned)
+    unclaimed, missing = _scope_diff(coder, written, root, exclude=owned,
+                                     earlier=set(state.get("attempt_written") or []))
     note = scope_note(unclaimed, missing)
     gate_reason = f"[{task.id}] {verify_result.summary}"
     if note:
@@ -394,7 +413,7 @@ def _implement_task(
     }
     base = {"coder_raw": result.output, "coder": parsed, "gate_build": gate_build}
     return _route_after_build(
-        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root
+        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root, written
     )
 
 

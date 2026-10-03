@@ -191,6 +191,37 @@ class ProductInterpreterTests(unittest.TestCase):
         self.assertTrue(self.log.is_file())
         self.assertIn(str(shim), check.detail)
 
+    def _failing_shim(self, output: str) -> Path:
+        shim = self.root / ".venv" / "bin" / "python"
+        shim.parent.mkdir(parents=True)
+        shim.write_text(f"#!/bin/sh\ncat <<'EOF'\n{output}\nEOF\nexit 1\n")
+        shim.chmod(0o755)
+        return shim
+
+    def test_missing_third_party_module_is_an_environment_warn(self) -> None:
+        shim = self._failing_shim(
+            "ImportError while importing test module 'test_x.py'.\n"
+            "E   ModuleNotFoundError: No module named 'flask'")
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "warn")
+        self.assertIn("flask", check.detail)
+        self.assertIn(str(shim), check.detail)
+
+    def test_pytest_missing_from_the_product_interpreter_is_a_warn(self) -> None:
+        self._failing_shim("/x/.venv/bin/python: No module named pytest")
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "warn")
+        self.assertIn("pytest", check.detail)
+
+    def test_assertion_failure_still_fails(self) -> None:
+        self._failing_shim("E   assert 1 == 2\n1 failed in 0.01s")
+        self.assertEqual(run_tests(self.root).status, "fail")
+
+    def test_missing_local_module_still_fails(self) -> None:
+        (self.root / "app").mkdir()
+        self._failing_shim("E   ModuleNotFoundError: No module named 'app.routes'")
+        self.assertEqual(run_tests(self.root).status, "fail")
+
     def test_falls_back_to_the_factory_interpreter(self) -> None:
         import sys
 

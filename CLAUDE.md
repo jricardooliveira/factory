@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `920 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `920 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `955 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `955 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -118,8 +118,10 @@ src/factory/
 skills/                 Anti-slop skills (ponytail, ponytail-review, karpathy-guidelines, superpowers
                         TDD / systematic-debugging / verification-before-completion; MIT, LICENSES.md)
                         copied into every product's .claude/skills/ (`create_project`, `factory
-                        project refresh`); their gist is the "Code discipline" section of
-                        PROJECT_RULES.md, which reaches every agent prompt (golden-pinned).
+                        project refresh`) for HUMANS / Claude Code sessions working on the
+                        product. Factory agents run with tools disabled and never load them:
+                        they only receive the "Code discipline" section of PROJECT_RULES.md,
+                        injected into every agent prompt (golden-pinned).
 evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected outcome).
 examples/specs/         Sample project specs.
 docs/ARCHITECTURE.md    One page: layer diagram, package ownership, the one-way rule, where to add things.
@@ -248,12 +250,17 @@ input/output is stored, so any run replays offline for free. Evidence is version
   stage. Usage comes from opencode's `step_finish` events (rows before 2026-10-02 are NULL);
   the ChatGPT/Codex login reports **$0**, so spend is tokens × list price from
   `agents/tiers.toml` [prices] (`domain/budget.py`). A new model needs a price there.
-- **Default verification executes nothing the coder wrote.** No `pytest --collect-only`
-  without `FACTORY_RUN_TESTS=1` (collection imports — runs — test modules); the static
-  import check covers what it caught. A missing toolchain FAILS its files, never skips them.
-  Opted-in tests run with the PRODUCT's interpreter (`verification.python.product_python`:
-  `<repo>/.venv/bin/python`, else `$FACTORY_PRODUCT_PYTHON`, else `sys.executable`), named
-  in the check's detail.
+- **Default verification executes nothing the coder wrote.** `pytest --collect-only` is never
+  run (collection imports — runs — test modules); the static import check covers what it
+  caught. A missing toolchain FAILS its files, never skips them. The run header says when
+  tests will not execute. Opted-in tests (`FACTORY_RUN_TESTS=1`) run with the PRODUCT's
+  interpreter (`verification.python.product_python`: `<repo>/.venv/bin/python`, else
+  `$FACTORY_PRODUCT_PYTHON`, else `sys.executable`), named in the check's detail; a
+  third-party module (or pytest) missing from it is `pytest_run:warn` — an environment
+  problem, never a pass and never "tests executed" in the trust package.
+- **A failed task attempt's files stay uncommitted until the task passes**, so a retry's
+  scope check subtracts `state["attempt_written"]` (what the factory materialized on the
+  earlier attempts) from the unclaimed set; it is cleared when the task passes.
 - **The coder's task pack carries the current text of its in-scope files**
   (`prompts.blocks.scope_files_block`, capped by `MAX_SCOPE_FILE_CHARS`, evidence paths
   skipped, a missing path marked "(new file)"); the block is omitted when the task has no

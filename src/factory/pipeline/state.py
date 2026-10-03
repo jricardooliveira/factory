@@ -60,6 +60,7 @@ class PipelineState(TypedDict, total=False):
     # Per-task execution
     task_index: int  # index into the dependency-ordered task list
     tasks_completed: list[str]  # task ids already implemented
+    attempt_written: list[str]  # repo paths the factory wrote on this task's failed attempts
 
     # Overall
     status: str

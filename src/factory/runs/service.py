@@ -21,6 +21,8 @@ from typing import Any
 from factory.adapters.notify import notify
 from factory.agent_config import tiers
 from factory.domain.budget import story_spend
+from factory.domain.contracts import SpecOutput
+from factory.domain.task_order import order_tasks
 from factory.evidence.pipeline_record import write_pipeline_record
 from factory.pipeline import (
     PipelineState,
@@ -66,6 +68,7 @@ from factory.state.db import (
     respond_to_gate,
     start_run,
 )
+from factory.verification import tests_enabled
 from factory.workspace.git import git_commit_paths, git_head
 from factory.workspace.projects import agents_link_problem, get_project
 from factory.workspace.sandbox import prepare_replay_sandbox
@@ -130,7 +133,8 @@ def run_pipeline(
     if prepare_workdir is not None:
         prepare_workdir(cwd)
 
-    emit(RunStarted(run_id, story_id, request, project_spec_text, replay_run_id))
+    emit(RunStarted(run_id, story_id, request, project_spec_text, replay_run_id,
+                    tests_run=tests_enabled()))
 
     pipeline = compile_pipeline()
     initial_state: PipelineState = {
@@ -169,12 +173,29 @@ def _stream(
             if "input" in chunk:
                 with get_db(db_path) as conn:
                     mark = last_agent_log_id(conn)
-                emit(NodeStarted(chunk["name"]))
+                emit(NodeStarted(chunk["name"], node_detail(chunk["name"], chunk["input"])))
             continue
         for node_name, node_output in chunk.items():
             final_state.update(node_output)
             emit(NodeCompleted(node_name, node_output, *_node_usage(db_path, run_id, mark)))
     return final_state
+
+
+def node_detail(node: str, state: dict[str, Any]) -> str:
+    """Which coder task (and attempt) is about to run; '' for any other node."""
+    if node != "coder-agent" or not isinstance(state, dict):
+        return ""
+    if state.get("remediation"):
+        return "remediation pass"
+    if not state.get("spec"):
+        return ""
+    tasks = order_tasks(list(SpecOutput.model_validate(state["spec"]).tasks))
+    index = state.get("task_index", 0)
+    if index >= len(tasks):
+        return ""
+    task = tasks[index]
+    return (f"task {index + 1}/{len(tasks)} {task.id} {task.title} "
+            f"(attempt {state.get('attempt_number', 1)})")
 
 
 def _node_usage(db_path: Path, run_id: int, mark: int) -> tuple[float | None, float | None]:

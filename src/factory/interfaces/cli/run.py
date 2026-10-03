@@ -50,7 +50,7 @@ class RunPrinter:
             render.print_resume_entered(event)
         elif isinstance(event, NodeStarted):
             if event.node.endswith("-agent"):  # gates are instant; agents take minutes
-                render.print_agent_start(event.node)
+                render.print_agent_start(event.node, event.detail)
         elif isinstance(event, NodeCompleted):
             node_printer = render.print_resume_node if self.resumed else render.print_run_node
             node_printer(event.node, event.output, event.duration_secs, event.cost_usd)

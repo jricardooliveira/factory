@@ -212,10 +212,16 @@ def _venv_check(slug: str, repo: Path) -> Check | None:
         return None
     if any((repo / ".venv" / p).is_file() for p in ("bin/python", "Scripts/python.exe")):
         return None
+    # Advice must be followable: only name a manifest the product actually has.
+    if (repo / "requirements.txt").is_file():
+        fix = f"create one: cd {repo} && uv venv && uv pip install -r requirements.txt"
+    elif (repo / "pyproject.toml").is_file():
+        fix = f"create one: cd {repo} && uv venv && uv pip install -e ."
+    else:
+        fix = "create .venv once a story adds a dependency manifest"
     return Check(
         f"project {slug} python", "warn",
-        "no .venv — its tests would run with the factory's interpreter; create one: "
-        f"cd {repo} && uv venv && uv pip install -r requirements.txt",
+        f"no .venv — its tests would run with the factory's interpreter; {fix}",
         blocking=False,
     )
 

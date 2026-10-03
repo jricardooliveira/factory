@@ -23,6 +23,14 @@
 
 Use sqlite.
 
+## Existing codebase (interfaces only — integrate with these, do not rewrite)
+
+- ledger/__init__.py  (no public interfaces)
+- ledger/invoices.py
+  - class Invoice
+    - total_cents(self)
+  - def load(path: str) -> list[Invoice]
+
 ## Remediation pass — the QA / security / performance review FAILED
 
 The implementation already exists in the working directory. MODIFY the existing files to resolve every finding below. Do not rewrite unrelated code or add new features; return ONLY the changed files via code_blocks.

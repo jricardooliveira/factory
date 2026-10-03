@@ -23,6 +23,7 @@ class RunStarted:
     request: str
     project_spec_text: str | None = None
     replay_of: int | None = None  # source run whose frozen outputs are replayed
+    tests_run: bool = False  # FACTORY_RUN_TESTS is on: gate-build executes the suite
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class NodeStarted:
     """One LangGraph node is about to run (an agent node may take minutes)."""
 
     node: str
+    detail: str = ""  # e.g. "task 2/5 T-0002 Routes (attempt 1)"; "" when none applies
 
 
 @dataclass(frozen=True)
