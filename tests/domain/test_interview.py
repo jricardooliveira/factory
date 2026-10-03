@@ -94,6 +94,16 @@ class ResolveAnswerTests(unittest.TestCase):
     def test_a_number_picks_that_option(self) -> None:
         self.assertEqual(resolve_answer(_q("Clerks", "Admins"), " 2 "), ("Admins", False))
 
+    def test_a_picked_option_keeps_its_description(self) -> None:
+        # The brief and every later turn see only the recorded text: a label alone
+        # ("Name, kind and a daily goal") drops what the operator actually chose.
+        q = InterviewQuestion(topic="must_do", question="Setup?", options=[
+            InterviewOption(label="Daily goal", description="the day counts once reached"),
+            InterviewOption(label="Name only")])
+        self.assertEqual(resolve_answer(q, "1"), ("Daily goal — the day counts once reached", False))
+        self.assertEqual(resolve_answer(q, "d"), ("Daily goal — the day counts once reached", True))
+        self.assertEqual(resolve_answer(q, "2"), ("Name only", False))
+
     def test_an_out_of_range_number_is_free_text(self) -> None:
         self.assertEqual(resolve_answer(_q("Clerks", "Admins"), "3"), ("3", False))
         self.assertEqual(resolve_answer(_q("Clerks"), "0"), ("0", False))

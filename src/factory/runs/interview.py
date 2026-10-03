@@ -62,6 +62,13 @@ from factory.workspace.templates import write_project_spec
 AGENT = "interview-agent"
 MAX_QUESTIONS_PER_TURN = 4
 
+
+def _per_turn(answers: list[dict[str, Any]]) -> int:
+    # Questions in one turn cannot see each other's answers. Until the operator has
+    # said what the product IS, a second question asks what that answer settles
+    # (live: "who uses it?" right after "just for me"), so the first turn is one question.
+    return MAX_QUESTIONS_PER_TURN if answers else 1
+
 # (question, still-uncovered required topics) -> raw answer; None = operator says "done".
 Ask = Callable[[InterviewQuestion, list[str]], str | None]
 # brief markdown -> True approve / False stop for now / str = what is wrong with it.
@@ -108,7 +115,7 @@ def build_interview_prompt(
     )
     parts.append(
         f"You may ask at most {remaining} more question(s) in total, "
-        f"and at most {MAX_QUESTIONS_PER_TURN} in this turn."
+        f"and at most {_per_turn(answers)} in this turn."
     )
     return "\n\n".join(parts) + "\n"
 
@@ -181,7 +188,7 @@ def next_turn(
     prompt = build_interview_prompt(project, answers, uncovered_topics(answers), amendment)
     turn = _ask_agent(project, prompt, InterviewTurn, db_path=db_path,
                       resume="Answers so far are saved; run the interview again to resume.")
-    turn.questions = turn.questions[:MAX_QUESTIONS_PER_TURN]
+    turn.questions = turn.questions[:_per_turn(answers)]
     return turn
 
 

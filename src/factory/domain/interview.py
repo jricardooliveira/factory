@@ -106,13 +106,19 @@ def fallback_questions(topics: Iterable[str]) -> list[InterviewQuestion]:
 def resolve_answer(question: InterviewQuestion, raw: str) -> tuple[str, bool]:
     """(answer_text, assumed) for what the operator typed. "" means unanswered."""
     text = raw.strip()
+
+    def picked(option: InterviewOption) -> str:
+        # The description carries the meaning ("the day counts once reached"); the
+        # brief and later turns see only this text.
+        return f"{option.label} — {option.description}" if option.description else option.label
+
     if text.lower() in ("you decide", "d"):
         # The agent lists its recommended option FIRST, so delegating takes that
         # one — and is recorded as an assumption, never as the operator's choice.
         if question.options:
-            return question.options[0].label, True
+            return picked(question.options[0]), True
         return LEFT_TO_FACTORY, True
     # isascii: str.isdigit accepts characters like "²" that int() rejects.
     if text.isascii() and text.isdigit() and 1 <= int(text) <= len(question.options):
-        return question.options[int(text) - 1].label, False
+        return picked(question.options[int(text) - 1]), False
     return text, False
