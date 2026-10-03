@@ -19,7 +19,7 @@ TEST_TIMEOUT = 180
 BUILD_TIMEOUT = 180
 # How much of one failed check's output reaches the gate reason (and so the coder's
 # retry, the run error and `factory review`): enough for a traceback's last frame.
-MAX_FAILURE_DETAIL = 500
+MAX_FAILURE_DETAIL = 3500
 
 
 def tests_enabled() -> bool:

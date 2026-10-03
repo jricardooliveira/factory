@@ -186,6 +186,20 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
     return VerifyCheck("pytest_collect", "warn", tail)
 
 
+# What a failed suite tells the coder's retry. The last 600 chars were test NAMES only
+# (live, habits run #8): the retry could not see a single assertion.
+MAX_TEST_OUTPUT = 3000
+
+
+def _failure_excerpt(output: str) -> str:
+    """The first failures (the assertions) plus the end (the summary), within the budget."""
+    text = output.strip()
+    if len(text) <= MAX_TEST_OUTPUT:
+        return text
+    head, tail = MAX_TEST_OUTPUT * 2 // 3, MAX_TEST_OUTPUT // 3
+    return text[:head] + "\n… (output cut) …\n" + text[-tail:]
+
+
 def run_tests(root: Path) -> VerifyCheck:
     """Actually run the materialized tests (opt-in). A failure HARD-fails the gate.
 
@@ -199,7 +213,7 @@ def run_tests(root: Path) -> VerifyCheck:
         return VerifyCheck("pytest_run", "skip", "pytest not installed")
     try:
         proc = subprocess.run(
-            [python, "-m", "pytest", "-q", str(root)],
+            [python, "-m", "pytest", "-q", "--tb=short", str(root)],
             cwd=str(root), capture_output=True, text=True, timeout=TEST_TIMEOUT,
             stdin=subprocess.DEVNULL,
         )
@@ -207,7 +221,7 @@ def run_tests(root: Path) -> VerifyCheck:
         return VerifyCheck("pytest_run", "fail", f"tests timed out after {TEST_TIMEOUT}s ({python})")
     if proc.returncode != 0:
         output = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        tail = output.strip()[-600:]
+        tail = _failure_excerpt(output)
         verdict = _classify_collect_failure(output, root)
         if verdict.status == "warn" and _MISSING_MODULE.search(output):
             # The product's interpreter lacks a dependency (or pytest): an environment

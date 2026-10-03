@@ -54,6 +54,12 @@ class ScopeFilesBlockTests(unittest.TestCase):
         self.assertIn("x" * MAX_SCOPE_FILE_CHARS, block)
         self.assertNotIn("x" * (MAX_SCOPE_FILE_CHARS + 1), block)
         self.assertIn("truncated", block)
+        # The coder returns whole files: one it cannot see in full must not be rewritten.
+        self.assertIn("do NOT return this file", block)
+
+    def test_a_normal_sized_source_file_is_shown_whole(self) -> None:
+        # Live (habits run #8): tests/test_app.py was 14,812 chars, shown to 12,000.
+        self.assertGreaterEqual(MAX_SCOPE_FILE_CHARS, 40000)
 
     def test_evidence_paths_are_skipped(self) -> None:
         (self.root / "PROJECT_RULES.md").write_text("secret rules")

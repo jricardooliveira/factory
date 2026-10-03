@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import os
@@ -141,6 +142,35 @@ class CollectRepoDiffTests(unittest.TestCase):
         policy = (agents_dir() / "policies" / "REVIEW.md").read_text(encoding="utf-8")
         self.assertIn("not shown", policy)
         self.assertIn("truncated", policy)
+
+
+class FailureDetailTests(unittest.TestCase):
+    """Live (habits run #8): the coder's retry got the last 600 chars of pytest's output,
+    so it saw test names but no assertion, and could not fix what it could not read."""
+
+    def test_a_failing_test_reports_its_assertion_not_just_its_name(self) -> None:
+        import tempfile
+
+        from factory.verification.python import run_tests
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "tests").mkdir()
+            body = "".join(
+                f"def test_{n}():\n    row = 'Water 0 / 8'\n"
+                f"    assert '<input' in row, 'row {n} has no box'\n\n" for n in range(12))
+            (root / "tests" / "test_rows.py").write_text(body)
+            with unittest.mock.patch.dict("os.environ", {"FACTORY_RUN_TESTS": "1"}):
+                check = run_tests(root)
+        self.assertEqual(check.status, "fail")
+        self.assertIn("row 0 has no box", check.detail)       # the FIRST failure's reason
+        self.assertIn("assert '<input' in row", check.detail)
+        self.assertIn("12 failed", check.detail)              # and the summary line
+
+    def test_the_gate_reason_keeps_that_detail(self) -> None:
+        from factory.verification.base import MAX_FAILURE_DETAIL
+
+        self.assertGreaterEqual(MAX_FAILURE_DETAIL, 3000)
 
 
 class RunTestsTests(unittest.TestCase):
