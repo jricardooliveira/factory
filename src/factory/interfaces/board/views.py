@@ -66,7 +66,8 @@ def decision_body(d: dict[str, Any]) -> str:
                 lines.append(f"   Why now: {story['rationale']}")
         return "\n".join(lines)
     if kind == "brief":
-        lines = [context.get("brief", "").rstrip(), "", "Technical choices"]
+        # The short choices first; the brief itself is a document (`decision_document`).
+        lines = ["Technical choices"]
         spec = context.get("spec") or {}
         for key, title in (("language", "Language"), ("framework", "Framework"),
                            ("database", "Database"), ("orm", "Data layer")):
@@ -92,6 +93,11 @@ def decision_head(d: dict[str, Any]) -> str:
     if position:
         head += f" · question {position[0]} of {position[1]}"
     return f"{head}\n{d['question']}"
+
+
+def decision_document(d: dict[str, Any]) -> str | None:
+    """Markdown to RENDER under the text (the brief), or None."""
+    return d["context"].get("brief") if d["kind"] == "brief" else None
 
 
 def decision_actions(d: dict[str, Any]) -> Actions:

@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from textual.widgets import Button, DataTable, Select, Static, TextArea
+from textual.widgets import Button, DataTable, Markdown, Select, Static, TextArea
 
 from factory.evidence.brief import BRIEF_RELPATH
 from factory.interfaces.board.tui import FactoryBoard
@@ -117,6 +117,41 @@ class BacklogApprovalTests(unittest.IsolatedAsyncioTestCase):
             note = str(screen.query_one("#wf-note", Static).render())
         self.assertIn("what should change", note.lower())
         self.assertEqual(len(self.agents.prompts), 1)
+
+
+class BriefApprovalTests(unittest.IsolatedAsyncioTestCase):
+    """The brief is a document: rendered, not shown as markdown source; the short technical
+    choices come first, the long brief after."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        home = Path(self._tmp.name)
+        self.db_path = home / "factory.db"
+        db.init_db(self.db_path)
+        self.project = create_project(self.db_path, home=home, slug="shop")
+        with db.get_db(self.db_path) as conn:
+            store.add_decision(conn, self.project["id"], "brief:1", "Review the brief", kind="brief",
+                               context={"brief": "# Product brief — Shop\n\n## Goal\n\n"
+                                                 "- **What is it for?** Selling socks\n",
+                                        "spec": {"language": "TypeScript 5", "framework": "React 19",
+                                                 "database": "none"}})
+
+    async def test_the_brief_is_rendered_and_the_choices_come_first(self) -> None:
+        app = FactoryBoard(self.db_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            screen.query_one("#wf-project", Select).value = "shop"
+            await pilot.pause()
+            text = str(screen.query_one("#wf-text", Static).render())
+            doc = screen.query_one("#wf-doc", Markdown)
+            shown, source = doc.display, doc.source
+        self.assertTrue(text.startswith("Technical choices"), text)
+        self.assertIn("Framework: React 19", text)
+        self.assertNotIn("**", text)
+        self.assertTrue(shown)
+        self.assertIn("**What is it for?** Selling socks", source)
 
 
 if __name__ == "__main__":

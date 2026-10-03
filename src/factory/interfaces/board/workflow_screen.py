@@ -13,13 +13,14 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import (Button, DataTable, Footer, Header, Select, SelectionList, Static, Tab,
-                             Tabs, TextArea)
+from textual.widgets import (Button, DataTable, Footer, Header, Markdown, Select, SelectionList,
+                             Static, Tab, Tabs, TextArea)
 
 from factory.interfaces.board.answer import AnswerPicker
 from factory.interfaces.board.interview_screen import PromptScreen
 from factory.interfaces.board.views import (
-    batch_body, batch_choice, decision_actions, decision_body, decision_head, decision_row,
+    batch_body, batch_choice, decision_actions, decision_body, decision_document, decision_head,
+    decision_row,
     event_body, event_text, job_body, job_row, local_time, next_step, project_actions, story_body,
 )
 from factory.runs.batches import abandon_batch, launch_batch, propose_batch, queue_integration, queue_release
@@ -95,6 +96,7 @@ class WorkflowScreen(Screen[int | None]):
             with VerticalScroll(id='wf-detail'):
                 yield Static('Select an item to see its context and next action.', id='wf-text',
                              markup=False)
+                yield Markdown(id='wf-doc')
                 yield AnswerPicker(id='wf-picker')
                 yield SelectionList[int](id='wf-ticks')
                 yield TextArea(id='wf-answer', disabled=True)
@@ -266,7 +268,8 @@ class WorkflowScreen(Screen[int | None]):
         stop = self.query_one('#wf-stop', Button)
         picker = self.query_one('#wf-picker', AnswerPicker)
         ticks = self.query_one('#wf-ticks', SelectionList)
-        ticks.display = False
+        doc = self.query_one('#wf-doc', Markdown)
+        ticks.display = doc.display = False
         secondary.display = stop.display = False  # shown only where they apply
         primary.disabled, stop.disabled, area.disabled = True, True, True
         stop.label = 'Stop at safe boundary'
@@ -278,6 +281,9 @@ class WorkflowScreen(Screen[int | None]):
             actions = decision_actions(row)
             draft = self._drafts.get(row['id'], row.get('draft_text') or '')
             head, text, label = decision_head(row), decision_body(row), actions.primary
+            if (document := decision_document(row)) is not None:
+                doc.display = True
+                doc.update(document)
             if actions.picker:
                 text += '\n\n↑↓ or 1-9 choose · Enter answers · Esc back to the list'
                 picker.display = True
@@ -425,7 +431,7 @@ class WorkflowScreen(Screen[int | None]):
             # Read on the UI thread; _do runs in a worker thread and must not touch widgets.
             text = ','.join(map(str, self.query_one('#wf-ticks', SelectionList).selected))
         if identity == 'wf-secondary' and not text.strip():
-            self._note('Say what should change first, in the box above.')
+            self._note('Say what should change first, in the box below the document.')
             self.query_one('#wf-answer', TextArea).focus()
             return
         self._acting = True
