@@ -457,6 +457,60 @@ class StoryInterviewTests(_InterviewFixture):
         self.assertEqual(len(self._answers()), before_answers)
         self.assertEqual(self._turn_count(), before_turns + 2)
 
+    def _follow_up(self, of: int, *options: str) -> AgentResult:
+        q = {"topic": "errors", "question": "Concretely?", "follow_up_of": of,
+             "options": [{"label": o} for o in options]}
+        return AgentResult("interview-agent", json.dumps({"questions": [q], "done": False}),
+                           0.1, 0)
+
+    def test_an_undecided_answer_is_flagged_to_the_agent_by_number(self) -> None:
+        agent = self._agent(_turn("errors", options=["Refuse", "Allow"]), DONE)
+        replies = iter(["I'm not sure, is it a problem?", "1"])
+        self._story(ask=lambda q, m: next(replies))
+        prompt = agent.call_args_list[1].args[1]
+        self.assertIn("1. Q about errors? — I'm not sure, is it a problem? [UNDECIDED", prompt)
+
+    def test_an_undecided_answer_nobody_followed_up_is_asked_again_without_a_model_call(
+        self,
+    ) -> None:
+        agent = self._agent(_turn("errors", options=["Refuse", "Allow"]), DONE)
+        asked: list[str] = []
+        replies = iter(["I don't know, is it a problem?", "2"])
+
+        def ask(question, missing):
+            asked.append(question.question)
+            return next(replies)
+
+        text = self._story(ask=ask)
+        self.assertEqual(agent.call_count, 2)  # the turn + done: the re-ask is Python's
+        self.assertEqual(len(asked), 2)
+        self.assertIn("Q about errors?", asked[1])
+        self.assertIn("not sure", asked[1])
+        self.assertEqual(text, "Add refunds\n\n## Operator clarifications\n"
+                               "- Q about errors? — Allow")
+
+    def test_still_undecided_when_asked_again_becomes_an_assumption(self) -> None:
+        self._agent(_turn("errors", options=["Refuse", "Allow"]), DONE)
+        replies = iter(["not sure", "really no idea"])
+        text = self._story(ask=lambda q, m: next(replies))
+        self.assertIn("- Q about errors? — Refuse (assumption", text)
+        self.assertNotIn("UNDECIDED", text)
+
+    def test_a_follow_up_that_settles_it_is_not_asked_a_third_time(self) -> None:
+        self._agent(_turn("errors", options=["Refuse", "Allow"]),
+                    self._follow_up(1, "Stop me", "Warn me"), DONE)
+        asked: list[str] = []
+        replies = iter(["I don't know", "1"])
+
+        def ask(question, missing):
+            asked.append(question.question)
+            return next(replies)
+
+        text = self._story(ask=ask)
+        self.assertEqual(asked, ["Q about errors?", "Concretely?"])
+        self.assertNotIn("I don't know", text)  # the follow-up carries the decision
+        self.assertIn("- Concretely? — Stop me", text)
+
     def test_questions_stop_at_the_cap_and_done_stops_early(self) -> None:
         self._agent(*[_turn("errors", "data", "success", "users")] * 3)
         text = self._story()

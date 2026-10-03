@@ -62,6 +62,9 @@ You MUST respond with ONLY a JSON block (no markdown fences, no commentary befor
 
 - Story must have at least 2 acceptance criteria.
 - Each task must be small and focused (1-3 files max).
+- A story has at most 6 tasks (the factory refuses more). Group closely related work
+  into one task; if the request still does not fit, specify the smallest slice that
+  delivers its core and name what is left out in `non_goals`.
 - Tasks must have clear completion evidence.
 - Do NOT invent requirements not implied by the request.
 - Always use story ID `US-0001` and task IDs `T-0001`, `T-0002`, etc.

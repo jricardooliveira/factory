@@ -36,6 +36,7 @@ from factory.domain.interview import (
     InterviewQuestion,
     InterviewTurn,
     StoryClarification,
+    is_undecided,
     fallback_questions,
     resolve_answer,
     uncovered_topics,
@@ -357,7 +358,13 @@ def build_story_prompt(
     project: dict[str, Any], brief: str, request: str, settled: list[StoryClarification]
 ) -> str:
     remaining = MAX_STORY_INTERVIEW_QUESTIONS - len(settled)
-    so_far = "\n".join(f"- {c.question} — {c.answer}" for c in settled) or "(nothing asked yet)"
+    # Numbered so a follow-up can name what it settles (`follow_up_of`).
+    so_far = "\n".join(
+        f"{n}. {c.question} — {c.answer}"
+        + (f" [UNDECIDED: the operator was not sure. Ask again with a concrete example and"
+           f" set follow_up_of={n}]" if c.undecided and not c.superseded else "")
+        for n, c in enumerate(settled, 1)
+    ) or "(nothing asked yet)"
     return "\n\n".join([
         "# Mode: story",
         f"# Product: {project.get('name') or project['id']}",
@@ -380,6 +387,7 @@ def run_story_interview(project_ref: str, request: str, *, db_path: Path, ask: A
     if not brief:
         raise RunError(f"Project '{project_ref}' has no approved product brief.")
     settled: list[StoryClarification] = []
+    questions: list[InterviewQuestion] = []  # parallel to `settled`, for the re-ask below
     asked = 0
     while asked < MAX_STORY_INTERVIEW_QUESTIONS:
         turn = _ask_agent(project, build_story_prompt(project, brief, request, settled),
@@ -395,8 +403,30 @@ def run_story_interview(project_ref: str, request: str, *, db_path: Path, ask: A
                 return with_clarifications(request, settled)
             asked += 1
             answer, assumed = resolve_answer(question, raw)
-            if answer:
-                settled.append(StoryClarification(question.question, answer, assumed))
+            if not answer:
+                continue
+            undecided = not assumed and is_undecided(raw)
+            settled.append(StoryClarification(question.question, answer, assumed, undecided))
+            questions.append(question)
+            target = question.follow_up_of
+            if (not undecided and target and 1 <= target < len(settled)
+                    and settled[target - 1].undecided):
+                # The follow-up carries the decision: the unsure line drops out.
+                settled[target - 1] = settled[target - 1]._replace(superseded=True)
         if len(settled) == before:
             break  # nothing answered: asking again would repeat the same paid call
+    # An unsure answer is not a decision. What the agent did not follow up is asked once
+    # more here (no model call); still unsure, it becomes an assumption, said as one.
+    for i, c in enumerate(settled):
+        if not c.undecided or c.superseded:
+            continue
+        again = questions[i].model_copy(
+            update={"question": f"You were not sure about this one. {c.question}"})
+        raw = ask(again, [])
+        if raw is None:
+            break  # the operator is done: what is still open stays marked UNDECIDED
+        answer, assumed = resolve_answer(questions[i], raw)
+        if not answer or (not assumed and is_undecided(raw)):
+            answer, assumed = resolve_answer(questions[i], "you decide")
+        settled[i] = StoryClarification(c.question, answer, assumed)
     return with_clarifications(request, settled)

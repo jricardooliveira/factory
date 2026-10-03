@@ -104,6 +104,49 @@ class ResolveAnswerTests(unittest.TestCase):
         self.assertEqual(resolve_answer(q, "d"), ("Daily goal — the day counts once reached", True))
         self.assertEqual(resolve_answer(q, "2"), ("Name only", False))
 
+    def test_handing_the_choice_back_in_ones_own_words_is_an_assumption(self) -> None:
+        # Live (habits story 2): "I really don't know. what would you do?" was recorded
+        # as the operator's DECISION. Delegating is never a decision.
+        for raw in ("I really don't know. what would you do?",
+                    "hmm not sure. whatever is easier I guess?",
+                    "up to you", "no preference really", "what do you recommend?"):
+            with self.subTest(raw=raw):
+                self.assertEqual(resolve_answer(_q("Clerks", "Admins"), raw), ("Clerks", True))
+
+    def test_a_real_answer_that_merely_contains_such_words_is_kept(self) -> None:
+        long = ("A tracker for my reading. Up to you how it looks, but it must list every "
+                "book I finished this year with the date and a rating out of five stars.")
+        self.assertEqual(resolve_answer(_q("Clerks"), long), (long, False))
+        mind = "I don't mind if it is ugly"
+        self.assertEqual(resolve_answer(_q("Clerks"), mind), (mind, False))
+
+    def test_an_unsure_answer_is_undecided_but_a_delegation_or_a_choice_is_not(self) -> None:
+        from factory.domain.interview import is_undecided
+
+        for raw in ("maybe allow repeats? I don't know, is it a problem?",
+                    "probably the first one? I'm not sure what I'd check honestly",
+                    "no idea", "can't decide"):
+            with self.subTest(raw=raw):
+                self.assertTrue(is_undecided(raw))
+        for raw in ("ok when you put it like that, the day before. 4am is fine", "2",
+                    "you decide", "what would you do?", "Refuse both"):
+            with self.subTest(raw=raw):
+                self.assertFalse(is_undecided(raw))
+
+    def test_the_request_marks_what_is_still_undecided_and_drops_what_a_follow_up_settled(
+        self,
+    ) -> None:
+        from factory.domain.interview import StoryClarification, with_clarifications
+
+        text = with_clarifications("Add refunds", [
+            StoryClarification("Where?", "not sure", False, undecided=True),
+            StoryClarification("Dupes?", "dunno", False, undecided=True, superseded=True),
+            StoryClarification("Dupes, concretely?", "Refuse", False),
+        ])
+        self.assertIn("- Where? — not sure (UNDECIDED", text)
+        self.assertNotIn("dunno", text)
+        self.assertIn("- Dupes, concretely? — Refuse", text)
+
     def test_an_out_of_range_number_is_free_text(self) -> None:
         self.assertEqual(resolve_answer(_q("Clerks", "Admins"), "3"), ("3", False))
         self.assertEqual(resolve_answer(_q("Clerks"), "0"), ("0", False))

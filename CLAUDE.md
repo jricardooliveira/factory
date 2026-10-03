@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1007 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1007 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1020 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1020 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -301,6 +301,15 @@ input/output is stored, so any run replays offline for free. Evidence is version
   The `/factory-intake` skill (`.claude/skills/factory-intake/SKILL.md`) is a second door to the
   same interview: Claude asks in Claude Code, then calls `factory interview --import` (product) or
   `factory run --project --no-interview` with an Operator clarifications block (story).
+- **An unsure answer is not a decision** (`domain/interview.py`). A short answer that hands
+  the choice back ("what would you do?", "whatever is easier", "up to you") is an ASSUMPTION
+  on the recommended option, like "you decide". One that is merely unsure (`is_undecided`)
+  is flagged `[UNDECIDED]` (numbered) in the story prompt so the agent follows up with
+  `follow_up_of`; what nobody followed up is asked once more by Python, and still unsure
+  becomes an assumption. Story interview only; the product interview keeps the text.
+- **A story over `MAX_TASKS_PER_STORY` is sent back to the spec-agent once** (`nodes/spec.py`,
+  slot `resize`) before gate-1 judges it; a replay without that second output keeps the
+  recorded story (`ReplayGap`). `agents/spec-agent.md` states the limit (a test pins it).
 - **`factory dismiss` of a failed/blocked run returns its backlog story to `approved`**
   (`state.backlog.return_to_backlog`), so `factory next` starts it again. `factory retry` only
   re-drives a run with an answered checkpoint; `factory status` offers it only then

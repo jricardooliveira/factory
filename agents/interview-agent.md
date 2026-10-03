@@ -107,6 +107,12 @@ cases, how the operator will accept it. Same JSON format as above, same option
 rules. If the brief and the request already settle everything, answer
 `{"questions": [], "done": true}` — asking nothing is a good outcome.
 
+The clarifications so far are numbered. One marked `[UNDECIDED ...]` is an answer
+where the operator was not sure: it is NOT settled. Ask about it again, differently:
+give a concrete everyday example of what each choice means for them, put your
+recommendation first, and add `"follow_up_of": <its number>` to that question. Do
+not set `"done": true` while an `[UNDECIDED]` line has had no follow-up.
+
 ### `# Mode: stack`
 
 The product brief is approved; propose the technology to build it with. Respond
