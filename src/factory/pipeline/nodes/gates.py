@@ -174,6 +174,23 @@ def node_gate_2(state: PipelineState) -> dict[str, Any]:
         boundary_unavailable=status == "unavailable",
     )
 
+    if state.get("plan_id"):
+        from factory.domain.workflow import design_conflicts
+        from factory.state.workflow import get_plan
+        conn = db_conn(state)
+        try:
+            plan = get_plan(conn, state["plan_id"])
+        finally:
+            conn.close()
+        conflicts = design_conflicts(plan, arch.modules_affected,
+                                     api=arch.api_impact.lower() not in ("no", "none"),
+                                     data=arch.db_impact.lower() not in ("no", "none"),
+                                     dependencies=bool(arch.external_dependencies))
+        if conflicts:
+            result.passed = False
+            result.needs_human = False
+            result.reason = "; ".join(conflicts) + ". Refine and approve a revised batch before coding."
+
     conn = db_conn(state)
     try:
         human_q_text = "\n\n".join(result.human_questions) if result.human_questions else None

@@ -14,7 +14,7 @@ from factory.domain.backlog import BacklogStory
 
 def list_backlog(conn: sqlite3.Connection, project_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
-        "SELECT * FROM backlog_stories WHERE project_id = ? ORDER BY position, id", (project_id,)
+        "SELECT * FROM backlog_stories WHERE project_id = ? AND status != 'superseded' ORDER BY position, id", (project_id,)
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -29,7 +29,10 @@ def replace_unstarted(
 ) -> None:
     """Drop every row not 'started'; append `stories` as 'approved' after the started ones."""
     conn.execute(
-        "DELETE FROM backlog_stories WHERE project_id = ? AND status != 'started'", (project_id,)
+        "UPDATE backlog_stories SET status = 'superseded' WHERE project_id = ? "
+        "AND status = 'approved' AND id NOT IN "
+        "(SELECT backlog_id FROM workflow_sessions WHERE backlog_id IS NOT NULL "
+        "AND status != 'cancelled')", (project_id,)
     )
     last = conn.execute(
         "SELECT COALESCE(MAX(position), 0) FROM backlog_stories WHERE project_id = ?",
@@ -43,7 +46,8 @@ def replace_unstarted(
         VALUES (?, ?, ?, ?, ?, 'approved', ?)
         """,
         [(project_id, last + n, s.title, s.request, s.rationale, now)
-         for n, s in enumerate(stories, 1)],
+         for n, s in enumerate(stories, 1)
+         if not any(r["request"] == s.request for r in list_backlog(conn, project_id))],
     )
 
 

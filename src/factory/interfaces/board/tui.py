@@ -46,6 +46,10 @@ from factory.domain.project_spec import ProjectSpec
 from factory.evidence.backlog import BACKLOG_RELPATH
 from factory.evidence.brief import load_brief
 from factory.interfaces.board.interview_screen import PromptScreen, QuestionScreen, ReviewScreen
+from factory.interfaces.board.workflow_screen import WorkflowScreen
+from factory.runs.batches import queue_resume
+from factory.runs.refinement import start_backlog, start_refinement
+from factory.runs.worker import start_worker
 from factory.interfaces.render.review import render_flow
 from factory.interfaces.render.status import status_lines
 from factory.preflight.doctor import run_doctor
@@ -109,6 +113,7 @@ class FactoryBoard(App):
         ("i", "interview", "Interview"),
         ("B", "brief", "Brief/backlog"),
         ("s", "status", "Status"),
+        ("o", "project_overview", "Project overview"),
         ("m", "command_palette", "Menu"),
     ]
 
@@ -150,15 +155,14 @@ class FactoryBoard(App):
     def on_mount(self) -> None:
         table = self.query_one("#runs", DataTable)
         table.add_columns("#", "Project", "Story", "State", "Stage / waiting on", "Cost")
-        self.query_one("#kanban").display = False  # table is the default view
+        self.query_one("#kanban").display = False  # table is the detailed run view
+        self.call_after_refresh(self.action_project_overview)
         self.sub_title = "Project: all  ·  table"
         self.reload()
         self.set_interval(2.0, self.reload)
 
     # ── data ──────────────────────────────────────────────────────
     def reload(self) -> None:
-        if self._busy:
-            return
         all_runs = load_board_runs(self.db_path, include_done=(self._view == "kanban"))
         self._all_projects = list_projects_on_board(all_runs)
         runs = [r for r in all_runs if self._project_filter in (None, r.project)]
@@ -395,11 +399,14 @@ class FactoryBoard(App):
         if action == "reject" and not feedback:
             self.notify("Rejection needs feedback — type it above.", severity="error")
             return
-        self._busy = True
-        self.query_one("#result", Static).update(
-            f"[dim]Run #{run.id}: {action} in progress (may take a minute)…[/dim]"
-        )
-        self._do_resume(run.id, action, feedback or None)
+        try:
+            queue_resume(run.id, action, feedback or None, db_path=self.db_path)
+            start_worker(db_path=self.db_path)
+            self.query_one("#result", Static).update(
+                f"Run #{run.id}: decision queued. Resulting state will appear in Activity.")
+            self.query_one("#feedback", TextArea).clear()
+        except Exception as exc:
+            self.notify(str(exc), severity="error")
 
     @work(thread=True, exclusive=True)
     def _do_resume(self, run_id: int, action: str, feedback: str | None) -> None:
@@ -416,7 +423,7 @@ class FactoryBoard(App):
         if error:
             self.query_one("#result", Static).update(f"[red]Run #{run_id} {action} errored: {error}[/red]")
         else:
-            self.query_one("#result", Static).update(f"[green]Run #{run_id} {action} done.[/green]")
+            self.query_one("#result", Static).update(f"Run #{run_id}: {action} processed. Read the refreshed state for the outcome.")
         self.reload()
 
     # ── intake interview ──────────────────────────────────────────
@@ -442,7 +449,12 @@ class FactoryBoard(App):
 
     def action_interview(self) -> None:
         if ref := self._selected_project():
-            self._do_interview(ref)
+            try:
+                start_refinement(ref, db_path=self.db_path)
+                start_worker(db_path=self.db_path)
+                self.action_project_overview()
+            except Exception as exc:
+                self.notify(str(exc), severity="error")
 
     @work(thread=True, exclusive=True, group="interview")
     def _do_interview(self, ref: str) -> None:
@@ -493,12 +505,14 @@ class FactoryBoard(App):
         commands = [
             ("Project status", "factory status: where each project stands + next command",
              self.action_status),
+            ("Project overview", "visual lifecycle and the next action for this project",
+             self.action_project_overview),
             ("New project", "factory project create <slug>", self._menu_new_project),
             ("Interview: product brief", "factory interview <project>", self.action_interview),
             ("Interview: amend brief", "factory interview <project> --amend", self._menu_amend),
             ("Brief & backlog: show", "the approved brief and story list", self.action_brief),
             ("Backlog: propose", "factory backlog <project>", self._menu_backlog),
-            ("Story: run next from backlog", "factory next <project>", self._menu_next),
+            ("Story: refine next from backlog", "Prepare the next story without starting a build", self._menu_next),
             ("Story: run a new request", "factory run --project <project>", self._menu_story),
             ("Run: retry selected", "factory retry <run>", lambda: self._menu_run("retry")),
             ("Run: replay selected", "factory replay <run> (zero tokens)",
@@ -520,6 +534,18 @@ class FactoryBoard(App):
     def action_status(self) -> None:
         ref = None if self._project_filter in (None, "—") else self._project_filter
         self._job("Status", self._status_text, ref)
+
+    def action_project_overview(self) -> None:
+        if isinstance(self.screen, WorkflowScreen):
+            return
+        def selected(run_id):
+            if run_id is not None:
+                self.selected_id = run_id
+                self._last_sig = None
+                self.reload()
+                if run := self._runs.get(run_id):
+                    self._show_detail(run)
+        self.push_screen(WorkflowScreen(self.db_path, self._project_filter), selected)
 
     def _status_text(self, ref: str | None) -> str:
         statuses = ([project_status(ref, db_path=self.db_path)] if ref
@@ -569,19 +595,30 @@ class FactoryBoard(App):
 
     def _menu_backlog(self) -> None:
         if ref := self._selected_project():
-            self._job("Backlog", self._backlog_text, ref)
+            try:
+                start_backlog(ref, db_path=self.db_path)
+                start_worker(db_path=self.db_path)
+                self.action_project_overview()
+            except Exception as exc:
+                self.notify(str(exc), severity="error")
 
     def _backlog_text(self, ref: str) -> str:
         def review(stories) -> bool | str:
             body = "\n\n".join(f"{i}. {s.title}\n   {s.request}" for i, s in enumerate(stories, 1))
             return self._modal(ReviewScreen("Approve this backlog?", body, review=True))
         outcome = propose_backlog(ref, db_path=self.db_path, review=review)
-        return (f"Backlog approved: {len(outcome.stories)} stories. Menu → Story: run next."
+        return (f"Backlog approved: {outcome.stories} stories. Menu → Story: run next."
                 if outcome.approved else "Backlog not approved.")
 
     def _menu_next(self) -> None:
         if ref := self._selected_project():
-            self._job("Next story", self._next_text, ref)
+            row = next_story(ref, db_path=self.db_path)
+            if row:
+                start_refinement(ref, row["id"], db_path=self.db_path)
+                start_worker(db_path=self.db_path)
+                self.action_project_overview()
+            else:
+                self.notify("No approved story to refine; propose a backlog first.")
 
     def _next_text(self, ref: str) -> str:
         row = next_story(ref, db_path=self.db_path)

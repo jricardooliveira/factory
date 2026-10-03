@@ -56,6 +56,8 @@ class NextStep:
     command: str
     why: str
     alternative: str = ""
+    action: str = ""
+    run_id: int | None = None
 
 
 def _released(facts: ProjectFacts) -> int:
@@ -114,24 +116,31 @@ def next_step(facts: ProjectFacts) -> NextStep:
     if not facts.has_brief:
         if facts.answers:
             return NextStep(f"factory interview {slug}",
-                            f"the interview is paused with {facts.answers} answers saved")
-        return NextStep(f"factory interview {slug}", "define the product before any story")
+                            f"the interview is paused with {facts.answers} answers saved",
+                            action="interview")
+        return NextStep(f"factory interview {slug}", "define the product before any story",
+                        action="interview")
     # Runs come before the backlog: one live run per project, and a parked one waits on you.
     for run in facts.runs:
         if run.status == "waiting_human":
             return NextStep(f"factory approve {run.id}",
                             f"run #{run.id} ({run.title}) waits for your sign-off at {run.stage}",
-                            f'factory reject {run.id} "what to change"')
+                            f'factory reject {run.id} "what to change"',
+                            action="approve", run_id=run.id)
         if run.status == "running":
-            return NextStep("factory board", f"run #{run.id} is working: {run.stage}")
+            return NextStep("factory board", f"run #{run.id} is working: {run.stage}",
+                            action="wait", run_id=run.id)
         if run.status in ("failed", "blocked"):
             return NextStep(f"factory review {run.id}",
                             f"run #{run.id} {run.status} at {run.stage}",
-                            failed_run_moves(run.id, slug, retryable=run.retryable))
+                            failed_run_moves(run.id, slug, retryable=run.retryable),
+                            action="review", run_id=run.id)
     if not facts.backlog:
-        return NextStep(f"factory backlog {slug}", "the brief is approved; plan the stories")
+        return NextStep(f"factory backlog {slug}", "the brief is approved; plan the stories",
+                        action="backlog")
     if todo := _to_do(facts):
-        return NextStep(f"factory next {slug}", f"next story: {todo[0].title}")
+        return NextStep(f"factory next {slug}", f"next story: {todo[0].title}",
+                        action="next")
     return NextStep(f'factory interview {slug} --amend "what changed"',
                     "every backlog story has run; amend the brief to plan more",
-                    f'factory run --project {slug} "a new request"')
+                    f'factory run --project {slug} "a new request"', action="amend")

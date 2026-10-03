@@ -39,7 +39,18 @@ def budget_refusal_for(state: PipelineState) -> str | None:
     feeds frozen outputs and spends nothing, so it is never refused."""
     if state.get("replay_run_id") or not state.get("story_id"):
         return None
-    return budget_refusal(spend_so_far(state), settings().budget.max_story_cost_usd)
+    spend = spend_so_far(state)
+    cap = settings().budget.max_story_cost_usd
+    if state.get("plan_id"):
+        from factory.state.workflow import get_plan
+        conn = db_conn(state)
+        try:
+            cap = min(cap, get_plan(conn, state["plan_id"]).budget_usd)
+        finally:
+            conn.close()
+        if spend.unknown_calls:
+            return "Batch usage is unknown; reconcile usage before spending more of its reservation"
+    return budget_refusal(spend, cap)
 
 
 class ReplayGap(RuntimeError):
@@ -83,6 +94,18 @@ def run_agent_json(
     dict is the parsed object, or the synthetic 'blocked' shape `_extract_json`
     produces — so callers' existing off-script handling is unchanged.
     """
+    if state.get("plan_id") and not state.get("replay_run_id") and not state.get("triggered_by") and slot is None:
+        from factory.state.workflow import get_plan
+        import json
+        conn = db_conn(state)
+        try:
+            plan = get_plan(conn, state["plan_id"])
+        finally:
+            conn.close()
+        prepared = {"spec-agent": plan.spec, "architect-agent": plan.architecture}.get(agent_name)
+        if prepared:
+            return AgentResult(agent=agent_name, output=json.dumps(prepared), duration_secs=0.0,
+                               returncode=0, tokens_in=0, tokens_out=0, model_name="factory/prepared"), prepared
     _check_budget(state)
     result = _run_or_replay(state, agent_name, prompt, slot)
     parsed = parse_agent_json(result.output)
@@ -143,6 +166,16 @@ def _run_or_replay(
     # coder — escalated to frontier on a remediation retry. attempt_number is the
     # coder's per-task counter; it's harmless for the (non-escalating) others.
     model, _tier = resolve_model(agent_name, state.get("attempt_number", 1))
+    if state.get("plan_id"):
+        from factory.state.workflow import get_plan
+        conn = db_conn(state)
+        try:
+            plan = get_plan(conn, state["plan_id"])
+        finally:
+            conn.close()
+        prompt += "\n\n## Approved batch reservation (binding)\n" + plan.model_dump_json() + (
+            "\nEvery write, including tests and manifests, must fit these file resources. "
+            "Do not broaden semantic impact. Report a blocking decision if the plan needs revision.")
     return run_agent(agent_name, prompt, cwd=state.get("opencode_cwd"), model=model)
 
 

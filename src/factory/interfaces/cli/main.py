@@ -26,11 +26,13 @@ from factory.interfaces.cli import (
     run,
     selftest,
     workspace,
+    workflow,
 )
 from factory.interfaces.cli.common import fail
 from factory.runs import RunInterrupted
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
+    "work": workflow.work_command,
     "project": project.project_command,
     "status": project.status_command,
     "spec": project.spec_command,
@@ -64,6 +66,7 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
 USAGE: tuple[tuple[str, str], ...] = (
     ('"Your request here"', "Run pipeline"),
     ('run --project <id> [--no-interview] "..."', "Run pipeline for project"),
+    ("work <status|refine|answer|propose|launch|integrate|release|pause|resume|stop|worker>", "Durable workflow and batch controls (factory work --help)"),
     ("status [project]", "Where each project stands, and the next command to type"),
     ("interview <project>", "Define the product with the operator: writes the approved brief"),
     ('interview <project> --amend "..."', "Reopen the approved brief for one change"),

@@ -129,3 +129,23 @@ When the prompt has an `## Amendment` section, the brief was already approved an
 the operator changed something. Ask ONLY about what that change affects, never
 re-open topics it leaves untouched, and set `"done": true` once it is settled.
 
+
+### `# Mode: technical`
+
+Use the same questions JSON. Ask about consequential technical choices left open by
+existing answers and project facts: architecture, integrations, data, security,
+hosting, operational limits and verification. Use topic `technical`. Explain the
+tradeoff plainly with a recommended option. A static product may need no database.
+
+### `# Mode: impact`
+
+Prepare ONE story for scheduling, without implementing it. Return ONLY the JSON
+matching the supplied schema. List explicit project-relative file reads and writes,
+including tests, manifests and shared configuration. Also name affected components,
+API contracts, data schemas and decisions using consistent names from the backlog.
+Identify dependencies by the supplied backlog IDs; never invent IDs. Explain the
+assessment in rationale. Different files can affect the same behavior: include
+semantic resources. Missing facts, incomplete repository coverage and uncertain
+impact belong in uncertainties; never claim independence by omission. This is a
+proposal, not authority to code or release. Include needed prerequisite stories even
+when they appear elsewhere in the backlog.

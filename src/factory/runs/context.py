@@ -46,9 +46,17 @@ def build_resume_context(
     Returns (None, None) for a stage that never ran — a Checkpoint-1 park has no
     architecture yet.
     """
-    return _last_usable(conn, run_id, "spec-agent"), _last_usable(
-        conn, run_id, "architect-agent"
-    )
+    spec = _last_usable(conn, run_id, "spec-agent")
+    arch = _last_usable(conn, run_id, "architect-agent")
+    if spec and arch:
+        from factory.domain.contracts import ArchitectOutput, SpecOutput
+        from factory.domain.scope_plan import reconcile_scope
+        try:
+            revised, _ = reconcile_scope(SpecOutput.model_validate(spec), ArchitectOutput.model_validate(arch))
+            spec = revised.model_dump()
+        except ValueError:
+            pass  # the existing missing/malformed-artifact handling owns this refusal
+    return spec, arch
 
 
 def last_boundary_review(conn: sqlite3.Connection, run_id: int) -> dict | None:

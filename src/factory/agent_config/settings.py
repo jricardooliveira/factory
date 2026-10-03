@@ -85,7 +85,7 @@ class Settings:
 
 def settings_path(environ: Mapping[str, str] | None = None) -> Path:
     env = os.environ if environ is None else environ
-    override = env.get(CONFIG_ENV, "").strip()
+    override = (env.get(CONFIG_ENV) or env.get("FACTORY_SETTINGS") or "").strip()
     if override:
         return Path(override).expanduser().resolve()
     return checkout_root() / FILENAME

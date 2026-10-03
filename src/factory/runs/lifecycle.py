@@ -32,6 +32,8 @@ def dismiss_run(run_id: int, *, db_path: Path) -> bool:
         run = get_run(conn, run_id)
         if not run:
             raise RunError(f"No run found with id #{run_id}")
+        if run.get("batch_id"):
+            raise RunError("This run belongs to an isolated batch. Use the batch abandonment control; its work is retained.")
         why = _NOT_DISMISSIBLE.get(run["status"])
         if why:
             raise RunError(f"Run #{run_id} {why}.")

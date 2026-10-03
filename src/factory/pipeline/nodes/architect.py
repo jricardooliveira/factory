@@ -7,6 +7,7 @@ from typing import Any
 
 from factory.domain.contracts import ArchitectOutput, SpecOutput
 from factory.domain.gates import MAX_MODULES_PER_STORY
+from factory.domain.scope_plan import reconcile_scope
 from factory.evidence.adr import write_adr
 from factory.pipeline.agent_calls import ReplayGap, db_conn, run_agent_json, usage_kwargs
 from factory.pipeline.evidence_writers import commit_adr, write_chain_artifact
@@ -95,6 +96,11 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
                 conn.commit()
                 result, parsed, arch = again, reparsed, resized
 
+        spec, scope_changes = reconcile_scope(SpecOutput.model_validate(state["spec"]), arch)
+        if scope_changes:
+            state = {**state, "spec": spec.model_dump()}
+            write_chain_artifact(state, "spec", spec)
+
         # Persist the decision as an ADR (decision memory). Project runs only.
         adr_path = None
         if state.get("project_dir") and arch.verdict != "fail":
@@ -108,6 +114,8 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
         # the architect decides afresh whether THIS design needs one.
         out: dict[str, Any] = {"architect_raw": result.output, "architect": parsed,
                                "boundary": {}, "boundary_status": ""}
+        if scope_changes:
+            out["spec"] = spec.model_dump()
         if adr_path:
             out["adr_path"] = adr_path
         # Link 3: the plan. `order_tasks` already computes the dependency order on

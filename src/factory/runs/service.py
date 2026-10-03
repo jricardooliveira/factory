@@ -55,6 +55,8 @@ from factory.runs.events import (
     RunStarted,
     ignore_events,
 )
+from factory.state import workflow as workflow_store
+from factory.workspace.layout import resolve_location, store_location
 from factory.state.db import (
     agent_logs_after,
     finish_run,
@@ -98,6 +100,7 @@ def run_pipeline(
     notify_operator: bool = True,
     prepare_workdir: Callable[[Path], None] | None = None,
     base_commit: str | None = None,
+    workspace: dict[str, Any] | None = None,
 ) -> RunOutcome:
     """Start a run (or replay one on frozen outputs) and stream it to the end.
 
@@ -116,7 +119,7 @@ def run_pipeline(
 
     # Init DB; create a new story (fresh run) or reuse the replayed run's story
     init_db(db_path)
-    with get_db(db_path) as conn:
+    with get_db(db_path) as conn, workflow_store.atomic(conn):
         if replay_run_id:
             orig = get_run(conn, replay_run_id)
             if not orig:
@@ -129,7 +132,11 @@ def run_pipeline(
             )
         else:
             if project_id:
-                _refuse_if_project_busy(conn, project_id)
+                if workspace:
+                    if workflow_store.legacy_workspace_busy(conn, project_id):
+                        raise RunError("A legacy run owns the product checkout")
+                else:
+                    _refuse_if_project_busy(conn, project_id)
                 if opencode_cwd:
                     _refuse_if_tree_dirty(cwd)
             story_id = next_story_id(conn)
@@ -142,6 +149,12 @@ def run_pipeline(
             conn, story_id, project_id=project_id, base_commit=base_commit,
             replay_of=replay_run_id,
         )
+        if workspace:
+            workflow_store.set_run_workspace(
+                conn, run_id, path=store_location(cwd, db_path), branch=workspace["branch"],
+                plan_id=workspace["plan_id"], batch_id=workspace["batch_id"],
+                project_spec_snapshot=project_spec_text,
+            )
 
     if replay_run_id:
         cwd = prepare_replay_sandbox(
@@ -163,6 +176,8 @@ def run_pipeline(
         "db_path": str(db_path),
         "opencode_cwd": str(cwd),
     }
+    if workspace:
+        initial_state["plan_id"] = workspace["plan_id"]
     if base_commit:
         initial_state["base_commit"] = base_commit
     if project_spec_text:
@@ -312,6 +327,7 @@ def resume_run(
     *,
     db_path: Path,
     on_event: OnEvent | None = None,
+    combined_candidate: str | None = None,
 ) -> RunOutcome:
     """Resume a paused pipeline run after human approval/rejection.
 
@@ -320,7 +336,7 @@ def resume_run(
     """
     emit = on_event or ignore_events
     init_db(db_path)
-    with get_db(db_path) as conn:
+    with get_db(db_path) as conn, workflow_store.atomic(conn):
         run = get_run(conn, run_id)
         if not run:
             raise RunError(f"No run found with id #{run_id}")
@@ -333,8 +349,20 @@ def resume_run(
         pending = get_pending_human_gate(conn, run_id)
         if not pending:
             raise RunError(f"No pending human gate found for run #{run_id}")
-        if run.get("project_id") and not run.get("replay_of"):
+        if run.get("project_id") and not run.get("replay_of") and not run.get("workspace_path"):
             _refuse_if_project_busy(conn, run["project_id"], except_run=run_id)
+
+        if run.get("workspace_path"):
+            workspace_path = resolve_location(run["workspace_path"], db_path)
+            if workspace_path is None or not workspace_path.is_dir():
+                raise RunError("Saved run workspace is missing; the decision has not been consumed")
+        if run.get("batch_id"):
+            batch = workflow_store.get_proposal(conn, run["batch_id"])
+            if batch["status"] in ("integrating", "review", "integrated", "abandoned"):
+                candidate = batch["payload"].get("result", {}).get("candidate")
+                if not (batch["status"] == "review" and action == "approve"
+                        and candidate and combined_candidate == candidate):
+                    raise RunError("This batch is frozen for combined review; use its decision in Needs you")
 
         # Record the human decision on the pending gate and reopen the run.
         decision = reason or (
@@ -437,6 +465,13 @@ def _resume_state(run: dict[str, Any], spec: dict, db_path: Path) -> dict[str, A
         opencode_cwd = project["repo_path"]
         project_spec_text = load_project_spec_text(project)
         project_dir = opencode_cwd
+    if run.get("workspace_path"):
+        workspace_path = resolve_location(run["workspace_path"], db_path)
+        if workspace_path is None or not workspace_path.is_dir():
+            raise RunError("The saved run workspace is missing; reconcile it before resuming")
+        opencode_cwd = str(workspace_path)
+        project_dir = opencode_cwd
+        project_spec_text = run.get("project_spec_snapshot")
     if run.get("replay_of"):
         sandbox = prepare_replay_sandbox(
             run_id, db_path,
@@ -455,6 +490,8 @@ def _resume_state(run: dict[str, Any], spec: dict, db_path: Path) -> dict[str, A
         "spec": spec,
         "status": "running",
     }
+    if run.get("plan_id"):
+        state["plan_id"] = run["plan_id"]
     if run.get("base_commit"):
         state["base_commit"] = run["base_commit"]
     if project_spec_text:
@@ -504,6 +541,10 @@ def retry_run(run_id: int, *, db_path: Path, on_event: OnEvent | None = None) ->
 def _refuse_if_project_busy(conn: Any, project_id: str, *, except_run: int | None = None) -> None:
     """One live run per product repo: the coder's checkpoint stages the whole working
     tree, so two stories at once would commit each other's changes (review T10)."""
+    if workflow_store.reserved_plans(conn, project_id):
+        raise RunError("An isolated batch has reserved this project. Integrate or abandon it first.")
+    if workflow_store.legacy_workspace_busy(conn, project_id, except_run):
+        raise RunError("A running or parked story owns this checkout; resolve it first.")
     busy = [r for r in live_runs_in_project(conn, project_id) if r != except_run]
     if busy:
         raise RunError(

@@ -131,7 +131,7 @@ in and the exact next command to type.
 
 ```bash
 factory status         # every project: define / plan / build / release, and what to type next
-factory board          # interactive board — approve/reject in place; `m` menu of every verb, `s` status
+factory board          # interactive board — `o` project overview, `s` status, `m` menu of every verb
 factory queue          # what is waiting for you, and why
 factory review 17      # the decision screen: what each agent did, the evidence and its gaps,
                        # the question being asked, and the approve/reject commands
@@ -362,3 +362,75 @@ ceremony for a one-person team, are in
 - **Every agent's verbatim input and output is stored**, so any run replays offline
   for free. That is what makes testing the orchestration affordable.
 - **A malformed agent response is `blocked`, never guessed at.**
+
+### Independent refinement and compatible batches
+
+`factory board` now opens the project Overview. Choose a project at the top:
+
+1. **Interview** saves product, experience, technical and execution decisions in
+   **Needs you**. You can leave a question and work on another story; drafts survive
+   closing the board. Approve the resulting brief and technical proposal.
+2. **Propose backlog**, then approve the story list in Needs you.
+3. In **Stories**, select **Refine story** on as many future stories as needed.
+   Preparation saves a spec, design, dependencies and read/write impact without coding.
+4. **Propose batch** explains the selected stories and exclusions. Review the exact
+   plans, baseline and budget; edit the listed backlog IDs to deselect stories, then
+   **Launch selected stories**. Unknown impact, unmet dependencies and shared write
+   areas prevent parallel launch. The default capacity is two reserved stories.
+5. The detached worker builds in separate Git worktrees. Questions free worker
+   capacity while retaining the story's resource claims. Watch **Activity**; close
+   the board freely and reopen it later. **Pause new starts** prevents new claims;
+   **Stop** takes effect at a pipeline boundary, not in the middle of a model call.
+6. Once story candidates pass their gates, choose **Verify combined candidate**.
+   Checks run on an isolated merged revision. **Needs you** then offers approval
+   of that exact revision for integration. Deployment remains a separate action.
+
+The original run table/kanban and detailed gate review are available with Escape;
+`o` returns to Overview. Failed work shows its error and recovery action, never a
+successful “approve done” message. An interrupted worker is not automatically
+replayed: inspect its retained workspace and reconcile the stopped job. Abandoning
+an inactive batch releases its reservations but preserves workspaces and history;
+refine its stories again before launching revised plans.
+
+Equivalent commands:
+
+```sh
+factory work refine checkers             # product/technical interview
+factory work refine checkers --story 12  # backlog row ID from Stories
+factory work status checkers
+factory work propose checkers --limit 2
+factory work launch <proposal-id> --stories 12,15
+factory work answer <decision-id> "my answer"
+factory work integrate <proposal-id>
+factory work release <decision-id>
+factory work pause checkers
+factory work resume checkers
+factory work worker --foreground
+```
+
+For **Claude Code CLI**, start the board and worker with:
+
+```sh
+FACTORY_RUNNER=claude uv run factory board
+```
+
+Or persist `[runner] agents = "claude"` in `factory.toml`. All agents then use the
+local `claude -p` adapter and the existing Claude tier mapping. The default interview
+engine also honors this explicit runner selection. A detached worker retains its
+launch environment; restart it to change environment settings. Its log is
+`$FACTORY_HOME/worker.log`; run worktrees are in `$FACTORY_HOME/worktrees/`.
+
+Generated-code execution remains opt-in (`FACTORY_RUN_TESTS=1`). Combined integration
+requires passing executed checks; unavailable dependencies, tools or test scripts
+block it rather than count as success. Install required product dependencies in the
+retained candidate workspace before retrying. Git worktrees provide file isolation,
+not OS sandboxing. The existing per-story budget stops subsequent model calls once
+usage reaches the cap; reservations prevent parallel stories from sharing the same
+allowance, but cannot cap a provider's already in-flight response charge. Unknown
+usage retains its reservation and stops subsequent batch model calls.
+
+Existing single-checkout runs keep their original resume path and must finish
+before isolated builds start. Product/backlog publication and candidate integration
+are serialized. A changed project baseline or decision snapshot requires a fresh
+assessment. The Anthropic SDLC artifact chain, deterministic authorization, protected
+scope, independent review and human release boundary remain in place.

@@ -114,14 +114,24 @@ def _outside_scope(state: PipelineState, coder: CoderOutput, scope: list[str]) -
     # A factory-owned path (PROJECT_RULES.md, docs/work/...) is materialize's to refuse,
     # with its own precise reason — not a matter of task scope.
     paths = [p for p in paths if not (owned and is_evidence_path(p, owned))]
-    return sorted(set(paths_outside_scope(paths, scope)))
+    outside = paths_outside_scope(paths, scope)
+    if state.get("plan_id"):
+        from factory.domain.workflow import permits_file
+        from factory.state.workflow import get_plan
+        conn = db_conn(state)
+        try:
+            plan = get_plan(conn, state["plan_id"])
+        finally:
+            conn.close()
+        outside += [p for p in paths if not permits_file(plan, p)]
+    return sorted(set(outside))
 
 
 def _scope_reason(label: str, outside: list[str], scope: list[str]) -> str:
     return (
         f"[{label}] SCOPE: writes outside the declared files were refused: {outside} "
         f"(allowed: {scope}). Write only inside that scope — tests and manifests "
-        "(go.mod, package.json, ...) are always allowed."
+        "are allowed by task policy, but must also fit an approved batch reservation when present."
     )
 
 

@@ -9,6 +9,7 @@ from factory.workspace.layout import EVIDENCE_PATHS
 
 class PipelineState(TypedDict, total=False):
     request: str
+    plan_id: str  # immutable batch scope reservation
     story_id: str
     run_id: int
     db_path: str

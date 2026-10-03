@@ -202,6 +202,13 @@ def init_db(path: Path) -> None:
         # A returned story's first base_commit: its failed run's passed tasks stay
         # committed, so the re-run must measure (and review) from before them.
         _ensure_column(conn, "backlog_stories", "base_commit", "TEXT")
+        for column in ("workspace_path", "workspace_branch", "plan_id", "batch_id", "project_spec_snapshot"):
+            _ensure_column(conn, "pipeline_runs", column, "TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS run_plan_once ON pipeline_runs(plan_id) "
+                     "WHERE plan_id IS NOT NULL")
+        from factory.state.workflow import init_schema
+
+        init_schema(conn)
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

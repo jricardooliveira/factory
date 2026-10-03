@@ -24,6 +24,7 @@ from factory.adapters.claude_sdk import sdk_model
 from factory.adapters.opencode import AgentResult, run_agent
 from factory.agent_config.location import agents_dir
 from factory.agent_config.tiers import resolve_model
+from factory.agent_config.settings import settings
 from factory.domain.agent_output import parse_agent_json
 from factory.domain.gates import (
     MAX_INTERVIEW_QUESTIONS,
@@ -137,6 +138,8 @@ def _ask_agent(
     """
     model, _tier = resolve_model(AGENT)
     engine = os.environ.get("FACTORY_INTERVIEW_ENGINE", "").strip().lower() or "auto"
+    if engine == "auto" and settings().runner.agents == "claude":
+        engine = "opencode"  # the runner adapter dispatches claude/<model> to the local CLI
     if engine not in ("auto", "sdk", "opencode"):
         raise RunError(f"FACTORY_INTERVIEW_ENGINE={engine!r}: use auto, sdk or opencode.")
 
@@ -427,6 +430,6 @@ def run_story_interview(project_ref: str, request: str, *, db_path: Path, ask: A
             break  # the operator is done: what is still open stays marked UNDECIDED
         answer, assumed = resolve_answer(questions[i], raw)
         if not answer or (not assumed and is_undecided(raw)):
-            answer, assumed = resolve_answer(questions[i], "you decide")
+            continue  # uncertainty never grants delegated authority
         settled[i] = StoryClarification(c.question, answer, assumed)
     return with_clarifications(request, settled)

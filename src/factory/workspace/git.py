@@ -63,15 +63,20 @@ def _exclude_factory_infra(root: Path) -> None:
     app; it then appeared in the diff the tester and remediation coder review, the
     coder echoed it back as a code block, and the run failed.
     """
-    exclude = root / ".git" / "info" / "exclude"
     try:
+        resolved = _run(["git", "rev-parse", "--git-path", "info/exclude"], root)
+        if resolved.returncode:
+            return
+        exclude = Path(resolved.stdout.strip())
+        if not exclude.is_absolute():
+            exclude = root / exclude
         existing = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
         missing = [e for e in _INFRA_EXCLUDES if e not in existing.splitlines()]
         if missing:
             exclude.parent.mkdir(parents=True, exist_ok=True)
             sep = "" if not existing or existing.endswith("\n") else "\n"
             exclude.write_text(existing + sep + "\n".join(missing) + "\n", encoding="utf-8")
-    except OSError:
+    except (subprocess.SubprocessError, OSError):
         return
 
 

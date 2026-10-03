@@ -38,6 +38,8 @@ def call_cost(
     """USD for one call, or None when it cannot be known (never a silent zero)."""
     if provider_cost:
         return float(provider_cost)
+    if tokens_in == 0 and tokens_out == 0:
+        return 0.0  # recorded deterministic preparation; no model tokens were consumed
     if tokens_in is None or tokens_out is None:
         return None
     price = prices.get(model or "")
