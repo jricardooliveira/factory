@@ -59,8 +59,9 @@ def _file_section(rel: str, text: str, budget: int) -> str:
     notice = ""
     if len(text) > budget:
         notice = (
-            f"\n… (truncated: showing {budget} of {len(text)} characters; "
-            "keep the rest of the file intact)\n"
+            f"\n… (truncated: showing {budget} of {len(text)} characters. You cannot see "
+            "all of it and a returned file replaces the whole file, so do NOT return this "
+            "file: if the task needs it changed, say so in `design_feedback`)\n"
         )
         text = text[:budget]
     return f"### {rel}\n\n````\n{text}\n````{notice}\n"

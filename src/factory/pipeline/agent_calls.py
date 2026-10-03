@@ -62,6 +62,31 @@ class ReplayGap(RuntimeError):
     """
 
 
+class ProviderUnavailable(RuntimeError):
+    """The model call itself failed (session limit, timeout, runner missing): the
+    agent never answered, so there is nothing to repair and nothing off-script.
+
+    Raised like `BudgetExhausted`: each node's own `except` ends the run `failed`
+    with this text (boundary/release record it and let the operator decide).
+    """
+
+
+def _answered(state: PipelineState, result: AgentResult) -> AgentResult:
+    """`result`, or ProviderUnavailable when the call failed. Both adapters report a
+    failure as a non-zero returncode with an "ERROR: ..." output; a replay's frozen
+    output always has returncode 0, so old runs replay exactly as they ran."""
+    if result.success:
+        return result
+    said = result.output.strip().removeprefix("ERROR:").strip()[:300]
+    run = state.get("run_id")
+    raise ProviderUnavailable(
+        f"the model call failed: {said or f'no output (exit {result.returncode})'} — "
+        "nothing is wrong with the story; try again later"
+        + (f" (`factory retry {run}`, or `factory status` if no checkpoint was answered yet)"
+           if run else "")
+    )
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     """Extract JSON from agent output; synthesize a 'blocked' result on failure."""
     parsed = parse_agent_json(text)
@@ -92,7 +117,8 @@ def run_agent_json(
     Replay runs skip the retry (their outputs are frozen) and fall through to the
     synthetic 'blocked' result, preserving existing replay behavior. The returned
     dict is the parsed object, or the synthetic 'blocked' shape `_extract_json`
-    produces — so callers' existing off-script handling is unchanged.
+    produces — so callers' existing off-script handling is unchanged. A call that
+    FAILED (the provider, not the agent) raises `ProviderUnavailable` instead.
     """
     if state.get("plan_id") and not state.get("replay_run_id") and not state.get("triggered_by") and slot is None:
         from factory.state.workflow import get_plan
@@ -107,13 +133,15 @@ def run_agent_json(
             return AgentResult(agent=agent_name, output=json.dumps(prepared), duration_secs=0.0,
                                returncode=0, tokens_in=0, tokens_out=0, model_name="factory/prepared"), prepared
     _check_budget(state)
-    result = _run_or_replay(state, agent_name, prompt, slot)
+    # A failed call is checked BEFORE parsing: a provider's error body can be JSON.
+    result = _answered(state, _run_or_replay(state, agent_name, prompt, slot))
     parsed = parse_agent_json(result.output)
     if parsed is not None:
         return result, parsed
     if not state.get("replay_run_id"):
         _check_budget(state)  # the repair retry is a model call too
-        result = _run_or_replay(state, agent_name, prompt + _JSON_REPAIR_SUFFIX, slot)
+        result = _answered(
+            state, _run_or_replay(state, agent_name, prompt + _JSON_REPAIR_SUFFIX, slot))
         reparsed = parse_agent_json(result.output)
         if reparsed is not None:
             return result, reparsed

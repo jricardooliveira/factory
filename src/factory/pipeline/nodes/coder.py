@@ -31,6 +31,7 @@ from factory.state.db import (
 )
 from factory.verification import VerifyResult, verify_changes
 from factory.verification.scope import (
+    design_scope,
     declared_scope_mismatch,
     paths_outside_scope,
     scope_note,
@@ -209,12 +210,18 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
                 "error": f"remediation coder did not return JSON: {agent_said}"}
 
     coder = CoderOutput.model_validate(parsed)
-    outside = _outside_scope(state, coder, _story_scope(spec))
+    # Remediation is bound to the same accepted design as ordinary tasks.
+    # Architecture-required files (e.g. .prettierignore) may not occur in the
+    # spec agent's earlier task scopes. This is not a global filename exemption.
+    scope = _story_scope(spec)
+    if scope:
+        scope = [*scope, *design_scope((state.get("architect") or {}).get("modules_affected") or [])]
+    outside = _outside_scope(state, coder, scope)
     if outside:
         log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
                   verdict=coder.verdict, duration_secs=result.duration_secs,
                   stage_type="remediation", **usage_kwargs(result))
-        gate_reason = _scope_reason("remediation", outside, _story_scope(spec))
+        gate_reason = _scope_reason("remediation", outside, scope)
         log_gate(conn, state["run_id"], "gate-build", False, gate_reason)
         error = f"remediation failed gate-build: {gate_reason}"
         _fail_story(conn, state, error)
@@ -321,7 +328,7 @@ def _design_feedback(
 def _route_after_build(
     conn: sqlite3.Connection, state: PipelineState, tasks: list[TaskDef], task: TaskDef,
     coder: CoderOutput, base: dict[str, Any], verify_passed: bool, gate_reason: str,
-    root: Path, written: list[Path] | None = None,
+    root: Path, written: list[Path] | None = None, failing_tests: list[str] | None = None,
 ) -> dict[str, Any]:
     """After a clean gate-build log: advance, retry the same task, or give up."""
     task_index = state.get("task_index", 0)
@@ -338,10 +345,10 @@ def _route_after_build(
         if task_index + 1 >= len(tasks):
             # Coding done — hand to the tester gate, which finalizes the run.
             return {**base, "next_action": "complete", "tasks_completed": completed,
-                    "attempt_written": []}
+                    "attempt_written": [], "retry_scope": []}
         return {**base, "next_action": "next_task", "task_index": task_index + 1,
                 "attempt_number": 1, "prior_findings": [], "tasks_completed": completed,
-                "attempt_written": []}
+                "attempt_written": [], "retry_scope": []}
 
     # Task failed: retry the SAME task within budget, else give up + queue.
     conn.commit()  # the spend below is read on its own connection
@@ -349,12 +356,25 @@ def _route_after_build(
     budget_left = attempt < budget.max_coder_attempts and budget_refusal_for(state) is None
     if not verify_passed and budget_left:
         conn.commit()  # keep run 'running'; same task_index -> retries this task
+        # Operator decision (2026-10-03): a story that deliberately changes behaviour
+        # breaks the tests that pinned the old one, and they are rarely in the task's
+        # scope. The retry may change exactly the test files that failed — nothing else.
+        retry_scope = sorted(set(state.get("retry_scope") or []) | set(failing_tests or []))
+        findings = [gate_reason]
+        if retry_scope:
+            findings.append(
+                "You may now ALSO change these test files, which failed: "
+                + ", ".join(retry_scope)
+                + ". Update a test only where this story deliberately changes the behaviour "
+                "it asserts; never weaken or delete a test to make it pass."
+            )
         return {
             **base,
             "next_action": "retry",
             "attempt_number": attempt + 1,
             "triggered_by": "gate-build",
-            "prior_findings": [gate_reason],
+            "prior_findings": findings,
+            "retry_scope": retry_scope,
             # Uncommitted until the task passes: the retry's scope check must
             # not read the factory's own earlier writes as the agent's.
             "attempt_written": sorted(
@@ -380,6 +400,15 @@ def _implement_task(
     """One coder call for the current task, then gate-build and routing."""
     task_index = state.get("task_index", 0)
     task = tasks[task_index]
+    # What this attempt may write besides its own files: the source files of the design
+    # the operator approved (the spec-agent split files between tasks BEFORE that design
+    # existed, and a wrong split left the coder able only to refuse), and the test files
+    # that just failed. An empty scope forbids nothing, so there is nothing to widen.
+    also: tuple[str, ...] = ()
+    if task.scope:
+        design = design_scope((state.get("architect") or {}).get("modules_affected") or [])
+        also = tuple(p for p in dict.fromkeys([*design, *(state.get("retry_scope") or [])])
+                     if p not in task.scope)
     prompt = build_coder_task_prompt(
         state,
         task,
@@ -388,6 +417,7 @@ def _implement_task(
         task_count=len(tasks),
         completed=list(state.get("tasks_completed", [])),
         attempt=state.get("attempt_number", 1),
+        also_allowed=also,
     )
 
     result, parsed = run_agent_json(state, "coder-agent", prompt, slot=task.id)
@@ -398,13 +428,14 @@ def _implement_task(
     if coder.design_feedback.strip():
         return _design_feedback(conn, state, task, prompt, result, parsed, coder)
 
-    outside = _outside_scope(state, coder, task.scope)
+    allowed = [*task.scope, *also] if task.scope else []
+    outside = _outside_scope(state, coder, allowed)
     if outside:
         # Refused before anything lands: the retry starts from a clean tree.
         log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
                   verdict=coder.verdict, duration_secs=result.duration_secs,
                   stage_type=task.id, **usage_kwargs(result))
-        gate_reason = _scope_reason(task.id, outside, task.scope)
+        gate_reason = _scope_reason(task.id, outside, allowed)
         log_gate(conn, state["run_id"], "gate-build", False, gate_reason)
         base = {"coder_raw": result.output, "coder": parsed,
                 "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,
@@ -454,7 +485,8 @@ def _implement_task(
     }
     base = {"coder_raw": result.output, "coder": parsed, "gate_build": gate_build}
     return _route_after_build(
-        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root, written
+        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root, written,
+        verify_result.failing_test_files,
     )
 
 

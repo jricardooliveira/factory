@@ -63,6 +63,7 @@ class PipelineState(TypedDict, total=False):
     task_index: int  # index into the dependency-ordered task list
     tasks_completed: list[str]  # task ids already implemented
     attempt_written: list[str]  # repo paths the factory wrote on this task's failed attempts
+    retry_scope: list[str]  # failing test files this task's retry may also change
 
     # Overall
     status: str

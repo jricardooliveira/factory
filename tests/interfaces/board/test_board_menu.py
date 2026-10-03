@@ -38,7 +38,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
         await pilot.pause()
 
     async def test_the_menu_lists_every_major_command(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test():
             titles = {c.title for c in app.get_system_commands(app.screen)}
         for title in ("Project status", "New project", "Interview: product brief", "Interview: amend brief",
@@ -49,7 +49,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(title, titles)
 
     async def test_m_opens_the_menu(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.press("m")
             await pilot.pause()
@@ -59,7 +59,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
         from factory.workspace.projects import create_project
 
         create_project(self.db_path, home=Path(self._tmp.name), slug="habits")
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.press("s")
             await self._settle(app, pilot)
@@ -67,7 +67,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Next: factory interview habits", app.screen.text)
 
     async def test_new_project_asks_for_a_slug_and_creates_it(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         with patch(f"{TUI}.create_project", return_value={"id": "PROJ-001",
                                                           "slug": "habits"}) as create:
             async with app.run_test() as pilot:
@@ -82,7 +82,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
     async def test_doctor_shows_its_report(self) -> None:
         report = SimpleNamespace(passed=True, checks=[
             SimpleNamespace(name="claude", status="ok", detail="/bin/claude")])
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         with patch(f"{TUI}.run_doctor", return_value=report) as doctor:
             async with app.run_test() as pilot:
                 self._command(app, "Doctor (offline)")()
@@ -93,7 +93,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
         doctor.assert_called_once_with(offline=True)
 
     async def test_a_new_story_runs_the_project_pipeline_with_the_typed_request(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         app._project_filter = "habits"
         outcome = SimpleNamespace(run_id=7, status="waiting_human", story_id="US-0001")
         with patch(f"{TUI}.has_brief", return_value=False), \
@@ -108,7 +108,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
     async def test_next_story_starts_the_backlog_row_through_the_backlog_service(self) -> None:
         """`run_backlog_story` marks the row started when the run exists (not after
         it returns) and starts from the row's base_commit."""
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         app._project_filter = "habits"
         outcome = SimpleNamespace(run_id=7, status="waiting_human", story_id="US-0001")
         row = {"id": 3, "request": "log a habit", "title": "Log"}
@@ -121,7 +121,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
         run.assert_called_once_with("habits", row, "log a habit", db_path=self.db_path)
 
     async def test_a_failing_command_is_shown_not_a_crash(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         with patch(f"{TUI}.run_doctor", side_effect=RuntimeError("boom")):
             async with app.run_test() as pilot:
                 notify = MagicMock()

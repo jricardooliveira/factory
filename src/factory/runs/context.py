@@ -13,7 +13,7 @@ from pathlib import Path
 
 from factory.domain.agent_output import parse_agent_json
 from factory.domain.project_spec import ProjectSpec
-from factory.state.db import finish_run, get_agent_logs_for
+from factory.state.db import finish_run, get_agent_log_by_stage, get_agent_logs_for, get_run_gates
 
 
 def decision_from_response(response: str) -> tuple[str, str]:
@@ -46,17 +46,9 @@ def build_resume_context(
     Returns (None, None) for a stage that never ran — a Checkpoint-1 park has no
     architecture yet.
     """
-    spec = _last_usable(conn, run_id, "spec-agent")
-    arch = _last_usable(conn, run_id, "architect-agent")
-    if spec and arch:
-        from factory.domain.contracts import ArchitectOutput, SpecOutput
-        from factory.domain.scope_plan import reconcile_scope
-        try:
-            revised, _ = reconcile_scope(SpecOutput.model_validate(spec), ArchitectOutput.model_validate(arch))
-            spec = revised.model_dump()
-        except ValueError:
-            pass  # the existing missing/malformed-artifact handling owns this refusal
-    return spec, arch
+    return _last_usable(conn, run_id, "spec-agent"), _last_usable(
+        conn, run_id, "architect-agent"
+    )
 
 
 def last_boundary_review(conn: sqlite3.Connection, run_id: int) -> dict | None:
@@ -77,6 +69,34 @@ def _last_usable(conn: sqlite3.Connection, run_id: int, agent: str) -> dict | No
         if parsed:
             return parsed
     return None
+
+
+def built_tasks(conn: sqlite3.Connection, run_id: int, task_ids: list[str]) -> list[str]:
+    """The leading tasks of `task_ids` (dependency order) this run already built.
+
+    Built = the task's NEWEST gate-build row passed and its newest coder output said
+    `complete` — exactly when the coder commits a task. Read from the run's own
+    record rather than the `factory: T-xxxx` commits: commits are not tied to a run
+    (a story returned to the backlog keeps its failed run's commits under the same
+    task ids, and a task that changed nothing leaves no commit at all). Stops at the
+    first task that is not built: later ones may depend on it.
+    """
+    gates = [g for g in get_run_gates(conn, run_id) if g["gate_name"] == "gate-build"]
+    built: list[str] = []
+    for task_id in task_ids:
+        newest = next(
+            (g for g in reversed(gates) if (g["reason"] or "").startswith(f"[{task_id}]")), None)
+        log = get_agent_log_by_stage(conn, run_id, "coder-agent", task_id)
+        if not (newest and newest["passed"] and log and log["verdict"] == "complete"):
+            break
+        built.append(task_id)
+    return built
+
+
+def last_build(conn: sqlite3.Connection, run_id: int) -> dict | None:
+    """The newest gate-build row of a run — a task's, or a remediation pass's."""
+    return next((g for g in reversed(get_run_gates(conn, run_id))
+                 if g["gate_name"] == "gate-build"), None)
 
 
 def park_unresumable(conn: sqlite3.Connection, run_id: int, reason: str) -> None:

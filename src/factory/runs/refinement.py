@@ -15,7 +15,6 @@ from factory.domain.interview import (
 )
 from factory.domain.project_spec import ProjectSpec
 from factory.domain.contracts import SpecOutput, ArchitectOutput
-from factory.domain.scope_plan import reconcile_scope
 from factory.domain.workflow import design_conflicts
 from factory.domain.gates import gate_after_spec
 from factory.domain.workflow import ResourceClaim, StoryPlan
@@ -221,7 +220,7 @@ def advance_refinement(job: dict, *, db_path: Path) -> dict:
         }, indent=2)
         impact = _ask_agent(project, prompt, ImpactProposal, db_path=db_path,
                              resume='Refinement is saved; no implementation has started.')
-        spec, _ = reconcile_scope(impact.spec, impact.architecture)
+        spec = impact.spec
         readiness = gate_after_spec(spec)
         problems = list(impact.uncertainties)
         if not readiness.passed:

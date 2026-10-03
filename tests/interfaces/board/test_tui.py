@@ -44,7 +44,7 @@ class TuiMountTests(unittest.IsolatedAsyncioTestCase):
         await pilot.pause()
 
     async def test_board_mounts_and_populates(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#runs", DataTable)
@@ -54,7 +54,7 @@ class TuiMountTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.selected_id, 1)
 
     async def test_parked_run_enables_feedback_box(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             await self._select_first_row(app, pilot)
@@ -62,7 +62,7 @@ class TuiMountTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query_one("#feedback", TextArea).disabled)
 
     async def test_detail_pane_shows_context_and_enables_actions(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             await self._select_first_row(app, pilot)
@@ -76,7 +76,7 @@ class TuiMountTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query_one("#reject", Button).disabled)
 
     async def test_reject_without_feedback_is_refused(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             await self._select_first_row(app, pilot)
@@ -89,8 +89,8 @@ class TuiMountTests(unittest.IsolatedAsyncioTestCase):
     async def test_approve_drives_the_run_service_against_the_boards_own_db(self) -> None:
         """The TUI resumes through factory.runs — not the CLI — and on ITS db_path
         (it used to call the CLI's resume, which silently used the CLI's cwd DB)."""
-        app = FactoryBoard(self.db_path)
-        with patch("factory.interfaces.board.tui.resume_run") as resume:
+        app = FactoryBoard(self.db_path, start_overview=False)
+        with patch("factory.interfaces.board.tui.queue_resume") as resume:
             async with app.run_test() as pilot:
                 await pilot.pause()
                 await self._select_first_row(app, pilot)
@@ -100,14 +100,14 @@ class TuiMountTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertFalse(app._busy)
                 result = str(app.query_one("#result", Static).render())
-        resume.assert_called_once_with(1, "approve", reason="ship it", db_path=self.db_path)
-        self.assertIn("approve done", result)
+        resume.assert_called_once_with(1, "approve", "ship it", db_path=self.db_path)
+        self.assertIn("decision queued", result)
 
     async def test_a_refused_resume_is_shown_not_reported_as_done(self) -> None:
         from factory.runs import RunError
 
-        app = FactoryBoard(self.db_path)
-        with patch("factory.interfaces.board.tui.resume_run",
+        app = FactoryBoard(self.db_path, start_overview=False)
+        with patch("factory.interfaces.board.tui.queue_resume",
                    side_effect=RunError("Cannot resume: missing spec log")):
             async with app.run_test() as pilot:
                 await pilot.pause()
@@ -171,7 +171,7 @@ class DismissAndFilterTests(unittest.IsolatedAsyncioTestCase):
         await pilot.pause()
 
     async def test_dismiss_archives_nonparked_run(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#runs", DataTable)
@@ -186,7 +186,7 @@ class DismissAndFilterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.query_one("#runs", DataTable).row_count, 1)
 
     async def test_project_filter_narrows_board(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             self.assertEqual(app.query_one("#runs", DataTable).row_count, 2)
@@ -215,7 +215,7 @@ class KanbanViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_toggle_to_kanban_populates_columns(self) -> None:
         from textual.widgets import ListView
 
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             self.assertEqual(app._view, "table")
@@ -233,7 +233,7 @@ class KanbanViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_left_right_moves_between_columns(self) -> None:
         from textual.widgets import ListView
 
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("v")
@@ -253,7 +253,7 @@ class KanbanViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_dismiss_in_kanban_does_not_crash(self) -> None:
         from textual.widgets import ListView
 
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("v")
@@ -285,7 +285,7 @@ class CursorStabilityTests(unittest.IsolatedAsyncioTestCase):
         self._tmp.cleanup()
 
     async def test_cursor_survives_refresh(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#runs", DataTable)
@@ -327,7 +327,7 @@ class ReleaseCheckpointPaneTests(unittest.IsolatedAsyncioTestCase):
         self._tmp.cleanup()
 
     async def test_release_pane_shows_release_and_blocker_not_design(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             app._show_detail(app._runs[self.rid])

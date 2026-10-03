@@ -29,7 +29,7 @@ def build_timeout() -> int:
     return settings().timeouts.build
 # How much of one failed check's output reaches the gate reason (and so the coder's
 # retry, the run error and `factory review`): enough for a traceback's last frame.
-MAX_FAILURE_DETAIL = 500
+MAX_FAILURE_DETAIL = 3500
 
 
 def tests_enabled() -> bool:
@@ -47,6 +47,8 @@ class VerifyCheck:
     name: str
     status: str  # "pass" | "fail" | "warn" | "skip"
     detail: str = ""
+    # Test files (repo-relative) this check saw fail: what a retry may also change.
+    files: tuple[str, ...] = ()
 
 
 @dataclass
@@ -71,6 +73,10 @@ class VerifyResult:
             return "no verifiable files"
         parts = [f"{c.name}:{c.status}" for c in self.checks]
         return ", ".join(parts)
+
+    @property
+    def failing_test_files(self) -> list[str]:
+        return sorted({f for c in self.checks if c.status == "fail" for f in c.files})
 
     @property
     def failures(self) -> list[str]:

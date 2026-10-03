@@ -142,7 +142,8 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
         outcome = self._replay(_coder(("src/search.py", "def s():\n    return []\n")))
         pkg = tp.assemble(self.db_path, outcome.run_id)
         self.assertEqual(pkg["diff"]["source"], "git")
-        self.assertEqual(pkg["diff"]["files"], [{"path": "src/search.py", "change": "added"}])
+        files = [{"path": "src/search.py", "change": "added", "additions": 2, "deletions": 0}]
+        self.assertEqual(pkg["diff"]["files"], files)
         self.assertEqual(pkg["diff"]["scope_violations"], [])
         self.assertTrue(pkg["adr"]["path"].startswith(str(self.work / "docs" / "architecture")))
         # The copy written to docs/releases/ says the same thing.
@@ -150,7 +151,7 @@ class ProjectWorkspaceRunTests(unittest.TestCase):
             (self.work / "docs" / "releases" / f"run-{outcome.run_id}-trust-package.json")
             .read_text(encoding="utf-8")
         )
-        self.assertEqual(saved["diff"]["files"], [{"path": "src/search.py", "change": "added"}])
+        self.assertEqual(saved["diff"]["files"], files)
 
     def test_tester_reviews_a_diff_without_the_factorys_paperwork(self) -> None:
         outcome = self._replay(_coder(("src/search.py", "def s():\n    return []\n")))

@@ -25,6 +25,7 @@ def build_task_pack(
     retry_context: str = "",
     boundary_context: str = "",
     scope_files_context: str = "",
+    also_allowed: tuple[str, ...] = (),
     completed: list[str] | None = None,
     position: tuple[int, int] | None = None,
 ) -> str:
@@ -45,6 +46,13 @@ def build_task_pack(
         if task.scope
         else "Allowed scope: (not restricted — stay within this task's purpose)\n"
     )
+
+    if task.scope and also_allowed:
+        scope_block += (
+            "Also allowed, because the approved design or a failed test names them "
+            "(change one only if THIS task cannot be completed without it):\n"
+            + "\n".join(f"- {a}" for a in also_allowed) + "\n"
+        )
 
     ac_block = "\n".join(f"- {ac}" for ac in spec.acceptance_criteria) or "- (see task purpose)"
 

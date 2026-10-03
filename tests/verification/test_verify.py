@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import os
@@ -105,8 +106,71 @@ class CollectRepoDiffTests(unittest.TestCase):
         git_commit_all(self.root, "factory: T-0001 big")
         diff = collect_repo_diff(self.root, max_chars=200)
         assert diff is not None
-        self.assertLessEqual(len(diff), 200 + 60)
+        self.assertLessEqual(len(diff), 200 + 200)  # the cut body + the notices
         self.assertIn("truncated", diff)
+
+    def test_an_oversized_diff_still_shows_every_file_and_says_what_was_cut(self) -> None:
+        # Live (habits run #5): a 35k diff was cut at 16k from the END, so every test
+        # file vanished and the tester failed all 13 criteria as "no test visible".
+        from factory.workspace.git import collect_repo_diff, git_commit_all, git_init
+
+        git_init(self.root)
+        git_commit_all(self.root, "initial")
+        (self.root / "app.py").write_text("x = 1  # " + "y" * 6000 + "\n")
+        (self.root / "small.py").write_text("z = 2\n")
+        (self.root / "tests").mkdir()
+        (self.root / "tests" / "test_app.py").write_text(
+            "def test_x():\n    assert True  # " + "t" * 6000 + "\n")
+        git_commit_all(self.root, "factory: T-0001")
+        diff = collect_repo_diff(self.root, max_chars=1500)
+        assert diff is not None
+        for name in ("app.py", "small.py", "tests/test_app.py"):
+            self.assertIn(f"diff --git a/{name}", diff)
+        self.assertIn("z = 2", diff)            # a small file is never the one cut
+        self.assertIn("def test_x", diff)       # the start of the test file is shown
+        self.assertRegex(diff, r"truncated.*app\.py")
+        self.assertRegex(diff, r"tests/test_app\.py: \d+ of \d+")
+
+    def test_the_review_budget_fits_a_full_size_story(self) -> None:
+        from factory.domain.gates import MAX_REVIEW_DIFF_CHARS
+
+        self.assertGreaterEqual(MAX_REVIEW_DIFF_CHARS, 60000)
+
+    def test_the_review_policy_says_unseen_code_is_not_a_missing_test(self) -> None:
+        from factory.agent_config.location import agents_dir
+
+        policy = (agents_dir() / "policies" / "REVIEW.md").read_text(encoding="utf-8")
+        self.assertIn("not shown", policy)
+        self.assertIn("truncated", policy)
+
+
+class FailureDetailTests(unittest.TestCase):
+    """Live (habits run #8): the coder's retry got the last 600 chars of pytest's output,
+    so it saw test names but no assertion, and could not fix what it could not read."""
+
+    def test_a_failing_test_reports_its_assertion_not_just_its_name(self) -> None:
+        import tempfile
+
+        from factory.verification.python import run_tests
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "tests").mkdir()
+            body = "".join(
+                f"def test_{n}():\n    row = 'Water 0 / 8'\n"
+                f"    assert '<input' in row, 'row {n} has no box'\n\n" for n in range(12))
+            (root / "tests" / "test_rows.py").write_text(body)
+            with unittest.mock.patch.dict("os.environ", {"FACTORY_RUN_TESTS": "1"}):
+                check = run_tests(root)
+        self.assertEqual(check.status, "fail")
+        self.assertIn("row 0 has no box", check.detail)       # the FIRST failure's reason
+        self.assertIn("assert '<input' in row", check.detail)
+        self.assertIn("12 failed", check.detail)              # and the summary line
+
+    def test_the_gate_reason_keeps_that_detail(self) -> None:
+        from factory.verification.base import MAX_FAILURE_DETAIL
+
+        self.assertGreaterEqual(MAX_FAILURE_DETAIL, 3000)
 
 
 class RunTestsTests(unittest.TestCase):
@@ -652,3 +716,90 @@ class GoWithoutModuleTests(unittest.TestCase):
         self.assertEqual(names.get("go_build"), "pass", result.summary)
         self.assertNotIn("go_parse", names,
                          "the parse fallback is only for the module-less case")
+
+
+class SuiteRunsWhateverTheAttemptWroteTests(unittest.TestCase):
+    """With test execution on, the suite runs after EVERY attempt.
+
+    The pytest run sat inside `if py_files:`, so an attempt that wrote only a
+    template (or nothing) returned a lone `verify:skip`, which counts as passed —
+    live, run 6 T-0004 attempt 2 passed that way right after a `pytest_run:fail`.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._prev = os.environ.get("FACTORY_RUN_TESTS")
+        os.environ["FACTORY_RUN_TESTS"] = "1"
+
+    def tearDown(self) -> None:
+        if self._prev is None:
+            os.environ.pop("FACTORY_RUN_TESTS", None)
+        else:
+            os.environ["FACTORY_RUN_TESTS"] = self._prev
+        self._tmp.cleanup()
+
+    def _write(self, rel: str, content: str) -> Path:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def _failing_suite(self) -> None:
+        self._write("tests/test_x.py", "def test_x():\n    assert False\n")
+
+    def test_a_template_only_attempt_runs_the_failing_suite(self) -> None:
+        self._failing_suite()
+        page = self._write("app/templates/index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        names = {c.name: c.status for c in result.checks}
+        self.assertEqual(names.get("pytest_run"), "fail", result.summary)
+        self.assertFalse(result.passed)
+
+    def test_an_attempt_that_wrote_nothing_runs_the_failing_suite(self) -> None:
+        self._failing_suite()
+        result = verify_changes([], root=self.root)
+        self.assertEqual({c.name: c.status for c in result.checks}.get("pytest_run"), "fail")
+        self.assertFalse(result.passed)
+
+    def test_the_suite_runs_once_on_a_python_attempt(self) -> None:
+        self._failing_suite()
+        mod = self._write("mod.py", "x = 1\n")
+        result = verify_changes([mod], root=self.root)
+        self.assertEqual([c.name for c in result.checks].count("pytest_run"), 1)
+
+    def test_no_suite_still_skips(self) -> None:
+        page = self._write("index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        self.assertEqual(result.summary, "verify:skip")
+        self.assertTrue(result.passed)
+
+    def test_nothing_runs_when_execution_is_off(self) -> None:
+        # Default verification executes nothing the coder wrote.
+        os.environ.pop("FACTORY_RUN_TESTS", None)
+        self._failing_suite()
+        page = self._write("index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        self.assertEqual(result.summary, "verify:skip")
+
+    @unittest.skipUnless(shutil.which("go"), "go toolchain not installed")
+    def test_a_non_go_attempt_runs_the_go_suite(self) -> None:
+        self._write("backend/go.mod", "module supportflow\n\ngo 1.21\n")
+        self._write("backend/x_test.go", (
+            "package x\n\nimport \"testing\"\n\n"
+            "func TestX(t *testing.T) { t.Fatal(\"broken\") }\n"
+        ))
+        page = self._write("frontend/index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        names = {c.name: c.status for c in result.checks}
+        self.assertEqual(names.get("go_test"), "fail", result.summary)
+
+    def test_go_modules_with_tests_are_found_from_the_repo(self) -> None:
+        from factory.verification.go import modules_with_tests
+
+        self._write("backend/go.mod", "module a\n")
+        self._write("backend/internal/x_test.go", "package x\n")
+        self._write("tools/go.mod", "module b\n")  # no tests: nothing to run
+        self._write("node_modules/dep/go.mod", "module c\n")
+        self._write("node_modules/dep/y_test.go", "package y\n")
+        self.assertEqual(modules_with_tests(self.root), [(self.root / "backend").resolve()])

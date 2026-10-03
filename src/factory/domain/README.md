@@ -47,8 +47,9 @@ runs with the same record always get the same answer.
   row per gate wins. A rejection counts only when `human_response` starts with `REJECTED:`.
   `authorize_release` also refuses if the reviewed candidate changed (`candidate_changed`).
   Blocking gaps go in `Authorization.missing`; non-blocking ones in `warnings`.
-- **Traceability** uses token overlap (>= 0.5 of the smaller set) so paraphrases still match; an
-  AC is `unassessed` only when the tester ignored it entirely.
+- **Traceability**: a claim that opens with the criterion's number (`AC2 ...`, `AC10 – ...`, `3. ...`)
+  speaks for that criterion only; an unnumbered claim is matched by token overlap (>= 0.5 of the
+  smaller set) so paraphrases still match. An AC is `unassessed` only when the tester ignored it entirely.
 
 ## Dependencies
 

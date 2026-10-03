@@ -119,6 +119,33 @@ class GitMeasuredDiffTests(unittest.TestCase):
         pkg = tp.assemble(self.db_path, rid)
         self.assertFalse([b for b in pkg["blockers"] if "existing test" in b.lower()])
 
+    def test_only_adding_tests_to_an_existing_file_raises_no_gap(self) -> None:
+        """Live (habits run 5): tests/test_app.py gained 582 lines and lost none, and
+        Checkpoint 3 said existing tests "were changed or deleted"."""
+        old = "def test_x():\n    assert 1 == 1\n"
+        self._commit({"tests/test_old.py": old}, "baseline tests")
+        self.base = git.git_head(self.repo)
+        rid = self._run_with_changes()
+        self._commit({"tests/test_old.py": old + "\n\ndef test_more():\n    assert 2 == 2\n"},
+                     "factory: T-2")
+        pkg = tp.assemble(self.db_path, rid)
+        self.assertFalse([b for b in pkg["blockers"] if "existing test" in b.lower()],
+                         pkg["blockers"])
+        entry = next(f for f in pkg["diff"]["files"] if f["path"] == "tests/test_old.py")
+        self.assertEqual((entry["additions"], entry["deletions"]), (4, 0))
+        self.assertEqual(tp.schema_errors(pkg), [])
+
+    def test_the_gap_names_how_many_lines_of_the_old_test_went(self) -> None:
+        self._commit({"tests/test_old.py": "def test_x():\n    assert 1 == 1\n"}, "baseline")
+        self.base = git.git_head(self.repo)
+        rid = self._run_with_changes()
+        self._commit({"tests/test_old.py": "def test_x():\n    pass\n\n\ndef test_y():\n"
+                                           "    pass\n"}, "factory: T-2")
+        pkg = tp.assemble(self.db_path, rid)
+        gap = [b for b in pkg["blockers"] if "existing test" in b.lower()]
+        self.assertEqual(len(gap), 1, pkg["blockers"])
+        self.assertIn("tests/test_old.py (1 line removed or changed)", gap[0])
+
     def test_base_commit_is_recorded_on_the_run(self) -> None:
         rid = self._run_with_changes()
         with db.get_db(self.db_path) as conn:

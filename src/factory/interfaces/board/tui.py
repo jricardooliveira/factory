@@ -117,9 +117,10 @@ class FactoryBoard(App):
         ("m", "command_palette", "Menu"),
     ]
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, start_overview: bool = True) -> None:
         super().__init__()
         self.db_path = db_path
+        self._start_overview = start_overview
         self.selected_id: int | None = None
         self._runs: dict[int, BoardRun] = {}
         self._busy = False
@@ -156,7 +157,8 @@ class FactoryBoard(App):
         table = self.query_one("#runs", DataTable)
         table.add_columns("#", "Project", "Story", "State", "Stage / waiting on", "Cost")
         self.query_one("#kanban").display = False  # table is the detailed run view
-        self.call_after_refresh(self.action_project_overview)
+        if self._start_overview:
+            self.call_after_refresh(self.action_project_overview)
         self.sub_title = "Project: all  ·  table"
         self.reload()
         self.set_interval(2.0, self.reload)
@@ -406,6 +408,7 @@ class FactoryBoard(App):
                 f"Run #{run.id}: decision queued. Resulting state will appear in Activity.")
             self.query_one("#feedback", TextArea).clear()
         except Exception as exc:
+            self.query_one("#result", Static).update(str(exc))
             self.notify(str(exc), severity="error")
 
     @work(thread=True, exclusive=True)

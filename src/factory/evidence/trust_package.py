@@ -167,6 +167,10 @@ def _diff_block(
             "files": [{"path": p, "change": "added"} for p in _coder_files(logs)],
             "scope_violations": [],
         }
+    stats = git.git_line_stats(repo, base_commit, end=end)
+    for entry in diff_files:
+        if entry["path"] in stats:
+            entry["additions"], entry["deletions"] = stats[entry["path"]]
     return {
         "source": "git",
         "files": diff_files,
@@ -174,6 +178,18 @@ def _diff_block(
             [f["path"] for f in diff_files], _declared_scope(logs)
         ),
     }
+
+
+def _test_change(entry: dict[str, Any]) -> str:
+    """How an existing test file lost something ('' if it only gained lines)."""
+    change, removed = entry.get("change"), entry.get("deletions")
+    if change in ("deleted", "renamed"):
+        return str(change)
+    if change != "modified" or removed == 0:
+        return ""
+    if removed is None:
+        return "changed"
+    return f"{removed} line{'' if removed == 1 else 's'} removed or changed"
 
 
 def _blockers(
@@ -207,15 +223,17 @@ def _blockers(
     # Operator decision (review task T06): changing a test that existed BEFORE the
     # story is allowed — a legitimate update must stay possible — but it is the one
     # way a coder can make a failing check pass, so it is named for Checkpoint 3.
+    # Only when an existing test LOST something: a file that merely gained tests is
+    # `modified` too, and naming it trained the operator to click through (run 5:
+    # 582 lines added, none removed). An unmeasured line count stays named.
     touched = sorted(
-        f["path"] for f in diff_block.get("files", [])
-        if f.get("change") in ("modified", "deleted", "renamed")
-        and scope_policy.is_test_path(f["path"])
+        f"{f['path']} ({_test_change(f)})" for f in diff_block.get("files", [])
+        if scope_policy.is_test_path(f["path"]) and _test_change(f)
     )
     if diff_block["source"] == "git" and touched:
         blockers.append(
             f"Existing tests were changed or deleted by this story — check that they were "
-            f"not weakened to make a failing check pass: {touched}"
+            f"not weakened to make a failing check pass: {', '.join(touched)}"
         )
     if not adr_path:
         blockers.append(
@@ -252,6 +270,7 @@ def _security_boundary(tester: dict, logs: list[dict]) -> dict[str, Any]:
         "highest_severity": tester.get("highest_severity", "none"),
         "breaking_changes": breaking,
         "findings": findings,
+        "notes": [],
     }
     if review:
         tenant = (review.get("tenant") or {}).get("verdict", "not_applicable")
@@ -261,7 +280,12 @@ def _security_boundary(tester: dict, logs: list[dict]) -> dict[str, Any]:
         dims = [(review.get(d) or {}) for d in ("tenant", "authorization", "api_contract",
                                                 "security")]
         block["overall"] = _worst(block["overall"], *(d.get("verdict", "") for d in dims))
-        findings += [f"boundary review: {f}" for d in dims for f in d.get("findings", [])]
+        # A dimension that passed explains why it is fine: a note for the record, not
+        # a finding for the operator to weigh at Checkpoint 3 (run 6: 12 of 12 were notes).
+        for d in dims:
+            flagged = d.get("verdict") in ("warn", "fail")
+            (findings if flagged else block["notes"]).extend(
+                f"boundary review: {f}" for f in d.get("findings", []))
     return block
 
 

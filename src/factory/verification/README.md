@@ -12,7 +12,7 @@ judges the result.
 
 | Module | What it does |
 |---|---|
-| `__init__.py` | `verify_changes(written_paths, *, root) -> VerifyResult`: picks checks by file extension. Re-exports `VerifyCheck`, `VerifyResult`, `tests_enabled`. |
+| `__init__.py` | `verify_changes(written_paths, *, root) -> VerifyResult`: picks the static checks by file extension; with tests on, the suites to run by what the REPOSITORY holds. Re-exports `VerifyCheck`, `VerifyResult`, `tests_enabled`. |
 | `base.py` | `VerifyCheck(name, status, detail)` with status `pass`/`fail`/`warn`/`skip`; `VerifyResult` (`passed`, `verdict`, `summary`); `run_command` (subprocess with `stdin=DEVNULL`); `tests_enabled()` (`FACTORY_RUN_TESTS`); timeouts `COMMAND_TIMEOUT=60`, `TEST_TIMEOUT=180`, `BUILD_TIMEOUT=180`. |
 | `python.py` | `py_compile_check`, `static_import_check` (AST only), `run_tests` (opt-in; a dependency or pytest missing from the product interpreter is a `warn`, never a pass), `has_tests`, `is_py_test`, `_classify_collect_failure`. |
 | `go.py` | `go_module_dirs` (nearest `go.mod` per file), `go_build`, `go_parse` (`gofmt -e`, no module needed), `go_vet`, `run_go_tests` (opt-in), `_classify_go_failure`. |
@@ -27,11 +27,12 @@ verifiable files yields a single `verify: skip`.
 
 - **Python:** `py_compile` always, then `static_import_check`, which parses (never imports) the
   changed files and fails on a local module that does not exist or a name the local module does not
-  define. Third-party imports are not judged. The test suite runs only when `tests_enabled()` and
-  `has_tests(root)`.
+  define. Third-party imports are not judged. The test suite runs when `tests_enabled()` and
+  `has_tests(root)` — after every attempt, whatever it wrote (even nothing).
 - **Go:** `go_build` over each module dir. If no `go.mod` is found it warns and `go_parse` runs
   `gofmt -e` as a fallback so Go written before a manifest is still syntax-checked. `go_vet` (and
-  opt-in `go test`) run only if the build passed. `_classify_go_failure` turns an unresolvable
+  opt-in `go test`) run only if the build passed; an attempt that wrote no `.go` file runs
+  `go test` in every module `modules_with_tests(root)` finds. `_classify_go_failure` turns an unresolvable
   import under the module's own path into `fail`, and network/missing-dependency noise into `warn`.
 - **TypeScript:** each changed `.ts/.tsx` is mapped to its nearest `tsconfig.json`; tsc runs once
   per project with `-p`. No tsconfig is a `warn`; "Cannot find module" is a `warn` (deps not

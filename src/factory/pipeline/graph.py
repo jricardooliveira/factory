@@ -161,6 +161,11 @@ def compile_coder_only_pipeline():
     return build_coder_only_pipeline().compile()
 
 
+def compile_tester_resume_pipeline():
+    """Entered at the tester: a retry of a run whose every task is already built."""
+    return build_pipeline(entry="tester-agent").compile()
+
+
 def compile_release_pipeline():
     """Entered at `release`: the operator approved Checkpoint 3."""
     return build_pipeline(entry="release").compile()

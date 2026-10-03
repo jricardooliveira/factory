@@ -77,7 +77,7 @@ class BoardInterviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_without_a_project_selected_it_only_shows_a_notice(self) -> None:
         agent = self._agent()
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("i")
@@ -87,7 +87,7 @@ class BoardInterviewTests(unittest.IsolatedAsyncioTestCase):
         agent.assert_not_called()
 
     async def test_a_project_without_runs_can_be_selected(self) -> None:
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_cycle_project()
@@ -95,7 +95,7 @@ class BoardInterviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_interview_on_the_board_writes_the_brief(self) -> None:
         self._agent(GOAL_WITH_OPTIONS, DONE, DONE, SPEC)
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_cycle_project()
@@ -128,7 +128,7 @@ class BoardInterviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_failed_agent_call_is_a_notification_not_a_crash(self) -> None:
         self._agent(_result({}, returncode=1))
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_cycle_project()
@@ -142,7 +142,7 @@ class BoardInterviewTests(unittest.IsolatedAsyncioTestCase):
         (self.repo / BRIEF_RELPATH).parent.mkdir(parents=True, exist_ok=True)
         (self.repo / BRIEF_RELPATH).write_text("# Brief\nSells shoes\n", encoding="utf-8")
         (self.repo / BACKLOG_RELPATH).write_text("# Backlog\n1. Cart\n", encoding="utf-8")
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_cycle_project()
@@ -159,7 +159,7 @@ class BoardInterviewTests(unittest.IsolatedAsyncioTestCase):
         (self.repo / BRIEF_RELPATH).parent.mkdir(parents=True, exist_ok=True)
         (self.repo / BRIEF_RELPATH).write_text("# Brief\n", encoding="utf-8")
         agent = self._agent()
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_cycle_project()
@@ -173,7 +173,7 @@ class BoardInterviewTests(unittest.IsolatedAsyncioTestCase):
     async def test_board_keys_do_nothing_under_an_interview_modal(self) -> None:
         # A button has focus, not the Input: "a" must not approve the run selected
         # behind the modal (e.g. a release checkpoint), nor "q" drop the interview.
-        app = FactoryBoard(self.db_path)
+        app = FactoryBoard(self.db_path, start_overview=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             app.push_screen(ReviewScreen("Approve this product brief?", "brief", review=True))

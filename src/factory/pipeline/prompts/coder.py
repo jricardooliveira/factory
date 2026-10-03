@@ -28,6 +28,7 @@ def build_coder_task_prompt(
     task_count: int,
     completed: list[str],
     attempt: int,
+    also_allowed: tuple[str, ...] = (),
 ) -> str:
     """The prompt for ONE task of the dependency-ordered plan (retry-aware)."""
     return build_task_pack(
@@ -39,7 +40,8 @@ def build_coder_task_prompt(
         repo_context=repo_inventory_block(state),
         retry_context=retry_context_block(state, attempt),
         boundary_context=boundary_rules_block(state),
-        scope_files_context=scope_files_block(state, task.scope),
+        scope_files_context=scope_files_block(state, [*task.scope, *also_allowed]),
+        also_allowed=also_allowed,
         completed=completed,
         position=(task_index + 1, task_count),
     )

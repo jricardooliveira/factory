@@ -119,6 +119,11 @@ class ResumeBannerTests(unittest.TestCase):
         self.assertIn("RELEASED", text)
         self.assertNotIn("coder-agent", text)
 
+    def test_a_resume_with_every_task_built_says_review_not_build(self) -> None:
+        text = self._banner("tester", "approve")
+        self.assertIn("every task is already built", text)
+        self.assertNotIn("coder-agent", text)
+
     def test_checkpoint_3_reject_says_remediation(self) -> None:
         text = self._banner("remediation", "reject")
         self.assertIn("REJECTED", text)
@@ -200,6 +205,37 @@ class TrustPackageCoverageTests(unittest.TestCase):
         with output.console.capture() as captured:
             _print_trust_package(pkg, [])
         return " ".join(captured.get().split())
+
+    def test_security_line_lists_findings_one_per_line_and_counts_the_notes(self) -> None:
+        # Live (habits run 6): overall pass, yet the line dumped twelve "boundary
+        # review: ..." explanations of why things are fine, as a Python list.
+        from factory.interfaces.render import output
+        from factory.interfaces.render.review import _print_trust_package
+
+        pkg = self._pkg(["covered"], covered=1)
+        pkg["security_boundary"] = {
+            "overall": "warn", "highest_severity": "low",
+            "findings": ["boundary review: the export route has no rate limit"],
+            "notes": ["boundary review: loopback only", "boundary review: no tenant data"],
+        }
+        with output.console.capture() as captured:
+            _print_trust_package(pkg, [])
+        lines = [line.strip(" │") for line in captured.get().splitlines()]
+        self.assertIn("Security: warn (highest: low) · 2 informational notes in the trust "
+                      "package", lines)
+        self.assertIn("• boundary review: the export route has no rate limit", lines)
+        text = " ".join(captured.get().split())
+        self.assertNotIn("loopback only", text)
+        self.assertNotIn("['", text)
+
+    def test_a_clean_security_verdict_is_one_short_line(self) -> None:
+        pkg = self._pkg(["covered"], covered=1)
+        pkg["security_boundary"] = {"overall": "pass", "highest_severity": "none",
+                                    "findings": [], "notes": ["boundary review: fine"]}
+        text = self._printed(pkg)
+        self.assertIn("Security: pass (highest: none) · 1 informational note in the trust "
+                      "package", text)
+        self.assertNotIn("boundary review: fine", text)
 
     def test_before_the_tester_ran_coverage_is_not_yet_measured(self) -> None:
         text = self._printed(self._pkg(["unassessed"] * 3, covered=0))

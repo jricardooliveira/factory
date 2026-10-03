@@ -71,7 +71,7 @@ Infers toolchain from materialized file extensions and runs deterministic checks
 
 **Verdict policy:** **fail** on real syntax/compile/import errors — and when the **toolchain itself is not installed** (`go`, `gofmt`, `node`, `tsc`): a check that cannot run cannot earn a pass, and it used to `skip` its files through. **warn** when a third-party dependency is missing (not proof the code is broken). Running test **bodies** is opt-in until a sandbox exists.
 
-Tests are run after **any** Python change once `FACTORY_RUN_TESTS=1` — not only when the task happened to write a test file, which used to leave a source-only change never exercising the project's existing suite.
+Tests are run after **any** attempt once `FACTORY_RUN_TESTS=1`, whatever files it wrote — a template-only retry, or one that wrote nothing, still runs the repository's suite (pytest when the repo has Python tests; `go test` for every Go module with `_test.go` files). `verify:skip` is left only for a repository with no suite and no verifiable file.
 
 A `complete` coder verdict does **not** win if `gate-build` fails. Also computes a **scope-mismatch** note by comparing the real git diff against the agent's claimed files, and **blocks** on any file that landed in the repo but was not declared in `code_blocks` (an out-of-band write). The factory's own evidence inside a project repo (`workspace.layout.EVIDENCE_PATHS`: `docs/work/`, `docs/architecture/adr/`, `docs/releases/`, `PROJECT_RULES.md`, `project-spec.json`) is committed by the factory as it is produced and excluded from this check — and a code block that targets one of those paths is refused outright, since gate-1 reads `PROJECT_RULES.md` as operator-authored.
 

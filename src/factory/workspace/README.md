@@ -15,7 +15,7 @@ into it as it is produced, and is kept out of every measurement of the agents' c
 | `layout.py` | `$FACTORY_HOME` resolver (`home`, `db_path`, `projects_dir`, `project_dir_for`, `replays_dir`, `replay_dir`); `EVIDENCE_PATHS` and `is_evidence_path`; `store_location` / `resolve_location` (DB-relative project paths); `normalize_slug`. |
 | `projects.py` | `create_project` (scaffold repo + register in DB), `get_project`, `list_projects`, `project_repository`; `link_opencode_agents`, `agents_link_problem`; `render_project_rules`. |
 | `templates.py` | Project-spec templates: `get_stack_template` / `create_project_spec` (only `fastapi`), `write_project_spec`. |
-| `git.py` | Best-effort git plumbing, never raises: `git_init`, `git_commit_all`, `git_commit_paths`, `git_head`, `git_changed_paths`, `git_changed_files`, `collect_repo_diff`, `code_changed_since`, `_factory_baseline`. |
+| `git.py` | Best-effort git plumbing, never raises: `git_init`, `git_commit_all`, `git_commit_paths`, `git_head`, `git_changed_paths`, `git_changed_files`, `git_line_stats` (lines added/removed per path), `collect_repo_diff`, `code_changed_since`, `_factory_baseline`. |
 | `materialize.py` | `materialize_code_blocks` (writes `code_blocks` to disk, all-or-nothing), `normalize_block_path`, credential/VCS path refusal. |
 | `sandbox.py` | Scratch clones for `factory replay`: `replay_sandbox`, `prepare_replay_sandbox`, `run_repository`. |
 | `repo_map.py` | `build_repo_inventory(root)`: bounded interface map of existing code for the architect/coder prompts. |

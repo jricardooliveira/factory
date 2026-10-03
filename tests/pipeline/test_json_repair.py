@@ -51,5 +51,46 @@ class JsonRepairTests(unittest.TestCase):
         self.assertEqual(m.call_count, 1)
 
 
+class ProviderFailureTests(unittest.TestCase):
+    """A call that FAILED is not an agent that answered badly (run 1, agent_logs
+    8-28: a session limit became a paid repair call and "Agent went off-script")."""
+
+    def _failed(self, output: str, returncode: int = 1) -> AgentResult:
+        return AgentResult(agent="coder-agent", output=output, duration_secs=2.0,
+                           returncode=returncode)
+
+    def test_a_failed_call_raises_with_the_providers_message_and_no_repair(self) -> None:
+        limit = self._failed("ERROR: You've hit your session limit · resets 4am")
+        with patch.object(agent_calls, "_run_or_replay", return_value=limit) as m:
+            with self.assertRaises(agent_calls.ProviderUnavailable) as caught:
+                agent_calls.run_agent_json({"run_id": 7}, "coder-agent", "p")
+        self.assertEqual(m.call_count, 1, "no JSON-repair call on a provider failure")
+        message = str(caught.exception)
+        self.assertIn("the model call failed: You've hit your session limit · resets 4am",
+                      message)
+        self.assertNotIn("ERROR:", message)
+        self.assertIn("factory retry 7", message)
+
+    def test_json_inside_a_failed_call_is_never_taken_as_the_answer(self) -> None:
+        # A provider's error body is JSON too.
+        body = self._failed('ERROR: 529 {"type": "error", "error": {"type": "overloaded"}}')
+        with patch.object(agent_calls, "_run_or_replay", return_value=body):
+            with self.assertRaises(agent_calls.ProviderUnavailable):
+                agent_calls.run_agent_json({}, "coder-agent", "p")
+
+    def test_a_failed_repair_call_is_a_provider_failure_too(self) -> None:
+        seq = [_ar("no json here"), self._failed("ERROR: Agent timed out after 600 seconds", -1)]
+        with patch.object(agent_calls, "_run_or_replay", side_effect=seq):
+            with self.assertRaises(agent_calls.ProviderUnavailable) as caught:
+                agent_calls.run_agent_json({}, "coder-agent", "p")
+        self.assertIn("timed out after 600 seconds", str(caught.exception))
+
+    def test_an_empty_failure_names_the_exit_code(self) -> None:
+        with patch.object(agent_calls, "_run_or_replay", return_value=self._failed("", 3)):
+            with self.assertRaises(agent_calls.ProviderUnavailable) as caught:
+                agent_calls.run_agent_json({}, "coder-agent", "p")
+        self.assertIn("exit 3", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

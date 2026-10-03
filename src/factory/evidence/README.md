@@ -30,8 +30,8 @@ product repo's `docs/`, and are meant to be committed by the caller. Nothing her
   `gate-build` reason contains `pytest_run:pass|fail` or `go_test:pass|fail`, taking the newest per
   toolchain. The diff is measured with `git.git_changed_files(..., exclude=EVIDENCE_PATHS, end=candidate_commit)`;
   if that is impossible, `diff.source` is `"unavailable"` and `validate()` reports it. Unmet bars become
-  named `blockers` (failed run, tests not executed/failed, unmeasured diff, scope violations, modified existing
-  tests, missing ADR, unassessed acceptance criteria). `next_authorization` is `none` / `release` /
+  named `blockers` (failed run, tests not executed/failed, unmeasured diff, scope violations, existing tests that
+  lost lines (`git_line_stats`: a file that only gained tests is not named) or were deleted/renamed, missing ADR, unassessed acceptance criteria). `next_authorization` is `none` / `release` /
   `operator-review`. Acceptance criteria are cross-checked with `domain.traceability.trace_criteria`.
 - **PIPELINE.md**: rendered only from the stored record (`run_timeline`, run row, authorizations), so it
   never claims more than the DB can back. `runs.service._finish` writes and commits it at every stop.

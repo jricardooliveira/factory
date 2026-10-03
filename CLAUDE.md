@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1027 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1027 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1075 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1075 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -73,7 +73,8 @@ src/factory/
                         build_*/compile_* resume names are that graph entered at another node.
     boss.py             Wraps every acting stage (graph._AUTHORIZED_STAGES): authorizes it from the DB's
                         gate verdicts before it runs; a refusal BLOCKS the run, agent never called.
-    agent_calls.py      The single agent-call boundary (_run_or_replay, JSON repair). Tests
+    agent_calls.py      The single agent-call boundary (_run_or_replay, JSON repair; a FAILED
+                        call raises ProviderUnavailable, never repaired). Tests
                         patch `factory.pipeline.agent_calls._run_or_replay` / `.run_agent`.
     nodes/              spec.py, architect.py, boundary.py (only when the design touches an
                         API/data/sensitive area), coder.py (+ remediation, scope diff), tester.py,
@@ -257,6 +258,20 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Resume must read the LATEST agent log** (`runs.build_resume_context` / `get_agent_log`, not
   `get_run_logs` + `next(...)` which is ascending). Otherwise the operator approves one
   design and the coder builds an earlier one.
+- **A resume into the coder continues at the first task that is not built** (`runs.context.built_tasks`:
+  the task's NEWEST `gate-build` row `[T-id] …` passed AND its newest coder log says `complete` —
+  the run's own record, not the `factory: T-xxxx` commits, which a returned story's new run would
+  inherit). `resume_run` seeds `task_index` / `tasks_completed` from it; with every task built and
+  the newest gate-build green it enters at the tester (`compile_tester_resume_pipeline`,
+  `ResumeEntered.entry == "tester"`); if that newest build failed (a remediation pass) the tasks
+  are rebuilt from task 1, because the boss starts the tester only on a green build. A test that
+  retries a run mid-coding seeds those gate-build rows + coder logs (`tests/runs/test_retry_progress.py`).
+- **A failed model call is not an off-script agent.** `run_agent_json` raises
+  `agent_calls.ProviderUnavailable` when `AgentResult.success` is false (both adapters: non-zero
+  returncode, output `ERROR: …`) — before parsing, with no JSON-repair call. Each node's own
+  `except` ends the run `failed` with "the model call failed: <provider message> — … try again
+  later" (boundary → review `unavailable`, release-agent → no notes: the operator decides, as for
+  any crash there). Replayed outputs always have returncode 0, so old runs replay as they ran.
 - **The budget is $10 per user story** (default `MAX_STORY_COST_USD`; the live value is
   `settings().budget.max_story_cost_usd`, from `factory.toml` or `FACTORY_MAX_STORY_COST_USD`; tests pin
   `FACTORY_SETTINGS` to a missing file so defaults apply), checked before EVERY live
@@ -271,7 +286,22 @@ input/output is stored, so any run replays offline for free. Evidence is version
   interpreter (`verification.python.product_python`: `<repo>/.venv/bin/python`, else
   `$FACTORY_PRODUCT_PYTHON`, else `sys.executable`), named in the check's detail; a
   third-party module (or pytest) missing from it is `pytest_run:warn` — an environment
-  problem, never a pass and never "tests executed" in the trust package.
+  problem, never a pass and never "tests executed" in the trust package. With tests on, the
+  suite runs after EVERY attempt, whatever it wrote (`verify_changes` asks the repository —
+  `python.has_tests`, `go.modules_with_tests` — not this attempt's file extensions); a lone
+  `verify:skip` means the repo has no suite.
+- **Coder writes are checked against the APPROVED DESIGN, not one task's file list**
+  (operator decision, 2026-10-03): a scoped task may also write the source files in the
+  architect's `modules_affected` (`verification.scope.design_scope`; what Checkpoint 2
+  approves) — listed in the pack as "Also allowed" and shown in full. The spec-agent splits
+  files between tasks before the design exists; a wrong split left the coder able only to
+  refuse. A file outside the design is still refused before it lands.
+- **A retry may also change the test files that just failed** (operator decision,
+  2026-10-03): `VerifyCheck.files` carries the test files pytest named as failed,
+  `state["retry_scope"]` adds exactly those to the task's allowed and shown files for the
+  retry (cleared when the task passes). A story that deliberately changes behaviour breaks
+  tests outside its task's scope; nothing else is opened up, and removed test lines are
+  still listed at Checkpoint 3.
 - **A failed task attempt's files stay uncommitted until the task passes**, so a retry's
   scope check subtracts `state["attempt_written"]` (what the factory materialized on the
   earlier attempts) from the unclaimed set; it is cleared when the task passes.
@@ -334,6 +364,11 @@ input/output is stored, so any run replays offline for free. Evidence is version
   dismiss): that run's passed tasks stay committed, so `factory next` passes it to
   `run_pipeline(base_commit=...)` and the re-run reviews them too (falls back to HEAD if it is
   not a commit in the repo). A dismissed COMPLETED run stays released (`pipeline_runs.archived_from`).
+- **A review diff over budget keeps every file** (`workspace.git._fit_diff`,
+  `MAX_REVIEW_DIFF_CHARS`): the longest files are cut first, each keeps its header and
+  start, and the last line names what was cut. Cutting the tail dropped the test files and
+  the tester failed every criterion as "no test visible"; REVIEW.md now says code not
+  shown is not a missing test.
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins
   `candidate_commit`: `release` refuses if code changed since (evidence commits excluded).
 - Editing anything in `agents/`, `domain/gates.py`, `domain/ambiguity.py`, `agent_config/`, or
@@ -349,7 +384,12 @@ input/output is stored, so any run replays offline for free. Evidence is version
   `factory.pipeline.*`. Outside `pipeline/`, import only names in `factory.pipeline.__all__`
   (`tests/pipeline/test_public_api.py` enforces it, plus graph → nodes → prompts/agent_calls → state).
 - The trust package must never overstate evidence. `tests.passed` requires an executed
-  suite; `diff.source` must be git-measured or `"unavailable"`.
+  suite; `diff.source` must be git-measured or `"unavailable"`. Nor may it cry wolf: an existing
+  test is a named gap only when it LOST lines or was deleted/renamed (`diff.files[].deletions`,
+  from `workspace.git.git_line_stats`); a tester claim opening with `ACn` speaks for criterion n
+  alone (`domain/traceability.py`; unnumbered claims match by token overlap); and
+  `security_boundary.findings` holds only the tester's findings and those of a boundary
+  dimension that did not pass — the rest are `notes`, counted but not printed by `factory review`.
 - **A verification check must earn its verdict.** Two bugs of this shape were shipped:
   `tsc --noEmit` with no `-p` printed its HELP TEXT and exited 1 (a false FAIL on every
   monorepo), and Go was unknown to verification entirely (a false PASS on any Go repo).
