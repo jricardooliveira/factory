@@ -84,6 +84,17 @@ class OneBoardTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, WorkflowScreen)
 
+    async def test_a_refresh_tick_during_shutdown_is_not_a_crash(self) -> None:
+        # Flaky in CI before: the run board's 2 s reload fired while the app was
+        # tearing down, after "#runs" was gone (NoMatches on the default screen).
+        app = FactoryBoard(self.db_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            for table in app.screen_stack[0].query("#runs"):
+                await table.remove()
+            app._last_sig = None  # something changed: the tick rebuilds the table
+            app.reload()  # must not raise
+
 
 if __name__ == "__main__":
     unittest.main()

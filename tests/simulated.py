@@ -121,12 +121,21 @@ class ScriptedAgents:
         }
 
 
+# Refinement and backlog work only: a launched batch's build jobs stay queued, so no
+# flow test ever reaches the coding stage.
+DRAINED_KINDS = ("refine", "backlog")
+
+
 def drain(db_path: Path) -> int:
-    """Run every queued job to completion in this thread; how many ran."""
+    """Run queued refinement/backlog jobs to completion in this thread; how many ran."""
     owner = f"test:{uuid.uuid4().hex}"
     ran = 0
     while True:
         with get_db(db_path) as conn:
+            head = conn.execute("SELECT kind FROM workflow_jobs WHERE status='queued' "
+                                "ORDER BY created_at, id LIMIT 1").fetchone()
+            if head is None or head[0] not in DRAINED_KINDS:
+                return ran
             job = store.claim_job(conn, owner)
         if job is None:
             return ran
@@ -139,6 +148,10 @@ def simulate(agents: ScriptedAgents) -> ExitStack:
     stack = ExitStack()
     for target in ("factory.runs.interview.run_agent", "factory.runs.backlog.run_agent"):
         stack.enter_context(patch(target, side_effect=agents))
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("the simulated factory never runs the pipeline's agents")
+    stack.enter_context(patch("factory.pipeline.agent_calls.run_agent", side_effect=never))
     worker = lambda *, db_path, **_kw: drain(db_path)  # noqa: E731
     for target in ("factory.interfaces.board.tui.start_worker",
                    "factory.interfaces.board.workflow_screen.start_worker"):

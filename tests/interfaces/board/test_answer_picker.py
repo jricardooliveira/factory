@@ -13,8 +13,10 @@ from pathlib import Path
 
 from textual.widgets import DataTable, Input, OptionList, Select, TextArea
 
+from factory.domain.interview import InterviewOption, InterviewQuestion
 from factory.evidence.brief import BRIEF_RELPATH
 from factory.interfaces.board.answer import AnswerPicker
+from factory.interfaces.board.interview_screen import QuestionScreen
 from factory.interfaces.board.tui import FactoryBoard
 from factory.interfaces.board.workflow_screen import WorkflowScreen
 from factory.runs.refinement import answer, start_backlog, start_refinement
@@ -141,6 +143,35 @@ class AnswerPickerTests(unittest.IsolatedAsyncioTestCase):
             options = screen.query_one(AnswerPicker).query_one(OptionList)
             self.assertEqual(options.highlighted, 1)
         self.assertEqual(self._decisions("question")[0]["draft_text"], "2")
+
+
+class StoryInterviewModalTests(unittest.IsolatedAsyncioTestCase):
+    """The menu's direct story run still asks in a modal: the same pick list, one way to answer."""
+
+    QUESTION = InterviewQuestion(topic="errors", question="What if payment fails?", options=[
+        InterviewOption(label="Refuse", description="Show an error"),
+        InterviewOption(label="Retry", description="Try once more")])
+
+    async def _ask(self, *keys: str) -> list:
+        results: list = []
+        app = FactoryBoard(Path(tempfile.mkdtemp()) / "f.db", start_overview=False)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.push_screen(QuestionScreen(self.QUESTION, []), results.append)
+            await pilot.pause()
+            self.assertTrue(app.screen.query(AnswerPicker))
+            await pilot.press(*keys)
+            await pilot.pause()
+        return results
+
+    async def test_a_digit_and_enter_answer_with_that_option(self) -> None:
+        self.assertEqual(await self._ask("2", "enter"), ["2"])
+
+    async def test_other_answers_in_your_own_words(self) -> None:
+        self.assertEqual(await self._ask("4", "enter", *"call me", "enter"), ["call me"])
+
+    async def test_escape_is_done_for_now(self) -> None:
+        self.assertEqual(await self._ask("escape"), [None])
 
 
 if __name__ == "__main__":

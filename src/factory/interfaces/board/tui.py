@@ -1,13 +1,14 @@
-"""Interactive Textual board: see status live, give input in place.
+"""Interactive Textual board: one board, home first.
 
-Select a parked run, read what it's asking, type feedback, and approve/reject
-without leaving the screen. Resume work runs in a worker thread (the pipeline can
-take minutes) through `factory.runs` with no event callback: the service never
-prints, so nothing can corrupt the screen, and the board's own refresh tick picks
-up the progress from the DB.
+Home is `workflow_screen.WorkflowScreen` (what needs you, what is working, the one
+next step); this module is the App and, underneath home, "All runs": the run
+table / kanban where a parked run is read and approved or rejected (Esc from home,
+`o` back). Its keys are inert while home is on top (`check_action`).
 
-`i` runs the intake interview for the filtered project in a worker thread whose
-callbacks block on the modals in `interview_screen`; `B` shows its brief and backlog.
+Decisions are queued (`runs.batches.queue_resume`) and the detached worker acts on
+them; the board's refresh tick picks the result up from the DB. Only the menu's
+direct story run (`Story: run next / a new request`) still asks its story questions
+in a blocking modal (`interview_screen.QuestionScreen`, the same pick list as home).
 """
 
 from __future__ import annotations
@@ -42,7 +43,6 @@ from factory.interfaces.board.data import (
     load_board_runs,
 )
 from factory.domain.interview import InterviewQuestion
-from factory.domain.project_spec import ProjectSpec
 from factory.evidence.backlog import BACKLOG_RELPATH
 from factory.evidence.brief import load_brief
 from factory.interfaces.board.interview_screen import PromptScreen, QuestionScreen, ReviewScreen
@@ -66,7 +66,6 @@ from factory.runs import (
     resume_run,
     retry_run,
     run_backlog_story,
-    run_interview,
     run_project_pipeline,
     run_story_interview,
 )
@@ -178,6 +177,9 @@ class FactoryBoard(App):
 
     # ── data ──────────────────────────────────────────────────────
     def reload(self) -> None:
+        # The 2 s tick can land while the app tears down, after the run table is gone.
+        if not self.screen_stack or not self.screen_stack[0].query("#runs"):
+            return
         all_runs = load_board_runs(self.db_path, include_done=(self._view == "kanban"))
         self._all_projects = list_projects_on_board(all_runs)
         runs = [r for r in all_runs if self._project_filter in (None, r.project)]
@@ -472,26 +474,6 @@ class FactoryBoard(App):
         if self._selected_project():
             self.action_project_overview()
 
-    @work(thread=True, exclusive=True, group="interview")
-    def _do_interview(self, ref: str) -> None:
-        try:
-            if has_brief(ref, db_path=self.db_path):
-                self.call_from_thread(
-                    self.notify, f"{ref}: the brief is already approved (B shows it). "
-                    f"To change it: factory interview {ref} --amend \"what changed\""
-                )
-                return
-            outcome = run_interview(ref, db_path=self.db_path, ask=self._ask,
-                                    approve=self._approve, confirm_stack=self._confirm_stack)
-        except Exception as exc:  # RunError, unknown project, or a crash: never kill the board
-            self.call_from_thread(self.notify, str(exc), severity="error")
-            return
-        if outcome.approved:
-            self.call_from_thread(self.notify, f"{ref}: brief approved ({outcome.brief_path}).")
-        else:
-            self.call_from_thread(
-                self.notify, f"{ref}: interview paused, {outcome.answers} answer(s) saved."
-            )
 
     def _modal(self, screen: Screen):
         """Show `screen` and block this worker thread until it is dismissed."""
@@ -507,13 +489,6 @@ class FactoryBoard(App):
 
     def _ask(self, question: InterviewQuestion, missing: list[str]) -> str | None:
         return self._modal(QuestionScreen(question, missing))
-
-    def _approve(self, brief: str) -> bool | str:
-        return self._modal(ReviewScreen("Approve this product brief?", brief, review=True))
-
-    def _confirm_stack(self, spec: ProjectSpec) -> bool | str:
-        return self._modal(ReviewScreen("Proposed tech stack (project-spec.json)",
-                                        spec.model_dump_json(indent=2), review=True))
 
     # ── menu (m / ctrl+p): every major `factory` verb ─────────────
     def get_system_commands(self, screen: Screen):
@@ -601,15 +576,19 @@ class FactoryBoard(App):
         self._prompt("New project", "slug, e.g. habits", create)
 
     def _menu_amend(self) -> None:
+        # The same durable amendment as the home screen's "Amend brief…": questions land
+        # in Needs you; nothing blocks on a modal.
         if ref := self._selected_project():
-            self._prompt(f"Amend the {ref} brief", "what changed",
-                         lambda change: self._job("Amend", self._interview_text, ref, change))
-
-    def _interview_text(self, ref: str, amend: str) -> str:
-        outcome = run_interview(ref, db_path=self.db_path, ask=self._ask, approve=self._approve,
-                                confirm_stack=self._confirm_stack, amend=amend)
-        return (f"Brief updated: {outcome.brief_path}\nRe-propose the backlog next."
-                if outcome.approved else "Amendment paused; the answers so far are saved.")
+            def amend(change: str) -> None:
+                try:
+                    start_refinement(ref, db_path=self.db_path, amendment=change)
+                    start_worker(db_path=self.db_path)
+                except Exception as exc:
+                    self.notify(str(exc), severity="error")
+                    return
+                self.notify("Amendment queued: what it affects will be asked in Needs you.")
+                self.action_project_overview()
+            self._prompt(f"Amend the {ref} brief", "what changed", amend)
 
     def _menu_backlog(self) -> None:
         if ref := self._selected_project():

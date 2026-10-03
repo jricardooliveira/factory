@@ -162,6 +162,23 @@ class WorkflowIntakeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(button.disabled)
             self.assertIn("Needs you", str(button.tooltip))
 
+    async def test_the_menus_amend_is_the_same_durable_amendment(self) -> None:
+        self._approve_old_brief(agreement=True)
+        app = FactoryBoard(self.db_path)
+        async with app.run_test(size=(140, 50)) as pilot:
+            screen = await self._home(app, pilot)
+            command = next(c for c in app.get_system_commands(app.screen)
+                           if c.title == "Interview: amend brief")
+            command.callback()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, PromptScreen)
+            app.screen.query_one(Input).value = "add gift wrapping"
+            await pilot.press("enter")
+            await self._settle(screen, pilot)
+            await app.workers.wait_for_complete()
+        self.assertEqual([mode for _a, mode in self.agents.calls], ["product"])
+        self.assertIn("add gift wrapping", self.agents.prompts[0])
+
 
 if __name__ == "__main__":
     unittest.main()

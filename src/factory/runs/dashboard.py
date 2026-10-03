@@ -83,6 +83,9 @@ def _project_state(conn, project: dict, sessions: list[dict], data: dict) -> dic
         'backlog_open': any(j['kind'] == 'backlog' for j in open_jobs) or any(
             d['kind'] == 'backlog' and d['project_id'] == pid for d in data['decisions']),
         'ready': sum(s['state'] == 'Ready' and s['project_id'] == pid for s in data['stories']),
+        'stories': sum(s['project_id'] == pid for s in data['stories']),
+        'batch_open': any(p['status'] == 'proposed' and p['project_id'] == pid
+                          for p in data['proposals']),
         'paused': data['paused'],
         'queued': len(open_jobs),
     }

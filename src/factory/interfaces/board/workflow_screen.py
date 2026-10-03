@@ -13,13 +13,14 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Header, Select, Static, Tab, Tabs, TextArea
+from textual.widgets import (Button, DataTable, Footer, Header, Select, SelectionList, Static, Tab,
+                             Tabs, TextArea)
 
 from factory.interfaces.board.answer import AnswerPicker
 from factory.interfaces.board.interview_screen import PromptScreen
 from factory.interfaces.board.views import (
-    decision_actions, decision_body, decision_head, decision_row, event_body, event_text,
-    job_body, job_row, local_time, next_step, project_actions, story_body,
+    batch_body, batch_choice, decision_actions, decision_body, decision_head, decision_row,
+    event_body, event_text, job_body, job_row, local_time, next_step, project_actions, story_body,
 )
 from factory.runs.batches import abandon_batch, launch_batch, propose_batch, queue_integration, queue_release
 from factory.runs.dashboard import dashboard, pause_project, recover_job, stop_job
@@ -53,6 +54,7 @@ class WorkflowScreen(Screen[int | None]):
     #wf-detail { height: 1fr; }
     #wf-text { height: auto; color: $text-muted; }
     #wf-answer { height: 5; margin-top: 1; }
+    #wf-ticks { height: auto; max-height: 12; margin-top: 1; }
     #wf-buttons { height: auto; }
     #wf-buttons Button { margin-right: 1; }
     #wf-note { height: auto; color: $error; }
@@ -94,6 +96,7 @@ class WorkflowScreen(Screen[int | None]):
                 yield Static('Select an item to see its context and next action.', id='wf-text',
                              markup=False)
                 yield AnswerPicker(id='wf-picker')
+                yield SelectionList[int](id='wf-ticks')
                 yield TextArea(id='wf-answer', disabled=True)
             # Outside the scroll: however long the document, its actions stay on screen.
             with Horizontal(id='wf-buttons'):
@@ -262,7 +265,9 @@ class WorkflowScreen(Screen[int | None]):
         secondary = self.query_one('#wf-secondary', Button)
         stop = self.query_one('#wf-stop', Button)
         picker = self.query_one('#wf-picker', AnswerPicker)
-        secondary.display = False
+        ticks = self.query_one('#wf-ticks', SelectionList)
+        ticks.display = False
+        secondary.display = stop.display = False  # shown only where they apply
         primary.disabled, stop.disabled, area.disabled = True, True, True
         stop.label = 'Stop at safe boundary'
         area.load_text('')
@@ -289,20 +294,20 @@ class WorkflowScreen(Screen[int | None]):
             primary.disabled = False
         elif kind == 'story':
             head, text = f"Story #{row['id']} · {row['title']}", story_body(row)
-            label = 'Refine story'
+            label = 'Refine again' if row['state'] in ('Ready', 'Blocked') else 'Refine story'
             primary.disabled = row['status'] != 'approved' or row['state'] in ('Refining', 'Needs input')
         elif kind == 'batch':
-            stop.label = 'Abandon batch'
+            stop.label, stop.display = 'Abandon batch', True
             stop.disabled = row['status'] in ('integrating',)
-            plans = [self.data['plans'].get(i, {'id': i}) for i in row['payload']['plan_ids']]
+            stories = {s['id']: s for s in self.data['stories']}
+            plans = [self.data['plans'][i] for i in row['payload']['plan_ids'] if i in self.data['plans']]
             head = f"Batch · {len(plans)} stories · {row['status']}"
-            text = json.dumps({**row['payload'], 'plans': plans}, indent=2)
+            text = batch_body(row, self.data['plans'], stories)
             if row['status'] == 'proposed':
-                label, primary.disabled = 'Launch selected stories', False
-                area.display, area.disabled = True, False
-                area.load_text(', '.join(str(p['backlog_id']) for p in plans if 'backlog_id' in p))
-                text += ('\n\nEdit the backlog IDs below to deselect stories. Launch authorizes '
-                         'model usage within the displayed allowances.')
+                ticks.clear_options()
+                ticks.add_options([(batch_choice(p, stories), p['backlog_id'], True) for p in plans])
+                ticks.display = True
+                label, primary.disabled = self._launch_label(len(plans)), False
             elif row['status'] in ('launched', 'blocked'):
                 label, primary.disabled = 'Verify combined candidate', False
             else:
@@ -313,7 +318,8 @@ class WorkflowScreen(Screen[int | None]):
             label, primary.disabled = 'Open run', False
         elif kind == 'job':
             head, text = job_row(row)[1], job_body(row)
-            stop.disabled = row['status'] not in ('running', 'queued')
+            stop.display = row['status'] in ('running', 'queued')
+            stop.disabled = not stop.display
             if row['status'] in ('failed', 'interrupted'):
                 label = 'Retry' if row.get('retryable') else 'Reconcile stopped job'
                 primary.disabled = False
@@ -325,6 +331,16 @@ class WorkflowScreen(Screen[int | None]):
         self.query_one('#wf-text', Static).update(text)
         primary.label = label
         self._loading = False
+
+    @staticmethod
+    def _launch_label(count: int) -> str:
+        return f"Launch {count} {'story' if count == 1 else 'stories'}"
+
+    @on(SelectionList.SelectedChanged, '#wf-ticks')
+    def ticked(self, event: SelectionList.SelectedChanged) -> None:
+        count = len(event.selection_list.selected)
+        primary = self.query_one('#wf-primary', Button)
+        primary.label, primary.disabled = self._launch_label(count), count == 0
 
     # ── drafts ──────────────────────────────────────────────────────
     @on(TextArea.Changed, '#wf-answer')
@@ -405,6 +421,9 @@ class WorkflowScreen(Screen[int | None]):
             if not text:
                 self._note('Choose an option, or write your answer under Other.')
                 return
+        if kind == 'batch' and identity == 'wf-primary' and row['status'] == 'proposed':
+            # Read on the UI thread; _do runs in a worker thread and must not touch widgets.
+            text = ','.join(map(str, self.query_one('#wf-ticks', SelectionList).selected))
         if identity == 'wf-secondary' and not text.strip():
             self._note('Say what should change first, in the box above.')
             self.query_one('#wf-answer', TextArea).focus()
@@ -480,9 +499,10 @@ class WorkflowScreen(Screen[int | None]):
             return 'Answer saved.', True
         if identity == 'wf-primary' and kind == 'batch':
             if row['status'] == 'proposed':
-                ids = [int(i.strip()) for i in text.split(',') if i.strip()]
+                ids = [int(i) for i in text.split(',') if i]
                 launch_batch(row['id'], db_path=db, selected_ids=ids)
-                return 'Batch launched.', True
+                count = len(ids)
+                return f"Batch launched: {count} {'story' if count == 1 else 'stories'} queued to build.", True
             queue_integration(row['id'], db_path=db)
             return 'Combined verification queued.', True
         return 'Nothing to do for this item.', False

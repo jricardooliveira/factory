@@ -130,10 +130,13 @@ def project_actions(state: dict[str, Any] | None) -> list[ProjectAction]:
         actions = [ProjectAction("wf-intake", "Amend brief…", not state["intake_open"], busy)]
     if state["brief"]:
         actions.append(ProjectAction(
-            "wf-backlog", "Propose backlog", not state["backlog_open"],
+            "wf-backlog", "Re-propose backlog" if state.get("stories") else "Propose backlog",
+            not state["backlog_open"],
             "A backlog proposal is already waiting in Needs you, or being written."))
     if state["ready"]:
-        actions.append(ProjectAction("wf-propose", f"Propose batch ({state['ready']} ready)"))
+        actions.append(ProjectAction(
+            "wf-propose", f"Propose batch ({state['ready']} ready)", not state.get("batch_open"),
+            "A batch proposal is already waiting in Needs you: launch or abandon it first."))
     actions.append(ProjectAction("wf-pause", "Resume new starts" if state["paused"]
                                  else "Pause new starts"))
     return actions
@@ -264,3 +267,30 @@ def next_step(data: dict[str, Any]) -> NextStep | None:
         return NextStep("wf-intake", "Complete agreement", "Complete the technical and execution agreement",
                         "This brief predates the technical and execution sections; they are asked once.")
     return None
+
+
+def batch_body(proposal: dict[str, Any], plans: dict[str, dict], stories: dict[int, dict]) -> str:
+    """What launching this batch authorizes, and what was left out and why."""
+    payload = proposal["payload"]
+    members = [plans.get(i, {}) for i in payload["plan_ids"]]
+    each = max((p.get("budget_usd", 0) for p in members), default=0)
+    lines = [f"Budget ${payload['budget_usd']:.2f} (up to ${each:.2f} per story) · "
+             f"{payload['limit']} at once",
+             "Launching lets the factory build the ticked stories, each in its own worktree; "
+             "release still needs you."]
+    if proposal["status"] == "proposed":
+        lines.append("Untick a story to leave it for a later batch.")
+    excluded = payload.get("excluded") or {}
+    if excluded:
+        lines += ["", "Not in this batch"]
+        for story_id, reasons in excluded.items():
+            title = stories.get(int(story_id), {}).get("title", "")
+            lines.append(f"- #{story_id} {title}: " + "; ".join(reasons))
+    return "\n".join(lines)
+
+
+def batch_choice(plan: dict[str, Any], stories: dict[int, dict]) -> str:
+    """One tickable line: the story and what it will change."""
+    title = stories.get(plan["backlog_id"], {}).get("title", "")
+    writes = [r["name"] for r in plan.get("resources", []) if r.get("mode") == "write"]
+    return f"#{plan['backlog_id']} {title}" + (f" — changes {', '.join(writes)}" if writes else "")
