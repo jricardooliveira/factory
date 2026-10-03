@@ -226,7 +226,8 @@ class LegacyImportTests(unittest.TestCase):
         self._import()
         pkg = tp.assemble(self.home / "factory.db", self.fx["run_id"])
         self.assertEqual(pkg["diff"]["source"], "git")
-        self.assertEqual(pkg["diff"]["files"], [{"path": "app.py", "change": "added"}])
+        self.assertEqual(pkg["diff"]["files"], [
+            {"path": "app.py", "change": "added", "additions": 2, "deletions": 0}])
         self.assertEqual(pkg["diff"]["scope_violations"], [])
         self.assertTrue(pkg["adr"]["path"].endswith("ADR-US-0001-search.md"))
 

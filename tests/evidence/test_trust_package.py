@@ -184,5 +184,41 @@ class ReleasedPackageTests(unittest.TestCase):
             errors = tp.schema_errors({"verdict": "pass"})
         self.assertTrue(errors and "schema" in errors[0], errors)
 
+class SecurityFindingsTests(unittest.TestCase):
+    """`findings` are what needs attention; a passing dimension's explanations of why
+    it is fine are `notes` — kept in the record, off the Checkpoint 3 line."""
+
+    def _block(self, review: dict, tester: dict | None = None) -> dict:
+        import json
+
+        from factory.evidence.trust_package import _security_boundary
+
+        logs = [{"agent": "boundary-agent", "output_text": json.dumps(review)}]
+        return _security_boundary(tester or {"security_verdict": "pass"}, logs)
+
+    def test_a_passing_dimensions_findings_are_notes(self) -> None:
+        block = self._block({
+            "tenant": {"verdict": "not_applicable", "findings": ["single user"]},
+            "authorization": {"verdict": "pass", "findings": ["loopback only"]},
+            "api_contract": {"verdict": "pass", "findings": []},
+            "security": {"verdict": "pass", "findings": ["Host and Origin are checked"]},
+        })
+        self.assertEqual(block["overall"], "pass")
+        self.assertEqual(block["findings"], [])
+        self.assertEqual(block["notes"], [
+            "boundary review: single user", "boundary review: loopback only",
+            "boundary review: Host and Origin are checked"])
+
+    def test_a_warned_dimensions_findings_stay_findings(self) -> None:
+        block = self._block(
+            {"tenant": {"verdict": "pass", "findings": ["scoped by customer id"]},
+             "security": {"verdict": "warn", "findings": ["no rate limit on export"]}},
+            tester={"security_verdict": "pass", "security_findings": ["token logged at debug"]},
+        )
+        self.assertEqual(block["findings"], ["token logged at debug",
+                                             "boundary review: no rate limit on export"])
+        self.assertEqual(block["notes"], ["boundary review: scoped by customer id"])
+
+
 if __name__ == "__main__":
     unittest.main()

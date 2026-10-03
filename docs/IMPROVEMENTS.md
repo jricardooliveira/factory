@@ -27,6 +27,8 @@ Ranked by value for effort. "Interruptions" counts separate times the operator m
 
 ### 1. Run the product's tests after every attempt, whatever files it wrote
 
+**Status: done** in `verification/__init__.py` (the suite run moved out of `if py_files:`; decided from the repository) and `verification/go.py` (`modules_with_tests`); tests in `tests/verification/test_verify.py` (`SuiteRunsWhateverTheAttemptWroteTests`). Still open: with tests OFF (or no suite), a coder returning zero `code_blocks` + `complete` still passes on `verify:skip` — a policy question, not this code path.
+
 **Problem.** `verify_changes` (`src/factory/verification/__init__.py:44-55`) chooses checks by the extension of the files *this attempt* materialized, and the `pytest` run sits inside `if py_files:`. An attempt that writes only a template, a JavaScript file, or nothing at all gets a single `verify:skip` check, and `VerifyResult.passed` is "no check failed" (`verification/base.py:46-47`), so the task passes and is committed without the suite ever running.
 
 Evidence: run 6, task T-0004. Attempt 1 failed `pytest_run:fail` on a template-content assertion (`gate_results` id 44). Attempt 2 changed only the template and was recorded `[T-0004] verify:skip`, passed (id 45) — the failing test was never re-run for that attempt. It happened to pass at T-0005 (id 46), but had T-0004 been the last task the story would have reached the tester and the trust package with `tests.passed: true`, because `_test_execution` (`evidence/trust_package.py:71-107`) takes the *newest* `pytest_run` marker, which would have been T-0003's pass. The same hole lets a coder that returns zero `code_blocks` with `verdict: complete` pass a task (run 5 retry, ids 30–34: four `verify:skip` passes).
@@ -39,6 +41,8 @@ Offline reproduction (done for this review): with `FACTORY_RUN_TESTS=1`, a repo 
 
 ### 2. `factory retry` (and any resume into the coder) continues at the first unbuilt task
 
+**Status: done** in `runs/context.py` (`built_tasks`, `last_build`), `runs/service.py` (`resume_run` seeds `task_index`/`tasks_completed`) and `pipeline/graph.py` (`compile_tester_resume_pipeline`: every task built + newest build green → enter at the tester); tests in `tests/runs/test_retry_progress.py`. Built is read from the run's gate-build rows + coder verdicts, not from commits. Still restarts at task 1: every task built but the newest gate-build (a remediation pass) failed.
+
 **Problem.** `resume_run` → entry `coder` → `compile_coder_only_pipeline()` with a state carrying no `task_index`/`tasks_completed` (`runs/service.py:390-394`, `_resume_state` lines 429-467), so the coder starts at task 0. Tasks already committed are re-run and re-paid.
 
 Evidence: run 1 ids 29–33 re-ran T-0001..T-0004 after they were committed at 02:46 ($0.28 for nothing); run 5 ids 55–60 re-ran all six tasks after the tester failures ($0.99 — four returned no code and passed on `verify:skip`, two re-emitted files already in HEAD; `git log` shows the duplicated `factory: T-0004` / `T-0006` commits). Total waste $1.27, the price of story 1. A side effect the operator reported is also explained here: on a retry with tests on, the whole suite (including later tasks' committed tests) runs after task 1's re-attempt, so a failing later test fails an earlier task that is fine.
@@ -49,6 +53,8 @@ Evidence: run 1 ids 29–33 re-ran T-0001..T-0004 after they were committed at 0
 
 ### 3. A provider error is "unavailable, try later", not the agent going off-script
 
+**Status: done** in `pipeline/agent_calls.py` (`ProviderUnavailable`, raised before parsing, no repair call; the nodes' existing `except` ends the run `failed` with the provider's message); tests in `tests/pipeline/test_json_repair.py` and `test_coder_route_ends.py`.
+
 **Problem.** `run_agent_json` (`pipeline/agent_calls.py:74-97`) never reads `AgentResult.success`/`returncode`; a failed call's output (`claude_cli.py:75,79`: `"ERROR: …"`) is parsed as non-JSON, a *second* paid repair call is made with the same prompt, and the node records `blocked` with "Agent went off-script: ERROR: You've hit your session limit · resets 4am". That ends the story as `blocked` and the operator must diagnose it from `factory review`.
 
 Evidence: run 1, `agent_logs` ids 8–28: 21 identical `blocked` rows, 0 tokens, 2 s each, output `ERROR: You've hit your session limit · resets 4am (Europe/Lisbon)`. The infinite loop is fixed (`3d1686b`), the misclassification is not.
@@ -58,6 +64,8 @@ Evidence: run 1, `agent_logs` ids 8–28: 21 identical `blocked` rows, 0 tokens,
 **Benefit.** No wasted repair call, no false "off-script" verdict in the evidence, one clear line for the operator. **Effort: S.** No operator decision.
 
 ### 4. Make the Checkpoint 3 evidence say only what is true (three small fixes)
+
+**Status: done.** 4a in `domain/traceability.py` (a leading `ACn` / `n.` reference is an exact match; the tester prompt was NOT changed — testers already number by position); 4b in `workspace/git.py` (`git_line_stats`) + `evidence/trust_package.py` (`_test_change`, `diff.files[].additions/deletions`); 4c in `evidence/trust_package.py` (`security_boundary.notes`), the schema, and `interfaces/render/review.py`.
 
 The operator signs off on gaps that are not gaps; that trains them to click through (`EFFECTIVENESS.md §10`).
 

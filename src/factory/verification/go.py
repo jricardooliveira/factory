@@ -56,6 +56,34 @@ def go_module_dirs(root: Path, go_files: list[Path]) -> list[Path]:
     return found
 
 
+# Never the product's own modules (vendored or downloaded code).
+_SKIP_TREES = {".git", "vendor", "node_modules", ".venv", "testdata"}
+
+
+def modules_with_tests(root: Path) -> list[Path]:
+    """Every Go module in the repo that has a `_test.go` file (sorted).
+
+    The Go counterpart of `python.has_tests`: lets the suite run after an attempt
+    that wrote no .go file at all.
+    """
+    found: set[Path] = set()
+    try:
+        modules = sorted(
+            (m.parent.resolve() for m in root.rglob("go.mod")
+             if not any(part in _SKIP_TREES for part in m.relative_to(root).parts)),
+            key=lambda d: len(d.parts), reverse=True,  # nearest (deepest) module wins
+        )
+        for test in root.rglob("*_test.go"):
+            if any(part in _SKIP_TREES for part in test.relative_to(root).parts):
+                continue
+            owner = next((m for m in modules if m in test.resolve().parents), None)
+            if owner:
+                found.add(owner)
+    except OSError:
+        return []
+    return sorted(found)
+
+
 # Messages that mean "the module graph could not be resolved from here" — a
 # network/cache condition, not proof the code is wrong.
 _GO_ENV_MARKERS = (

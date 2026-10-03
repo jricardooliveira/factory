@@ -258,6 +258,14 @@
         },
         "findings": {
           "type": "array",
+          "description": "What needs the operator's attention: the tester's security findings and those of a boundary dimension that did not pass.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "description": "Informational: the findings of boundary dimensions that passed or did not apply.",
           "items": {
             "type": "string"
           }

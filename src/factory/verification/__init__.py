@@ -12,7 +12,8 @@ Design notes:
   installed in the factory's environment, so a failure there is not proof the
   code is broken.
 - Running test BODIES is opt-in (FACTORY_RUN_TESTS=1): a test failure then HARD-
-  fails the gate. Off by default since executing agent-generated code is risky
+  fails the gate, and the repo's suite runs after EVERY attempt, whatever files
+  it wrote. Off by default since executing agent-generated code is risky
   without true OS-level isolation.
 
 Layout: shared types and the subprocess runner in base.py, one module per
@@ -43,16 +44,9 @@ def verify_changes(written_paths: list[Path], *, root: Path) -> VerifyResult:
 
     if py_files:
         result.checks.append(python.py_compile_check(py_files, root))
-        # Run the project's suite after ANY Python change, not only after a task
-        # that happened to write a test file. Gating on "this task wrote a test"
-        # meant a source-only change never executed the existing tests — exactly
-        # the case where a regression is invisible.
         # Static: catches a coder referencing a module or name it never wrote,
         # without importing — i.e. without executing — anything it wrote.
         result.checks.append(python.static_import_check(py_files, root))
-        if tests_enabled():
-            if python.has_tests(root):
-                result.checks.append(python.run_tests(root))
         # No `pytest --collect-only` by default: collection imports conftest.py and
         # every test module, so it EXECUTED agent-written code on the operator's
         # machine with FACTORY_RUN_TESTS off (review task T03). Opting in to tests
@@ -79,6 +73,16 @@ def verify_changes(written_paths: list[Path], *, root: Path) -> VerifyResult:
 
     if ts_files:
         result.checks.append(typescript.tsc_check(root, ts_files))
+
+    if tests_enabled():
+        # Which suite exists is a fact about the REPOSITORY, not about the files this
+        # attempt wrote: a template-only retry (or one that wrote nothing) used to
+        # get a lone `verify:skip` — a pass — straight after a `pytest_run:fail`.
+        if python.has_tests(root):
+            result.checks.append(python.run_tests(root))
+        # A Go attempt already ran its modules' tests above (they need its build).
+        if not go_files and (test_modules := go.modules_with_tests(root)):
+            result.checks.append(go.run_go_tests(test_modules))
 
     if not result.checks:
         result.checks.append(VerifyCheck("verify", "skip", "no verifiable files"))

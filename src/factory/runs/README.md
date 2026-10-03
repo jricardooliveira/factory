@@ -32,7 +32,10 @@ callback and refusals are raised as `RunError`.
   `respond_to_gate` as `APPROVED: ...` / `REJECTED: ...`, reopens the run, rebuilds context, then picks
   the graph from `pipeline.resume_entry_for(gate_name, action)`: `spec`, `architect`, `release`,
   `remediation` (Checkpoint 3 rejected: coder-only graph with `remediation=True` and
-  `attempt_number=2`) or the default coder-only graph. A parked replay resumes as a replay.
+  `attempt_number=2`) or the default coder-only graph. Into the coder, the run continues at the first task that is
+  not built (`context.built_tasks`: newest `gate-build` row for `[T-id]` passed and the coder said
+  `complete`); with every task built and the newest build green it enters at the tester instead
+  (`compile_tester_resume_pipeline`, `ResumeEntered.entry == "tester"`). A parked replay resumes as a replay.
 - **Retry** (`retry_run`): for a `blocked`/`failed` run whose checkpoint was already answered (e.g. a
   provider error after `reject`). `requeue_answered_gate` reopens the answered gate, then `resume_run`
   replays the same decision via `decision_from_response`.

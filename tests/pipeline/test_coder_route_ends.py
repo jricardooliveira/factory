@@ -17,7 +17,14 @@ from unittest.mock import patch
 from factory.adapters.opencode import AgentResult
 from factory.pipeline.graph import route_after_coder
 from factory.pipeline.nodes.coder import node_coder_agent
-from factory.state.db import create_story, get_db, init_db, start_run
+from factory.state.db import (
+    create_story,
+    get_db,
+    get_run,
+    get_run_logs,
+    init_db,
+    start_run,
+)
 from factory.workspace.git import git_init
 
 
@@ -56,9 +63,19 @@ class OffScriptAfterAPassedTaskTests(unittest.TestCase):
                  "architect": {"architecture_notes": "n", "modules_affected": ["."]},
                  "task_index": 1, "next_action": "next_task"}
         limit = AgentResult("coder-agent", "ERROR: You've hit your session limit", 2.0, 1)
-        with patch("factory.pipeline.agent_calls.run_agent", return_value=limit):
+        with patch("factory.pipeline.agent_calls.run_agent", return_value=limit) as call:
             out = node_coder_agent(state)
-        self.assertEqual(out["status"], "blocked")
+        # A provider failure, named as one: not "off-script", and no repair call.
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(out["status"], "failed")
+        self.assertIn("the model call failed: You've hit your session limit", out["error"])
+        self.assertNotIn("off-script", out["error"])
+        with get_db(root / "f.db") as conn:
+            run = get_run(conn, run_id)
+            logs = get_run_logs(conn, run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("the model call failed", run["error"])
+        self.assertEqual([log["verdict"] for log in logs], ["error"])
         self.assertEqual(route_after_coder({**state, **out}), "__end__")
 
 

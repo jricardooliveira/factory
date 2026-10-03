@@ -189,13 +189,17 @@ def _ac_covered(pkg: dict) -> str:
 def _print_trust_package(pkg: dict, trust_issues: list[str]) -> None:
     """The release sign-off evidence, one panel."""
     sb = pkg["security_boundary"]
+    notes = len(sb.get("notes") or [])  # absent in packages saved before notes existed
     tick = lambda b: "[green]✓[/green]" if b else "[red]✗[/red]"  # noqa: E731
     lines = [
         f"Verdict: [bold]{pkg['verdict']}[/bold]  ·  next: {pkg['next_authorization']}",
         f"{tick(pkg['tests']['passed'])} tests passed  ·  AC covered: {_ac_covered(pkg)}",
         f"Files changed: {len(pkg['diff']['files'])}  ·  ADR: {pkg['adr']['path'] or '—'}",
         f"Security: {sb['overall']} (highest: {sb['highest_severity']})"
-        + (f" — {sb['findings']}" if sb['findings'] else ""),
+        # Passing dimensions' explanations stay in the package: here they buried the findings.
+        + (f" · {notes} informational note{'' if notes == 1 else 's'} in the trust package"
+           if notes else ""),
+        *[f"  • {escape(str(f))}" for f in sb["findings"]],
         f"Cost: ${pkg['cost']['usd']:.4f}  ·  {pkg['cost']['tokens_in']}→{pkg['cost']['tokens_out']} tok",
     ]
     lines += [f"[yellow]⚠ {escape(b)}[/yellow]" for b in pkg.get("blockers", [])]

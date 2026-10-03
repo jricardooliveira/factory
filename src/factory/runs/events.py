@@ -63,7 +63,9 @@ class ResumeEntered:
     """A parked run's decision is recorded; the graph re-enters at `entry`."""
 
     run_id: int
-    entry: str  # "spec" | "architect" | "coder" (pipeline.resume_entry_for)
+    # pipeline.resume_entry_for: "spec" | "architect" | "coder" | "release" |
+    # "remediation"; or "tester" when a resume into the coder finds every task built.
+    entry: str
     action: str  # "approve" | "reject"
     decision: str  # the operator's note, or the default approve/reject wording
 

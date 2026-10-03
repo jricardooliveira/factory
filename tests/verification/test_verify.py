@@ -686,3 +686,90 @@ class GoWithoutModuleTests(unittest.TestCase):
         self.assertEqual(names.get("go_build"), "pass", result.summary)
         self.assertNotIn("go_parse", names,
                          "the parse fallback is only for the module-less case")
+
+
+class SuiteRunsWhateverTheAttemptWroteTests(unittest.TestCase):
+    """With test execution on, the suite runs after EVERY attempt.
+
+    The pytest run sat inside `if py_files:`, so an attempt that wrote only a
+    template (or nothing) returned a lone `verify:skip`, which counts as passed —
+    live, run 6 T-0004 attempt 2 passed that way right after a `pytest_run:fail`.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._prev = os.environ.get("FACTORY_RUN_TESTS")
+        os.environ["FACTORY_RUN_TESTS"] = "1"
+
+    def tearDown(self) -> None:
+        if self._prev is None:
+            os.environ.pop("FACTORY_RUN_TESTS", None)
+        else:
+            os.environ["FACTORY_RUN_TESTS"] = self._prev
+        self._tmp.cleanup()
+
+    def _write(self, rel: str, content: str) -> Path:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def _failing_suite(self) -> None:
+        self._write("tests/test_x.py", "def test_x():\n    assert False\n")
+
+    def test_a_template_only_attempt_runs_the_failing_suite(self) -> None:
+        self._failing_suite()
+        page = self._write("app/templates/index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        names = {c.name: c.status for c in result.checks}
+        self.assertEqual(names.get("pytest_run"), "fail", result.summary)
+        self.assertFalse(result.passed)
+
+    def test_an_attempt_that_wrote_nothing_runs_the_failing_suite(self) -> None:
+        self._failing_suite()
+        result = verify_changes([], root=self.root)
+        self.assertEqual({c.name: c.status for c in result.checks}.get("pytest_run"), "fail")
+        self.assertFalse(result.passed)
+
+    def test_the_suite_runs_once_on_a_python_attempt(self) -> None:
+        self._failing_suite()
+        mod = self._write("mod.py", "x = 1\n")
+        result = verify_changes([mod], root=self.root)
+        self.assertEqual([c.name for c in result.checks].count("pytest_run"), 1)
+
+    def test_no_suite_still_skips(self) -> None:
+        page = self._write("index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        self.assertEqual(result.summary, "verify:skip")
+        self.assertTrue(result.passed)
+
+    def test_nothing_runs_when_execution_is_off(self) -> None:
+        # Default verification executes nothing the coder wrote.
+        os.environ.pop("FACTORY_RUN_TESTS", None)
+        self._failing_suite()
+        page = self._write("index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        self.assertEqual(result.summary, "verify:skip")
+
+    @unittest.skipUnless(shutil.which("go"), "go toolchain not installed")
+    def test_a_non_go_attempt_runs_the_go_suite(self) -> None:
+        self._write("backend/go.mod", "module supportflow\n\ngo 1.21\n")
+        self._write("backend/x_test.go", (
+            "package x\n\nimport \"testing\"\n\n"
+            "func TestX(t *testing.T) { t.Fatal(\"broken\") }\n"
+        ))
+        page = self._write("frontend/index.html", "<p>hi</p>\n")
+        result = verify_changes([page], root=self.root)
+        names = {c.name: c.status for c in result.checks}
+        self.assertEqual(names.get("go_test"), "fail", result.summary)
+
+    def test_go_modules_with_tests_are_found_from_the_repo(self) -> None:
+        from factory.verification.go import modules_with_tests
+
+        self._write("backend/go.mod", "module a\n")
+        self._write("backend/internal/x_test.go", "package x\n")
+        self._write("tools/go.mod", "module b\n")  # no tests: nothing to run
+        self._write("node_modules/dep/go.mod", "module c\n")
+        self._write("node_modules/dep/y_test.go", "package y\n")
+        self.assertEqual(modules_with_tests(self.root), [(self.root / "backend").resolve()])

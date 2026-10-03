@@ -240,6 +240,12 @@ def print_resume_entered(event: ResumeEntered) -> None:
             f"the coder fixes what you named, then the tester re-reviews...\n\n{decision}",
             border_style="yellow",
         ))
+    elif event.entry == "tester":
+        output.console.print(Panel(
+            f"Run #{run_id} [bold green]APPROVED[/bold green] — every task is already "
+            f"built; re-running the review (tester-agent)...",
+            border_style="green",
+        ))
     else:
         output.console.print(Panel(
             f"Run #{run_id} [bold green]APPROVED[/bold green] — building the approved "

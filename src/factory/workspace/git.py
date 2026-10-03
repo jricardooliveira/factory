@@ -378,6 +378,33 @@ def git_changed_files(
     return [{"path": p, "change": c} for p, c in sorted(files.items())]
 
 
+def git_line_stats(
+    root: Path, base: str | None, *, end: str | None = None
+) -> dict[str, tuple[int, int]]:
+    """(lines added, lines removed) per path from `base` to `end` (default: the
+    working tree), from `git diff --numstat`. {} when it cannot be measured; a
+    binary file has no line count and is left out.
+
+    Lets the trust package tell a test file that only GAINED tests from one whose
+    existing lines were removed or changed (a changed line is one removed + one added).
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return {}
+    target = [end] if end and _git_resolve(root, f"{end}^{{commit}}") else []
+    try:
+        # --no-renames: one plain path per line (a rename is a delete plus an add).
+        proc = _run(["git", "diff", "--numstat", "--no-renames",
+                     base or _factory_baseline(root), *target], root)
+    except (subprocess.SubprocessError, OSError):
+        return {}
+    stats: dict[str, tuple[int, int]] = {}
+    for line in proc.stdout.splitlines() if proc.returncode == 0 else []:
+        parts = line.split("\t", 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            stats[parts[2].strip()] = (int(parts[0]), int(parts[1]))
+    return stats
+
+
 def code_changed_since(
     root: Path, commit: str, *, exclude: tuple[str, ...] = ()
 ) -> bool | None:

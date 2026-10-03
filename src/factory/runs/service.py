@@ -33,11 +33,14 @@ from factory.pipeline import (
     compile_pipeline,
     compile_release_pipeline,
     compile_spec_resume_pipeline,
+    compile_tester_resume_pipeline,
     resume_entry_for,
 )
 from factory.runs.context import (
     last_boundary_review,
+    last_build,
     build_resume_context,
+    built_tasks,
     decision_from_response,
     load_project_spec_text,
     park_unresumable,
@@ -392,6 +395,28 @@ def resume_run(
             _unresumable(run_id, "missing architect log", db_path)
         pipeline = compile_coder_only_pipeline()
         state["architect"] = arch_parsed
+        # Continue at the first task that is not built: a retry used to restart at
+        # task 1 and re-pay every task already committed.
+        try:
+            tasks = order_tasks(list(SpecOutput.model_validate(spec_parsed).tasks))
+        except ValueError:  # never leave the reopened run 'running'
+            _unresumable(run_id, "the recorded story is not a usable spec", db_path)
+        task_ids = [t.id for t in tasks]
+        with get_db(db_path) as conn:
+            built = built_tasks(conn, run_id, task_ids)
+            build = last_build(conn, run_id)
+        if not task_ids or len(built) < len(task_ids):
+            state.update({"tasks_completed": built, "task_index": len(built)})
+        elif build and build["passed"]:
+            # Everything is built and green: only the review is left to redo.
+            entry = "tester"
+            pipeline = compile_tester_resume_pipeline()
+            state.update({"tasks_completed": built, "task_index": len(built),
+                          "gate_build": {"passed": True, "verdict": "pass",
+                                         "reason": build["reason"]}})
+        # else: every task is built but the newest build (a remediation pass) failed.
+        # The boss starts the tester only on a green build, so the tasks are rebuilt
+        # from task 1, as before.
     if state.get("architect"):
         # The approved design's boundary rules travel with it to the coder and tester.
         with get_db(db_path) as conn:
