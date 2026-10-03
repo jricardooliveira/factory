@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1072 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1072 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1075 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1075 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -290,6 +290,12 @@ input/output is stored, so any run replays offline for free. Evidence is version
   suite runs after EVERY attempt, whatever it wrote (`verify_changes` asks the repository —
   `python.has_tests`, `go.modules_with_tests` — not this attempt's file extensions); a lone
   `verify:skip` means the repo has no suite.
+- **Coder writes are checked against the APPROVED DESIGN, not one task's file list**
+  (operator decision, 2026-10-03): a scoped task may also write the source files in the
+  architect's `modules_affected` (`verification.scope.design_scope`; what Checkpoint 2
+  approves) — listed in the pack as "Also allowed" and shown in full. The spec-agent splits
+  files between tasks before the design exists; a wrong split left the coder able only to
+  refuse. A file outside the design is still refused before it lands.
 - **A retry may also change the test files that just failed** (operator decision,
   2026-10-03): `VerifyCheck.files` carries the test files pytest named as failed,
   `state["retry_scope"]` adds exactly those to the task's allowed and shown files for the

@@ -32,6 +32,7 @@ from factory.state.db import (
 )
 from factory.verification import VerifyResult, verify_changes
 from factory.verification.scope import (
+    design_scope,
     declared_scope_mismatch,
     paths_outside_scope,
     scope_note,
@@ -383,10 +384,15 @@ def _implement_task(
     """One coder call for the current task, then gate-build and routing."""
     task_index = state.get("task_index", 0)
     task = tasks[task_index]
-    if task.scope and state.get("retry_scope"):
-        # The failing test files join this attempt's allowed (and shown) files. An
-        # empty scope forbids nothing, so there is nothing to widen.
-        task = task.model_copy(update={"scope": [*task.scope, *state["retry_scope"]]})
+    # What this attempt may write besides its own files: the source files of the design
+    # the operator approved (the spec-agent split files between tasks BEFORE that design
+    # existed, and a wrong split left the coder able only to refuse), and the test files
+    # that just failed. An empty scope forbids nothing, so there is nothing to widen.
+    also: tuple[str, ...] = ()
+    if task.scope:
+        design = design_scope((state.get("architect") or {}).get("modules_affected") or [])
+        also = tuple(p for p in dict.fromkeys([*design, *(state.get("retry_scope") or [])])
+                     if p not in task.scope)
     prompt = build_coder_task_prompt(
         state,
         task,
@@ -395,6 +401,7 @@ def _implement_task(
         task_count=len(tasks),
         completed=list(state.get("tasks_completed", [])),
         attempt=state.get("attempt_number", 1),
+        also_allowed=also,
     )
 
     result, parsed = run_agent_json(state, "coder-agent", prompt, slot=task.id)
@@ -405,13 +412,14 @@ def _implement_task(
     if coder.design_feedback.strip():
         return _design_feedback(conn, state, task, prompt, result, parsed, coder)
 
-    outside = _outside_scope(state, coder, task.scope)
+    allowed = [*task.scope, *also] if task.scope else []
+    outside = _outside_scope(state, coder, allowed)
     if outside:
         # Refused before anything lands: the retry starts from a clean tree.
         log_agent(conn, state["run_id"], "coder-agent", prompt, result.output,
                   verdict=coder.verdict, duration_secs=result.duration_secs,
                   stage_type=task.id, **usage_kwargs(result))
-        gate_reason = _scope_reason(task.id, outside, task.scope)
+        gate_reason = _scope_reason(task.id, outside, allowed)
         log_gate(conn, state["run_id"], "gate-build", False, gate_reason)
         base = {"coder_raw": result.output, "coder": parsed,
                 "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,

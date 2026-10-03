@@ -53,6 +53,21 @@ def strip_repo_prefix(path: str) -> str:
     return path
 
 
+def design_scope(modules_affected: list[str]) -> list[str]:
+    """The source files the approved design lists, as paths (order kept).
+
+    The architect annotates its entries (`app/routes.py (changed: ...)`); what the
+    operator approves at Checkpoint 2 is that list. Tests are left out: they are always
+    writable (`_TEST_PATH_RE`), and showing every test file would bloat each task's prompt.
+    """
+    out: list[str] = []
+    for entry in modules_affected:
+        path = entry.split(" (", 1)[0].strip().strip("`")
+        if path and " " not in path and not _TEST_PATH_RE.search(path) and path not in out:
+            out.append(path)
+    return out
+
+
 def paths_outside_scope(changed: list[str], allowed_scope: list[str]) -> list[str]:
     """Changed paths that fall outside a task's declared allowed scope.
 
