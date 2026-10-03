@@ -409,9 +409,9 @@ def run_story_interview(project_ref: str, request: str, *, db_path: Path, ask: A
             settled.append(StoryClarification(question.question, answer, assumed, undecided))
             questions.append(question)
             target = question.follow_up_of
-            if (not undecided and target and 1 <= target < len(settled)
-                    and settled[target - 1].undecided):
-                # The follow-up carries the decision: the unsure line drops out.
+            if target and 1 <= target < len(settled) and settled[target - 1].undecided:
+                # The follow-up is now the live question (decided or still open): the
+                # unsure line it follows up drops out, so the doubt is asked about once.
                 settled[target - 1] = settled[target - 1]._replace(superseded=True)
         if len(settled) == before:
             break  # nothing answered: asking again would repeat the same paid call

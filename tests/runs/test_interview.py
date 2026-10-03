@@ -511,6 +511,24 @@ class StoryInterviewTests(_InterviewFixture):
         self.assertNotIn("I don't know", text)  # the follow-up carries the decision
         self.assertIn("- Concretely? — Stop me", text)
 
+    def test_an_unsure_follow_up_replaces_what_it_follows_up_so_it_is_asked_once(self) -> None:
+        # Live (habits story 2): unsure on the question AND on its follow-up, the
+        # operator was then asked the same doubt twice.
+        self._agent(_turn("errors", options=["Refuse", "Allow"]),
+                    self._follow_up(1, "Stop me", "Warn me"), DONE)
+        asked: list[str] = []
+        replies = iter(["I don't know", "still not sure", "2"])
+
+        def ask(question, missing):
+            asked.append(question.question)
+            return next(replies)
+
+        text = self._story(ask=ask)
+        self.assertEqual(asked, ["Q about errors?", "Concretely?",
+                                 "You were not sure about this one. Concretely?"])
+        self.assertEqual(text, "Add refunds\n\n## Operator clarifications\n"
+                               "- Concretely? — Warn me")
+
     def test_questions_stop_at_the_cap_and_done_stops_early(self) -> None:
         self._agent(*[_turn("errors", "data", "success", "users")] * 3)
         text = self._story()

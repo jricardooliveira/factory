@@ -55,8 +55,8 @@ def dismiss_command(args: list[str]) -> None:
     except runs.RunError as exc:
         fail(str(exc))
     render.console.print(f"[green]Run #{run_id} dismissed (archived).[/green]"
-                         + (" Its story is back in the backlog: factory next <project>."
-                            if returned else ""))
+                         + (" Its story is back in the backlog: `factory status` shows"
+                            " the command to start it again." if returned else ""))
 
 
 def reconcile_command(args: list[str]) -> None:
