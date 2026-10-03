@@ -73,6 +73,7 @@ class Story:
     last_progress: str = ""
     plan: dict[str, Any] | None = None
     run_id: int | None = None
+    job_id: str | None = None  # its queued/running build, the one Stop asks to stop
     assumptions: list[str] = field(default_factory=list)
 
 
@@ -93,6 +94,7 @@ class Board:
     jobs: list[dict[str, Any]] = field(default_factory=list)  # queued/running, in words
     activity: list[tuple[str, str]] = field(default_factory=list)  # (stamp, text), newest first
     ready_plans: list[StoryPlan] = field(default_factory=list)
+    history: list[dict[str, Any]] = field(default_factory=list)  # every run: n, title, state, spend
     next: NextStart | None = None
     budget_usd: float = 10.0
     limit: int = 2
@@ -194,6 +196,8 @@ def board(project_ref: str | None, *, db_path: Path) -> Board:
                 story.last_progress = last_agent_activity(conn, run["id"]) or run.get("started_at") or ""
             elif build:
                 story.doing = "Starting · waiting for a free worker"
+            if build:
+                story.job_id = build["id"]
             model.stories.append(story)
         stories = {s.n: s for s in model.stories}
 
@@ -298,6 +302,15 @@ def board(project_ref: str | None, *, db_path: Path) -> Board:
                     else "Preparing the interview questions"}.get(job["kind"], job["kind"].capitalize())
             model.jobs.append({"text": text, "at": job["created_at"], "job": job})
 
+        row_of = {r["run_id"]: r["id"] for r in rows if r["run_id"]}
+        for run in runs:
+            spent = story_spend(usage_rows(conn, run_id=run["id"]), prices).estimated_usd
+            words = {"waiting_human": "waiting for you", "running": _DOING.get(
+                run.get("current_stage") or "", "working").lower(), "completed": "done",
+                     "failed": "failed", "blocked": "blocked", "archived": "dismissed"}
+            model.history.append({"n": row_of.get(run["id"]), "run": run["id"],
+                                  "title": run["story_title"], "spend": round(spent, 2) or None,
+                                  "state": words.get(run["status"], run["status"])})
         model.activity = [(e["created_at"], text) for e in reversed(events)
                           if (text := _event_text(e, decisions))]
 

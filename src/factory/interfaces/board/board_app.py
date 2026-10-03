@@ -21,9 +21,10 @@ from textual.widgets import ContentSwitcher
 from factory.interfaces.board.chrome import FeedbackLine, HeaderBar, KeyBar, LifecycleBar, TabBar
 from factory.interfaces.board.theme import BOARD_CSS, FACTORY_THEME
 from factory.interfaces.board.views_base import BoardView
-from factory.runs.batches import queue_release, queue_resume
+from factory.runs.batches import launch_batch, propose_batch, queue_release, queue_resume
 from factory.runs.board import Board, Decision, board
-from factory.runs.dashboard import pause_project, recover_job
+from factory.interfaces.board.modals import AmendModal, HelpModal, ProjectMenu, StopModal
+from factory.runs.dashboard import pause_project, recover_job, stop_job
 from factory.runs.refinement import (answer, dismiss_job, request_changes, retry_job,
                                       save_draft, start_backlog, start_refinement)
 from factory.runs.worker import start_worker
@@ -57,6 +58,10 @@ class BoardScreen(Screen):
         Binding("i", "start('interview')", show=False),
         Binding("P", "toggle_pause", show=False),
         Binding("b", "batch_key", show=False),
+        Binding("p", "menu", show=False),
+        Binding("S", "stop", show=False),
+        Binding("W", "restart_worker", show=False),
+        Binding("question_mark", "help", show=False),
     ]
 
     class Loaded(Message):
@@ -114,6 +119,8 @@ class BoardScreen(Screen):
     def loaded(self, message: Loaded) -> None:
         if self.acting:
             return  # an action reloads when it is done
+        if self.project and model_slug(message.model) not in (None, self.project):
+            return  # a load for the project the operator just switched away from
         self.model = model = message.model
         if model.project:
             self.project = model.project["slug"]
@@ -194,14 +201,128 @@ class BoardScreen(Screen):
             self.stop_story(story)
 
     def stop_story(self, story) -> None:
-        self.say("Stopping is not built yet.", "warn")
+        if story.job_id is None or "wait" in story.stage:
+            self.say(f"Story #{story.n} is already paused at a checkpoint." if "wait" in story.stage
+                     else f"Story #{story.n} can't be stopped from here: nothing of it is queued.",
+                     "warn")
+            return
+        db, job = self.db_path, story.job_id
+        spend = f"${story.spend:.2f}" if story.spend else ""
+
+        def answered(stop: bool | None) -> None:
+            if stop:
+                self.act(lambda: stop_job(job, db_path=db),
+                         f"Story #{story.n} will stop after this step.", "info", worker=False)
+
+        self.app.push_screen(StopModal(f"Story #{story.n}", spend), answered)
+
+    def action_stop(self) -> None:
+        stories = self.model.stories if self.model else []
+        running = next((s for s in stories if s.state == "working" and s.job_id
+                        and "wait" not in s.stage), None)
+        if running is not None:
+            self.stop_story(running)
+            return
+        waiting = next((s for s in stories if s.state == "working"), None)
+        self.say(f"Story #{waiting.n} is already paused at a checkpoint." if waiting
+                 else "Nothing is running.", "warn")
+
+    def action_restart_worker(self) -> None:
+        if self.model is not None and self.model.worker == "stuck":
+            self.act(lambda: None, "Worker restarted. Waiting steps are running.")
+
+    def action_help(self) -> None:
+        self.app.push_screen(HelpModal())
+
+    def menu_items(self) -> list[tuple[str, str, str]]:
+        model = self.model
+        items = [(f"Switch to {p['slug']}", f"switch:{p['slug']}", "")
+                 for p in model.projects if p["slug"] != self.project]
+        busy = "in progress: answer it in Needs you" if model.intake_open else ""
+        if not model.brief:
+            items.append(("Interview", "interview", busy))
+        elif not model.agreement:
+            items.append(("Complete agreement", "agreement", busy))
+        else:
+            items.append(("Amend brief…", "amend", busy))
+        if model.brief:
+            items.append(("Propose backlog", "backlog",
+                          "a proposal is waiting for you" if model.backlog_open else ""))
+        if model.ready_plans:
+            items.append((f"Propose batch ({len(model.ready_plans)} ready)", "batch", ""))
+        items.append(("Resume new starts" if model.paused else "Pause new starts", "pause", ""))
+        items.append(("Settings…", "settings", ""))
+        return items
+
+    def action_menu(self) -> None:
+        if self.model is None or self.model.project is None:
+            return
+        self.app.push_screen(ProjectMenu(self.project, self.menu_items()), self._menu_chosen)
+
+    def _menu_chosen(self, action: str | None) -> None:
+        db, project = self.db_path, self.project
+        if not action:
+            return
+        if action.startswith("refused:"):
+            self.say(action.removeprefix("refused:"), "warn")
+        elif action.startswith("switch:"):
+            self.switch_project(action.removeprefix("switch:"))
+        elif action == "agreement":
+            self.act(lambda: start_refinement(project, db_path=db),
+                     "Completing the agreement: its questions arrive in Needs you.", "info")
+        elif action == "amend":
+            affected = ", ".join(f"#{s.n} {s.title}" for s in self.model.stories
+                                 if s.state not in ("done", "draft"))[:80]
+
+            def amend(text: str | None) -> None:
+                if text:
+                    self.act(lambda: start_refinement(project, db_path=db, amendment=text),
+                             "Drafting a revised brief. It arrives in Needs you.", "info")
+            self.app.push_screen(AmendModal(affected), amend)
+        elif action == "settings":
+            self.say("Settings: budget per story, stories at once and checkpoints live in "
+                     "factory.toml.", "info")
+        else:
+            self.start(action)
+
+    def switch_project(self, slug: str) -> None:
+        self.project = slug
+        self._welcomed = False
+        for view in self.views.values():
+            for attr, value in (("selected", None), ("open", False), ("ids", [])):
+                if hasattr(view, attr):
+                    setattr(view, attr, value)
+        self.action_view("overview")
+        self.say(f"Switched to {slug}.", "info")
+        self.load()
 
     def action_start(self, action: str) -> None:
         self.start(action)
 
     def open_batch(self) -> None:
-        self.say("No stories are ready yet." if not (self.model and self.model.ready_plans)
-                 else "The batch view is not built yet.", "warn")
+        if not (self.model and self.model.ready_plans):
+            self.say("No stories are ready yet.", "warn")
+            return
+        self.views["batch"].reset(self.model)
+        self.action_view("batch")
+        self.views["batch"].show(self.model)
+
+    def launch(self, chosen: list[int]) -> None:
+        model, db, project = self.model, self.db_path, self.project
+        if model is None:
+            return
+        if model.paused:
+            self.say("New starts are paused. Press P to resume, then launch.", "warn")
+            return
+        names = " and ".join(f"#{n}" for n in chosen) if len(chosen) <= 2 else ", ".join(
+            f"#{n}" for n in chosen)
+
+        def work() -> None:
+            proposal = propose_batch(project, db_path=db, limit=model.limit, only=chosen)
+            launch_batch(proposal["id"], db_path=db, selected_ids=chosen)
+
+        self.act(work, f"Launched {names}. Spend so far shows in Working now.",
+                 then=lambda: self.action_view("overview"))
 
     def action_toggle_pause(self) -> None:
         if self.model is None or not self.project:
@@ -391,6 +512,10 @@ class BoardApp(App):
 def _state_file(db_path: Path) -> Path:
     # A per-viewer convenience next to the factory's DB, not part of the record.
     return db_path.parent / "board-state.json"
+
+
+def model_slug(model: Board) -> str | None:
+    return model.project["slug"] if model.project else None
 
 
 def _read_state(db_path: Path) -> dict:

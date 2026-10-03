@@ -128,6 +128,19 @@ class RefinementFlowTests(unittest.TestCase):
         self.assertEqual(after["status"], "dismissed")
         self.assertEqual(len(self.agents.calls), 2)  # the backlog + the failed refinement
 
+    def test_a_batch_can_be_proposed_for_exactly_the_ticked_stories(self) -> None:
+        self._approve_backlog()
+        for story in (1, 2):
+            start_refinement("shop", story, db_path=self.db_path)
+        drain(self.db_path)
+        for q in self._pending("question"):
+            answer(q["id"], "1", db_path=self.db_path)
+        drain(self.db_path)
+        proposal = propose_batch("shop", db_path=self.db_path, only=[2])
+        with db.get_db(self.db_path) as conn:
+            plans = {p.id: p.backlog_id for p in store.list_plans(conn, self.project["id"])}
+        self.assertEqual([plans[i] for i in proposal["payload"]["plan_ids"]], [2])
+
 
 if __name__ == "__main__":
     unittest.main()

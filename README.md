@@ -365,42 +365,33 @@ ceremony for a one-person team, are in
 
 ### Independent refinement and compatible batches
 
-`factory board` opens on home. Choose a project at the top; the bar under the tabs offers
-only what applies to it now.
+`factory board` is the operator's control surface (design: `design_handoff_factory_board/`,
+direction 1a). Nothing blocks on you: every question or approval waits in an inbox.
 
-- **Overview** — what needs you (the first few), what is working, the ONE next thing that
-  can start (select it, press its button), recent events.
-- **Needs you** — every decision. A question is a pick list, like Claude Code's
-  AskUserQuestion: ↑↓ or 1-9, Enter answers; the recommended option is first, **You
-  decide** hands it back (recorded as an assumption, said as one), **Other…** is the
-  only way to type. A half-made choice survives navigation and closing the board.
-  Proposals (the backlog; the brief with its technical choices) read as text with
-  **Approve** / **Request changes** — your words go back to the agent. A failed
-  refinement or backlog step reads as words and offers **Retry**.
-- **Stories** — each story's state, and once refined its acceptance criteria, tasks,
-  changes and open points. **Refine story** prepares one without coding; refine as
-  many as you like while others wait on you.
-- **Activity** — what happened, in your local time and in words.
+- **Overview** (`o`) — Needs you (top 5), the ONE thing that can start next with its
+  reason and key, story counts, Working now (stage strip, spend, "no progress for N
+  min"), and what happened since you left.
+- **Needs you** (`n`) — every decision: FAILED, then APPROVE (backlog, brief, checkpoints,
+  releases), then ANSWER. One story's questions are one row; a question is a pick list
+  (↑↓ or 1-9, Enter; *You decide* is recorded as an assumption; *Other…* is the only text
+  field) and the next one loads in place. Approvals read as text with `a` approve and
+  `c` / `r` request changes or reject; a failure offers `r` retry, `m` retry with a note,
+  `x` dismiss.
+- **Stories** (`t`) — grouped by state, a detail per story (why it isn't ready, what it
+  changes, assumptions) and `v` for the board view.
+- **Activity** (`l`) — every event in local time. `esc` from Overview shows **All runs**.
+- `p` project menu (switch project, Interview / Amend brief…, Propose backlog, Pause,
+  Settings), `b` the batch proposal (ready stories pre-ticked, refusals inline, budget,
+  Launch N), `P` pause / resume new starts, `S` stop at a safe point, `?` help. The
+  worker starts on its own; `W` restarts it only when queued work is stuck. ctrl+p has
+  the rest: doctor, evals, simulate, metrics, model tiers, retry / replay a run.
 
-The flow: **Interview** (or **Complete agreement** for a brief that predates the
-technical and execution sections; **Amend brief…** once it is complete) → **Propose
-backlog** → refine stories → **Propose batch** shows its budget, capacity and what
-launching authorizes, with the stories to tick → **Launch N stories**. The detached
-worker starts on its own; **Restart worker** appears only if queued work is stuck.
-**Pause new starts** prevents new claims; **Stop** takes effect at a safe boundary.
-Esc shows **All runs** (the run table, where a parked run is approved or rejected);
-`o` comes back. Closing the board loses nothing. Interrupted work (a lost worker) is never
-replayed automatically: inspect its retained workspace, then **Reconcile stopped job**.
-**Abandon batch** releases its reservations and keeps workspaces and history; refine the
-stories again before launching revised plans.
-
-What is verified, and what is not: interview → brief, backlog → approve / request
-changes, refining stories to ready plans, batch proposal and launch (queueing the
-builds) are driven through the board by offline tests on a simulated factory
-(`tests/simulated.py`). Building a launched batch in its worktrees, the combined
-candidate's verification (**Verify combined candidate**) and the integration
-approval are NOT covered by board tests yet and have not been run end to end;
-deployment is not implemented.
+What is verified, and what is not: the interview to an approved brief, backlog approval
+and changes, refining to ready plans, questions, checkpoint / release decisions (queued
+for the worker), failures, batch proposal and launch (queueing the builds) are driven
+through the board by offline tests on a simulated factory (`tests/simulated.py`).
+Building a launched batch, the combined candidate's verification and the merge are NOT
+covered by board tests and have not been run end to end; deployment is not implemented.
 
 Equivalent commands:
 

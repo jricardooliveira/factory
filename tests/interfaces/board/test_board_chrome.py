@@ -55,14 +55,16 @@ class ChromeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_header_lifecycle_and_tabs(self) -> None:
         app = BoardApp(self.db_path)
+        before = datetime.now().strftime("%H:%M")
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._board(pilot)
             header = self._text(screen, "#header")
             life = self._text(screen, "#lifecycle")
             tabs = self._text(screen, "#tabs")
+        after = datetime.now().strftime("%H:%M")
         self.assertIn("factory  ›  shop ▾", header)
         self.assertIn("○ worker idle", header)
-        self.assertIn(datetime.now().strftime("%H:%M"), header)
+        self.assertTrue(before in header or after in header, header)  # the local clock
         self.assertIn("Define ✓ ─ Plan ✓ ─ Build ● ─ Release", life)
         self.assertIn("p project", life)
         self.assertIn(" Overview ", tabs)

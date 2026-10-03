@@ -47,12 +47,13 @@ Output text is byte-for-byte tested; change it only deliberately.
 
 | Module | What it does |
 |---|---|
-| `data.py` | TUI-free data layer: `BoardRun`, `load_board_runs`, `find_run`, `column_for`, `group_by_column`; columns `Needs You, Spec, Architect, Coder, Done, Blocked`. Reads only through `runs.queries.board_entries`. |
-| `workflow_screen.py` | `WorkflowScreen`, the board's home: Overview (top of Needs you, what is working, the ONE next step, recent events), Needs you, Stories, Activity, Settings; state-aware project actions (Interview → Complete agreement → Amend brief…, Propose backlog, Propose batch, Pause). Every action writes a record through `runs` in a worker thread and starts the detached worker; success is a toast, failure stays on screen. |
-| `answer.py` | `AnswerPicker`: a question answered like Claude Code's AskUserQuestion — options (recommended first), You decide, Other… (the only text field); posts what `domain.interview.resolve_answer` reads. Used by home and by `QuestionScreen`. |
-| `views.py` | Pure text for every item (decisions, jobs, stories, events, batches, the next step, project actions): what the operator reads is unit-testable and never a JSON dump. |
-| `tui.py` | `FactoryBoard` (Textual app), `run_board_tui(db_path)`; pushes home on mount. Underneath is "All runs" (Esc from home, `o` back): the run table/kanban, `a` approve `x` reject `d` dismiss `v` `p` — inert while home is on top (`check_action`). Approve/reject queue the decision (`runs.batches.queue_resume`) for the worker. |
-| `interview_screen.py` | Modals: `QuestionScreen` (the pick list, for the menu's direct story run), `ReviewScreen` (read a document), `PromptScreen` (one line, e.g. "what changed?"). |
+| `board_app.py` | `BoardApp` / `BoardScreen`: the design handoff's direction 1a (`design_handoff_factory_board/`). Six rows of chrome (`chrome.py`) around a ContentSwitcher of views; the read model (`runs.board.board`) loads in a worker thread and arrives as a message; every action goes through `runs` in a worker thread (`act`) and speaks in the feedback line. Keys: o n t l, p menu, P pause, S stop, b batch, i interview, W restart (stuck only), ? help, esc. |
+| `tui.py` | `FactoryBoard(BoardApp)` + `run_board_tui`: the operator's other verbs on ctrl+p (doctor, evals, simulate, metrics, tiers, reconcile, retry/replay a run, new project, the direct one-story runs), never in the footer. |
+| `overview.py`, `needs.py`, `stories.py`, `batch.py`, `activity.py` (+ All runs), `modals.py` | One module per view: Overview (top of Needs you, the ONE next start, Working now, Since you left), Needs you (grouped inbox + a detail per kind, text-box mode), Stories (grouped list, detail, `v` board view), the batch proposal, Activity / All runs, and the overlays (project menu, amend in two steps, stop, help). |
+| `texts.py` | Pure markup for everything the board says (`$accent`, `$warning`… theme roles, never hex); unit-testable without a terminal. |
+| `chrome.py`, `theme.py` | Header, lifecycle, tabs with badges, feedback line (✓●! clear after 4.5 s, ✗ stays), key bar; the design's tokens as a Textual `Theme` + the shared TCSS. |
+| `answer.py` | `AnswerPicker`: a question answered like Claude Code's AskUserQuestion; used by Needs you and by `interview_screen.QuestionScreen`. |
+| `interview_screen.py` | Modals: `QuestionScreen` (the pick list, for the palette's direct story run), `ReviewScreen` (read a document), `PromptScreen` (one line). |
 | `html_report.py` | `generate_factory_visualization(db_path, output_path)`: static HTML via `runs.queries`. |
 
 ## How it works / invariants

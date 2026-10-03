@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1121 passed` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1121 passed` (~4 min; 1 skipped when `tsc` is absent — the tsc-dependent TS test; offline, zero tokens) |
+| `make check` | `1117 passed` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1117 passed` (~4 min; 1 skipped when `tsc` is absent — the tsc-dependent TS test; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -33,7 +33,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 | `.venv/bin/factory backlog <project>` | proposes the ordered story list from the brief; approve, or type feedback to regenerate |
 | `.venv/bin/factory next <project> [--no-interview]` | starts the next approved backlog story (story-level interview first on a TTY) |
 | `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, a Python product without its own `.venv` (warning), leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
-| `.venv/bin/factory board` | Textual board. Home = Overview / Needs you (questions as a pick list, approvals as Approve / Request changes) / Stories / Activity; Esc = All runs (approve/reject a parked run); `m` (or ctrl+p) opens the menu of every major verb |
+| `.venv/bin/factory board` | Textual board (design: `design_handoff_factory_board/`, 1a): Overview / Needs you (every decision incl. checkpoints and releases) / Stories (+ `v` board) / Activity; `p` project menu, `b` batch, `P` pause, `S` stop, `?` help; ctrl+p = doctor, evals, metrics, … |
 | `FACTORY_RUNNER=claude .venv/bin/factory …` | runs every agent through the local Claude Code CLI (`claude -p`) on `agents/tiers.toml` `[claude_tiers]` instead of opencode; permanent via `factory.toml` `[runner] agents = "claude"` |
 | `.venv/bin/factory --help` | full CLI verb list |
 
@@ -62,6 +62,8 @@ src/factory/
     lifecycle.py        A project's phases + the one next command (`factory status`, board `s`).
     interview.py        Intake interview: REQUIRED_TOPICS, InterviewTurn, uncovered_topics (coverage
                         is decided from recorded answers, never the model's claim), resolve_answer.
+    board.py            The board's rules (pure): story states, the spec/design/code/test strip,
+                        inbox order, the greedy batch pick, the ONE next start (design handoff).
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
                         review_policy.py, settings.py (factory.toml at the checkout root or $FACTORY_SETTINGS:
                         budget cap + probe timeout + runner (opencode|claude); env > file > default; invalid = refused; `settings()` is read per call, never
@@ -116,16 +118,16 @@ src/factory/
                         durable refinement: interview/story questions as decisions, backlog
                         proposals with Request changes, retry (refinement.py), batch proposal →
                         launch → combined candidate (batches.py), the detached worker (worker.py),
-                        the board's read model (dashboard.py). NEVER prints: reports progress through
+                        `factory work status`'s read model (dashboard.py), the board's (board.py). NEVER prints: reports progress through
                         an `on_event` callback (events.py) — the interview through `ask`/`approve`
                         callbacks — and refuses with `RunError`.
   interfaces/           render.py (every rich print helper; takes data, never reads the DB),
                         cli/ (main.py = argv dispatch + usage; run.py, review.py, project.py,
                         interview.py, backlog.py, selftest.py, board.py, workspace.py = one module per command
                         group),
-                        board/ (tui.py app + All runs, workflow_screen.py home, answer.py pick
-                        list, views.py item text, interview_screen.py modals, data.py,
-                        html_report.py). Nothing imports interfaces.
+                        board/ (board_app.py = the design handoff's board, tui.py = + ctrl+p
+                        verbs, a module per view, texts.py = what it says, chrome/theme,
+                        answer.py pick list, html_report.py). Nothing imports interfaces.
 skills/                 Anti-slop skills (ponytail, ponytail-review, karpathy-guidelines, superpowers
                         TDD / systematic-debugging / verification-before-completion; MIT, LICENSES.md)
                         copied into every product's .claude/skills/ (`create_project`, `factory
@@ -381,7 +383,7 @@ input/output is stored, so any run replays offline for free. Evidence is version
   shown is not a missing test.
 - **Board tests drive real flows on a simulated factory** (`tests/simulated.py`): `ScriptedAgents`
   answers at `run_agent` from the prompt's `# Mode:`; `simulate()` also makes the board's
-  `start_worker` run `drain` in-process, which runs ONLY refine/backlog jobs (a launched batch's
+  `start_worker` (`interfaces.board.board_app.start_worker`) run `drain` in-process, which runs ONLY refine/backlog jobs (a launched batch's
   builds stay queued) and makes `factory.pipeline.agent_calls.run_agent` raise. Drive the
   screen with the Textual pilot; read widget state INSIDE `async with app.run_test()` (a
   torn-down widget reports `display` False). Textual traps that crashed the live board:

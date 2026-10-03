@@ -153,9 +153,7 @@ def simulate(agents: ScriptedAgents) -> ExitStack:
         raise AssertionError("the simulated factory never runs the pipeline's agents")
     stack.enter_context(patch("factory.pipeline.agent_calls.run_agent", side_effect=never))
     worker = lambda *, db_path, **_kw: drain(db_path)  # noqa: E731
-    for target in ("factory.interfaces.board.tui.start_worker",
-                   "factory.interfaces.board.workflow_screen.start_worker",
-                   "factory.interfaces.board.board_app.start_worker"):
+    for target in ("factory.interfaces.board.board_app.start_worker",):
         stack.enter_context(patch(target, side_effect=worker))
     return stack
 

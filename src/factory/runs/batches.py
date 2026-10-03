@@ -22,7 +22,9 @@ from factory.workspace.worktrees import clean, create_workspace, git, merge_cand
 
 
 def propose_batch(project_ref: str, *, db_path: Path, limit: int = 2,
-                  budget_usd: float | None = None) -> dict:
+                  budget_usd: float | None = None, only: list[int] | None = None) -> dict:
+    """Propose the compatible ready stories; `only`: exactly these backlog stories (the
+    board's ticks), still assessed — a tick never overrides a conflict."""
     init_db(db_path)
     project = get_project(db_path, project_ref)
     base = git_head(Path(project['repo_path'])) or ''
@@ -33,7 +35,8 @@ def propose_batch(project_ref: str, *, db_path: Path, limit: int = 2,
         rows = {r['id']: r for r in backlog.list_backlog(conn, project['id'])}
         used = store.used_plans(conn)
         plans = [p for p in store.list_plans(conn, project['id'])
-                 if rows.get(p.backlog_id, {}).get('status') == 'approved' and p.id not in used]
+                 if rows.get(p.backlog_id, {}).get('status') == 'approved' and p.id not in used
+                 and (only is None or p.backlog_id in only)]
         assessment = assess_batch(plans, context_revision=context, base_commit=base,
                                   completed=store.integrated_stories(conn, project['id']),
                                   active=store.reserved_plans(conn, project['id']), limit=limit)
