@@ -102,6 +102,32 @@ class RefinementFlowTests(unittest.TestCase):
             answer(last["id"], "one more change", db_path=self.db_path)
         self.assertIn("amend", str(raised.exception).lower())
 
+    def _failed_refinement(self) -> dict:
+        self._approve_backlog()
+        start_refinement("shop", 1, db_path=self.db_path)
+        self.agents.fail_next("story")
+        drain(self.db_path)
+        with db.get_db(self.db_path) as conn:
+            [job] = [j for j in store.list_jobs(conn, self.project["id"]) if j["status"] == "failed"]
+        return job
+
+    def test_retry_with_a_note_gives_the_agent_the_note(self) -> None:
+        from factory.runs.refinement import retry_job
+        job = self._failed_refinement()
+        retry_job(job["id"], note="assume a relay server", db_path=self.db_path)
+        drain(self.db_path)
+        self.assertIn("assume a relay server", self.agents.prompts[-1])
+
+    def test_dismiss_closes_the_failure_and_repeats_nothing(self) -> None:
+        from factory.runs.refinement import dismiss_job
+        job = self._failed_refinement()
+        dismiss_job(job["id"], db_path=self.db_path)
+        drain(self.db_path)
+        with db.get_db(self.db_path) as conn:
+            [after] = [j for j in store.list_jobs(conn, self.project["id"]) if j["kind"] == "refine"]
+        self.assertEqual(after["status"], "dismissed")
+        self.assertEqual(len(self.agents.calls), 2)  # the backlog + the failed refinement
+
 
 if __name__ == "__main__":
     unittest.main()

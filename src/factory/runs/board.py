@@ -8,6 +8,7 @@ the rules (story states, inbox order, the next start, the batch pick) are the pu
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,8 @@ from factory.runs.worker import worker_status
 from factory.state import workflow as store
 from factory.state.backlog import list_backlog
 from factory.state.db import (
-    get_agent_log, get_db, get_pending_human_gate, get_run, init_db, last_agent_activity,
+    get_agent_log, get_db, get_pending_human_gate, get_run, get_run_gates, init_db,
+    last_agent_activity,
     project_runs, usage_rows,
 )
 from factory.state.interviews import list_answers
@@ -159,12 +161,14 @@ def board(project_ref: str | None, *, db_path: Path) -> Board:
             pending = [d for d in decisions if session and d["session_id"] == session["id"]
                        and d["status"] == "pending"]
             build = next((j for j in open_jobs if plan and j["payload"].get("plan_id") == plan.id), None)
+            refine = [j for j in jobs if session and j["payload"].get("session_id") == session["id"]]
             facts = StoryFacts(
                 session=session["status"] if session else "", questions=len(pending),
                 uncertainties=len(plan.uncertainties) if plan else 0,
                 plan_ready=bool(plan and plan.ready), build_queued=bool(build),
                 run=run["status"] if run else "", run_stage=(run or {}).get("current_stage") or "",
-                stop_requested=bool(build and build["payload"].get("stop_requested")))
+                stop_requested=bool(build and build["payload"].get("stop_requested")),
+                refine_failed=bool(refine and refine[-1]["status"] in ("failed", "interrupted")))
             state, meta = story_state(facts)
             story = Story(n=row["id"], title=row["title"], state=state, meta=meta,
                           request=row["request"], plan=plan.model_dump() if plan else None,
@@ -257,15 +261,23 @@ def board(project_ref: str | None, *, db_path: Path) -> Board:
             design = _parse((get_agent_log(conn, run["id"], "architect-agent") or {}).get("output_text") or "")
             notes = _parse((get_agent_log(conn, run["id"], "release-agent") or {}).get("output_text") or "")
             spec = _parse((get_agent_log(conn, run["id"], "spec-agent") or {}).get("output_text") or "")
+            claimed = {f: s.n for s in model.stories if s.n != n and s.state not in ("done",)
+                       for f in s.files}
+            gates = {g["gate_name"]: bool(g["passed"]) for g in get_run_gates(conn, run["id"])}
+            checks = [(label, gates[g]) for g, label in (("gate-test", "tests"), ("gate-build", "build"))
+                      if g in gates]
+            parts = [("Changes" if (repo / m).exists() else "New", m, claimed.get(m))
+                     for m in design.get("modules_affected") or []]
             data = {"run": run, "gate": gate, "cp": cp, "stage_name": name, "design": design,
+                    "parts": parts, "checks": checks,
                     "release": notes, "spec": spec,
                     "questions": [q.strip() for q in ((gate or {}).get("human_questions") or "").split("\n\n") if q.strip()],
                     "story_obj": stories.get(n)}
             since = (gate or {}).get("checked_at") or run["started_at"]
             if cp == 3:
                 model.decisions.append(Decision(
-                    f"run:{run['id']}", "release", since,
-                    f"Release · {title}", f"{title} verified", f"Release · {title}", story=n, data=data))
+                    f"run:{run['id']}", "release", since, f"Release {title}",
+                    "verified · ready to release", f"Release {title}", story=n, data=data))
             else:
                 model.decisions.append(Decision(
                     f"run:{run['id']}", "ckpt", since,
@@ -286,7 +298,8 @@ def board(project_ref: str | None, *, db_path: Path) -> Board:
                     else "Preparing the interview questions"}.get(job["kind"], job["kind"].capitalize())
             model.jobs.append({"text": text, "at": job["created_at"], "job": job})
 
-        model.activity = [(e["created_at"], _event_text(e, decisions)) for e in reversed(events)]
+        model.activity = [(e["created_at"], text) for e in reversed(events)
+                          if (text := _event_text(e, decisions))]
 
     model.ready_plans = [latest_plan[s.n] for s in model.stories
                          if s.state == "ready" and s.n in latest_plan]
@@ -302,22 +315,38 @@ def board(project_ref: str | None, *, db_path: Path) -> Board:
 _EVENT_TEXT = {
     "backlog: needs_input": "Backlog proposal ready for your review",
     "refine: needs_input": "Refinement has questions for you",
-    "refine: ready": "Story prepared: ready for a batch",
-    "refine: blocked": "Story prepared, with open points",
+    # The plan event ("Story #n: plan ready") says these once already.
+    "refine: ready": "",
+    "refine: blocked": "",
     "refine: refining": "Refinement moved to its next step",
 }
 
 
+def _answer_text(decision: dict) -> str:
+    """What was chosen, in words: an option number is the option's label."""
+    raw = (decision.get("answer") or "").strip()
+    options = (decision["context"].get("question") or {}).get("options") or []
+    if raw.isdigit() and 1 <= int(raw) <= len(options):
+        return options[int(raw) - 1]["label"]
+    return "left to the factory" if raw.lower() == "you decide" else raw
+
+
 def _event_text(event: dict, decisions: list[dict]) -> str:
     details = event.get("details") or {}
-    if event["message"] == "Decision answered":
+    message = event["message"]
+    if message == "Decision answered":
         decision = next((d for d in decisions if d["id"] == details.get("decision_id")), None)
         if decision:
-            return f"Answered: {decision['question']}" + (
-                f" → {decision['answer']}" if decision.get("answer") else "")
-    if event["kind"] == "failed":
-        return "✗ " + event["message"]
-    return _EVENT_TEXT.get(event["message"], event["message"])
+            answer = _answer_text(decision)
+            return f"Answered: {decision['question']}" + (f" → {answer}" if answer else "")
+    if event["kind"] in ("failed", "interrupted"):
+        kind, _, what = message.partition(": ")
+        step = {"refine": "Refinement", "backlog": "Backlog proposal"}.get(kind, kind.capitalize())
+        what = re.sub(r"\s*\(exit -?\d+\)", "", what).split(". ", 1)[0]
+        return f"✗ {step} failed: {what}"
+    if (prepared := re.fullmatch(r"Story (\d+) prepared", message)):
+        return f"Story #{prepared.group(1)}: plan ready"
+    return _EVENT_TEXT.get(message, message)  # "" drops a duplicate
 
 
 def now() -> datetime:

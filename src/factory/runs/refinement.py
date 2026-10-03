@@ -430,12 +430,42 @@ def agreement_complete(answers: list[dict]) -> bool:
 RETRYABLE_JOBS = ('refine', 'backlog')
 
 
-def retry_job(job_id: str, *, db_path: Path) -> dict:
+def retry_job(job_id: str, *, db_path: Path, note: str | None = None) -> dict:
+    """Run a failed refinement step or backlog proposal again; `note` is the operator's
+    guidance for it, given to the agent where it reads the operator: a story's
+    clarifications, the product's corrections, or the backlog's feedback."""
+    note = (note or '').strip()
     with get_db(db_path) as conn, store.atomic(conn):
         job = store.get_job(conn, job_id)
         if job['status'] != 'failed' or job['kind'] not in RETRYABLE_JOBS:
             raise RunError('Only a failed refinement or backlog proposal can be retried here')
-        fresh = store.retry_failed_job(conn, job_id)
-        store.add_event(conn, job['project_id'], 'job', f"{job['kind']}: retried",
+        payload = None
+        if note and job['kind'] == 'backlog':
+            payload = {**job['payload'], 'feedback': [*job['payload'].get('feedback', []), note]}
+        elif note:
+            session = store.get_session(conn, job['payload']['session_id'])
+            if session['backlog_id'] is None:
+                add_answer(conn, session['project_id'], topic='correction',
+                           question='Operator note on a retried step', options=[], answer=note,
+                           assumed=False)
+            else:
+                draft = dict(session['draft'])
+                draft['answers'] = [*draft.get('answers', []), {
+                    'topic': 'note', 'question': 'Operator note on a retried step',
+                    'answer': note, 'assumed': False, 'options': []}]
+                store.update_session(conn, session['id'], phase=session['phase'], draft=draft,
+                                     status=session['status'])
+        fresh = store.retry_failed_job(conn, job_id, payload=payload)
+        store.add_event(conn, job['project_id'], 'job',
+                        f"{job['kind']}: retried" + (' with a note' if note else ''),
                         {'job_id': job_id, 'retry': fresh['id']})
         return fresh
+
+
+def dismiss_job(job_id: str, *, db_path: Path) -> dict:
+    """Close a failure without repeating anything; the story stays as it was."""
+    with get_db(db_path) as conn, store.atomic(conn):
+        job = store.dismiss_failed_job(conn, job_id)
+        store.add_event(conn, job['project_id'], 'job', f"{job['kind']}: dismissed",
+                        {'job_id': job_id})
+        return job

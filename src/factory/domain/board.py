@@ -50,6 +50,7 @@ class StoryFacts:
     run_stage: str = ""
     stop_requested: bool = False
     awaiting_merge: bool = False
+    refine_failed: bool = False  # its newest refinement step failed and was not retried
 
 
 def story_state(f: StoryFacts) -> tuple[str, str]:
@@ -69,6 +70,8 @@ def story_state(f: StoryFacts) -> tuple[str, str]:
         return "notready", "last run failed"
     if f.build_queued:
         return "working", "starting"
+    if f.refine_failed:
+        return "notready", "refinement failed"
     if f.session == "needs_input":
         return "needs", f"{f.questions} question{'' if f.questions == 1 else 's'}"
     if f.session == "refining":

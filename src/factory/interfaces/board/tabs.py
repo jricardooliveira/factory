@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from factory.interfaces.board.needs import NeedsView
+from factory.interfaces.board.overview import OverviewView
+from factory.interfaces.board.stories import StoriesView
 from factory.interfaces.board.views_base import BoardView
 
 
@@ -16,11 +19,9 @@ class _Simple(BoardView):
 
 def build() -> dict[str, BoardView]:
     return {
-        "overview": _Simple([("↑↓", "move"), ("enter", "open"), ("n", "needs you"), ("b", "batch"),
-                             ("P", "pause"), ("esc", "all runs")]),
-        "needs": _Simple([("↑↓", "move"), ("enter", "open"), ("o", "overview"), ("esc", "back")]),
-        "stories": _Simple([("↑↓", "move"), ("enter", "open"), ("v", "board view"), ("b", "batch"),
-                            ("esc", "back")]),
+        "overview": OverviewView(),
+        "needs": NeedsView(),
+        "stories": StoriesView(),
         "activity": _Simple([("↑↓", "scroll"), ("o", "overview"), ("esc", "back")]),
         "allruns": _Simple([("↑↓", "scroll"), ("o", "overview"), ("esc", "back")]),
     }

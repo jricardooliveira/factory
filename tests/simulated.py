@@ -154,7 +154,8 @@ def simulate(agents: ScriptedAgents) -> ExitStack:
     stack.enter_context(patch("factory.pipeline.agent_calls.run_agent", side_effect=never))
     worker = lambda *, db_path, **_kw: drain(db_path)  # noqa: E731
     for target in ("factory.interfaces.board.tui.start_worker",
-                   "factory.interfaces.board.workflow_screen.start_worker"):
+                   "factory.interfaces.board.workflow_screen.start_worker",
+                   "factory.interfaces.board.board_app.start_worker"):
         stack.enter_context(patch(target, side_effect=worker))
     return stack
 
@@ -173,6 +174,11 @@ def park_run(db_path: Path, project: dict, *, title: str, stage: str, questions:
         run_id = dbm.start_run(conn, story_id, project_id=project["id"])
         for agent, output in (logs or {}).items():
             dbm.log_agent(conn, run_id, agent, "p", json.dumps(output), verdict="pass")
+        # The gates a run passed on its way here, as a real one records them.
+        earlier = {"gate-2-architect": ["gate-1-spec"],
+                   "gate-release-human": ["gate-1-spec", "gate-2-architect", "gate-build", "gate-test"]}
+        for passed in earlier.get(stage, []):
+            dbm.log_gate(conn, run_id, passed, True, "passed")
         dbm.update_run_stage(conn, run_id, stage)
         dbm.log_gate(conn, run_id, gate, True, "needs human", needs_human=True,
                      human_questions=questions or "Approve?")

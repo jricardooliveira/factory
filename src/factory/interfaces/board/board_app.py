@@ -8,6 +8,7 @@ so the UI thread never touches the database; actions go through `runs` the same 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from textual import on, work
@@ -20,7 +21,12 @@ from textual.widgets import ContentSwitcher
 from factory.interfaces.board.chrome import FeedbackLine, HeaderBar, KeyBar, LifecycleBar, TabBar
 from factory.interfaces.board.theme import BOARD_CSS, FACTORY_THEME
 from factory.interfaces.board.views_base import BoardView
-from factory.runs.board import Board, board
+from factory.runs.batches import queue_release, queue_resume
+from factory.runs.board import Board, Decision, board
+from factory.runs.dashboard import pause_project, recover_job
+from factory.runs.refinement import (answer, dismiss_job, request_changes, retry_job,
+                                      save_draft, start_backlog, start_refinement)
+from factory.runs.worker import start_worker
 
 WIDE = 120  # the design's two-pane threshold, in columns
 REFRESH_SECONDS = 2.0
@@ -48,6 +54,9 @@ class BoardScreen(Screen):
         Binding("t", "view('stories')", "stories", show=False),
         Binding("l", "view('activity')", "activity", show=False),
         Binding("escape", "back", "back", show=False),
+        Binding("i", "start('interview')", show=False),
+        Binding("P", "toggle_pause", show=False),
+        Binding("b", "batch_key", show=False),
     ]
 
     class Loaded(Message):
@@ -58,7 +67,10 @@ class BoardScreen(Screen):
     def __init__(self, db_path: Path, project: str | None = None) -> None:
         super().__init__()
         self.db_path, self.project = db_path, project
+        self.seen: dict[str, str] = _read_state(db_path).get("seen", {})
+        self._welcomed = False
         self.model: Board | None = None
+        self.acting = False
         self.view = "overview"
         self.views = _views()
 
@@ -80,6 +92,9 @@ class BoardScreen(Screen):
 
     def on_resize(self, event) -> None:
         self.set_class(event.size.width < WIDE, "narrow")
+        if self.model is not None:
+            for view in self.views.values():
+                view.show(self.model)
 
     @property
     def wide(self) -> bool:
@@ -97,15 +112,115 @@ class BoardScreen(Screen):
 
     @on(Loaded)
     def loaded(self, message: Loaded) -> None:
+        if self.acting:
+            return  # an action reloads when it is done
         self.model = model = message.model
         if model.project:
             self.project = model.project["slug"]
         self.query_one(HeaderBar).show(self.project or "no project", model.worker, model.queued)
         self.query_one(LifecycleBar).show(model.lifecycle)
         self._show_tabs()
+        if not self._welcomed and self.project:
+            self._welcome(model)
         for view in self.views.values():
             view.show(model)
         self._show_keys()
+
+    def _welcome(self, model: Board) -> None:
+        self._welcomed = True
+        since = self.seen.get(self.project or "")
+        self.views["overview"].since = since or ""
+        if since:
+            new = sum(d.count for d in model.decisions if d.created_at > since)
+            when = datetime.fromisoformat(since).astimezone().strftime("%H:%M")
+            self.say(f"Welcome back. {new} new decision{'' if new == 1 else 's'} since {when}."
+                     if new else f"Welcome back. Nothing new since {when}.", "info")
+
+    def on_unmount(self) -> None:
+        # The next visit's "Since you left" is when this one ended.
+        if self.project:
+            state = _read_state(self.db_path)
+            state.setdefault("seen", {})[self.project] = datetime.now(timezone.utc).isoformat()
+            state["project"] = self.project
+            try:
+                _state_file(self.db_path).write_text(json.dumps(state))
+            except OSError:
+                pass
+
+    def open_decision(self, decision_id: str) -> None:
+        needs = self.views["needs"]
+        self.action_view("needs")
+        needs.selected = decision_id
+        needs.show(self.model)
+        needs.open_detail()
+
+    def start(self, action: str) -> None:
+        """The Next-to-start button, or its key."""
+        model, db, project = self.model, self.db_path, self.project
+        if model is None or not action:
+            return
+        if action == "interview":
+            if model.brief or model.intake_open:
+                self.say("The interview is already done or waiting for you in Needs you.", "warn")
+                return
+            self.act(lambda: start_refinement(project, db_path=db),
+                     "Interview started. Questions arrive in Needs you.", "info")
+        elif action == "backlog":
+            self.act(lambda: start_backlog(project, db_path=db),
+                     "Backlog proposal started. It arrives in Needs you.", "info")
+        elif action == "pause":
+            self.action_toggle_pause()
+        elif action == "batch":
+            self.open_batch()
+
+    def story_action(self, story, key: str) -> None:
+        """A key (or its button) on a story's detail."""
+        model, db, project = self.model, self.db_path, self.project
+        failed = next((d for d in model.decisions if d.story == story.n and d.kind == "fail"), None)
+        decision = next((d for d in model.decisions if d.story == story.n and d.kind != "fail"), None)
+        if key == "r" and failed is not None:
+            self.decide(failed, "r", self.views["needs"])
+        elif key == "r" and story.state in ("draft", "notready"):
+            self.act(lambda: start_refinement(project, story.n, db_path=db),
+                     f"Refining Story #{story.n} {story.title}: its questions arrive in Needs you.", "info")
+        elif key == "m" and failed is not None and failed.data["retryable"]:
+            self.open_decision(failed.id)
+            self.views["needs"].start_typing("note")
+        elif key == "b":
+            self.open_batch()
+        elif key == "enter" and decision is not None:
+            self.open_decision(decision.id)
+        elif key == "S":
+            self.stop_story(story)
+
+    def stop_story(self, story) -> None:
+        self.say("Stopping is not built yet.", "warn")
+
+    def action_start(self, action: str) -> None:
+        self.start(action)
+
+    def open_batch(self) -> None:
+        self.say("No stories are ready yet." if not (self.model and self.model.ready_plans)
+                 else "The batch view is not built yet.", "warn")
+
+    def action_toggle_pause(self) -> None:
+        if self.model is None or not self.project:
+            return
+        paused, db, project = self.model.paused, self.db_path, self.project
+        self.act(lambda: pause_project(project, not paused, db_path=db),
+                 "New starts resumed." if paused else "New starts paused. Running work continues.",
+                 "ok" if paused else "warn", worker=False)
+
+    def action_batch_key(self) -> None:
+        model = self.model
+        if model is None:
+            return
+        if model.ready_plans:
+            self.open_batch()
+        elif model.brief and not model.stories and not model.backlog_open:
+            self.start("backlog")
+        else:
+            self.say("No stories are ready yet.", "warn")
 
     def _show_tabs(self) -> None:
         model = self.model
@@ -133,6 +248,126 @@ class BoardScreen(Screen):
             return
         self.action_view("allruns" if self.view == "overview" else "overview")
 
+    # ── actions: every decision goes through `runs`, off the UI thread ───
+    def act(self, work, message: str, kind: str = "ok", *, worker: bool = True,
+            then=None) -> None:
+        if self.acting:
+            return
+        self.acting = True
+        self._act(work, message, kind, worker, then)
+
+    @work(thread=True, group="board-action")
+    def _act(self, work, message, kind, worker, then) -> None:
+        try:
+            work()
+            if worker:
+                start_worker(db_path=self.db_path)
+            ok = True
+        except Exception as exc:  # a refusal or a crash: said in red, never a crash
+            message, kind, ok = str(exc), "err", False
+        self.app.call_from_thread(self._acted, message, kind, then if ok else None)
+
+    def _acted(self, message: str, kind: str, then) -> None:
+        self.acting = False
+        self.say(message, kind)
+        if then is not None:
+            then()
+        self.load()
+
+    def keep_draft(self, decision_id: str, value: str) -> None:
+        self._keep_draft(decision_id, value)
+
+    @work(thread=True, group="board-draft")
+    def _keep_draft(self, decision_id: str, value: str) -> None:
+        try:
+            save_draft(decision_id, value, db_path=self.db_path)
+        except Exception:
+            pass  # the draft stays in memory; the next keystroke saves it again
+
+    def answer(self, d: Decision, value: str, view) -> None:
+        data = d.data
+        question = data["pending"][0]
+        left, k, total = d.count - 1, data["qi"] + 2, data["total"]
+        decided = value.strip().lower() == "you decide"
+        if left:
+            message = (f"Left to the factory, recorded as an assumption. Question {k} of {total} is next."
+                       if decided else f"Answered. Question {k} of {total} is next.")
+        elif d.story is not None:
+            message = f"{d.title}: all {total} answered. Refinement continues."
+        else:
+            message = f"{d.title}: all {total} answered. The next step is being prepared."
+        self.act(lambda: answer(question["id"], value, db_path=self.db_path), message,
+                 then=lambda: view.after_answer(d, finished=not left))
+
+    def decide(self, d: Decision, key: str, view) -> None:
+        """A key (or its button) on a decision's detail."""
+        db = self.db_path
+        if d.kind == "questions" and key == "s":
+            view.skip()
+            self.say("Skipped for now. It stays in Needs you.", "info")
+            return
+        if key in ("c", "r", "m") and (d.kind in ("backlog", "brief", "release") and key == "c"
+                                       or d.kind == "ckpt" and key == "r"
+                                       or d.kind == "fail" and key == "m" and d.data["retryable"]):
+            view.start_typing({"c": "changes", "r": "reject", "m": "note"}[key])
+            return
+        if d.kind == "fail" and key == "d":
+            view.show_error = not view.show_error
+            view._fill_detail()
+            return
+        if key != "a" and not (d.kind == "fail" and key in ("r", "x")):
+            return
+        if d.kind == "backlog":
+            n = len(d.data["decision"]["context"].get("stories", []))
+            self.act(lambda: answer(d.data["decision"]["id"], "approve", db_path=db),
+                     f"Backlog approved · {n} stories added as drafts.")
+        elif d.kind == "brief":
+            self.act(lambda: answer(d.data["decision"]["id"], "approve", db_path=db),
+                     "Brief updated. Affected stories will be re-checked." if d.data.get("change")
+                     else "Brief approved. Next: propose a backlog.")
+        elif d.kind == "ckpt":
+            name = d.data["stage_name"]
+            self.act(lambda: queue_resume(d.data["run"]["id"], "approve", db_path=db),
+                     f"{name.capitalize()} approved. {d.title} continues.")
+        elif d.kind == "release":
+            if "run" in d.data:
+                self.act(lambda: queue_resume(d.data["run"]["id"], "approve", db_path=db),
+                         f"Releasing {d.title.removeprefix('Release ')}…", "info")
+            else:
+                self.act(lambda: queue_release(d.data["decision"]["id"], db_path=db),
+                         "Merging the combined batch…", "info")
+        elif d.kind == "fail" and key == "r":
+            if d.data["retryable"]:
+                self.act(lambda: retry_job(d.data["job"]["id"], db_path=db),
+                         f"Retrying {d.sub.lower().replace(' failed', '')} for {d.title}…", "info")
+            else:
+                self.act(lambda: recover_job(d.data["job"]["id"], db_path=db),
+                         "Stopped work settled; nothing was repeated.", worker=False)
+        elif d.kind == "fail" and key == "x":
+            self.act(lambda: dismiss_job(d.data["job"]["id"], db_path=db),
+                     f"Dismissed. {d.title} stays as it was; refine it later from Stories.",
+                     worker=False)
+
+    def send_text(self, d: Decision, kind: str, text: str, view) -> None:
+        db = self.db_path
+        if kind == "note":
+            self.act(lambda: retry_job(d.data["job"]["id"], note=text, db_path=db),
+                     f"Retrying {d.title} with your note…", "info")
+        elif kind == "reject":
+            self.act(lambda: queue_resume(d.data["run"]["id"], "reject", text, db_path=db),
+                     f"Feedback sent. The {d.data['stage_name']} runs again.")
+        elif d.kind == "backlog":
+            self.act(lambda: request_changes(d.data["decision"]["id"], text, db_path=db),
+                     "Changes sent. A new proposal is being written.")
+        elif d.kind == "brief":
+            self.act(lambda: request_changes(d.data["decision"]["id"], text, db_path=db),
+                     "Changes sent. The brief is being redrafted.")
+        elif d.kind == "release" and "run" in d.data:
+            self.act(lambda: queue_resume(d.data["run"]["id"], "reject", text, db_path=db),
+                     "Sent back. It returns here once verified again.")
+        else:
+            self.say("A combined batch can only be approved here; reject its stories instead.", "warn")
+
 
 class BoardApp(App):
     CSS = BOARD_CSS
@@ -158,8 +393,13 @@ def _state_file(db_path: Path) -> Path:
     return db_path.parent / "board-state.json"
 
 
-def _last_project(db_path: Path) -> str | None:
+def _read_state(db_path: Path) -> dict:
     try:
-        return json.loads(_state_file(db_path).read_text()).get("project")
+        data = json.loads(_state_file(db_path).read_text())
     except (OSError, ValueError):
-        return None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _last_project(db_path: Path) -> str | None:
+    return _read_state(db_path).get("project")

@@ -520,7 +520,7 @@ def used_plans(conn) -> set[str]:
     return {r[0] for r in conn.execute('SELECT plan_id FROM pipeline_runs WHERE plan_id IS NOT NULL')}
 
 
-def retry_failed_job(conn, identity: str) -> dict:
+def retry_failed_job(conn, identity: str, *, payload: dict | None = None) -> dict:
     """Queue a failed job's work again under a new key; the failed one is marked retried.
 
     Only for work whose failure wrote nothing it could repeat (the caller decides which).
@@ -532,7 +532,18 @@ def retry_failed_job(conn, identity: str) -> dict:
         conn.execute("UPDATE workflow_jobs SET status='retried',updated_at=? WHERE id=?",
                      (_now(), identity))
         return enqueue_job(conn, job['project_id'], job['kind'],
-                           f"{job['key']}:retry:{_id()}", job['payload'])
+                           f"{job['key']}:retry:{_id()}", payload or job['payload'])
+
+
+def dismiss_failed_job(conn, identity: str) -> dict:
+    """Close a failed or interrupted job without repeating anything."""
+    with atomic(conn):
+        job = get_job(conn, identity)
+        if job['status'] not in ('failed', 'interrupted'):
+            raise ValueError('Only a failed or stopped job can be dismissed')
+        conn.execute("UPDATE workflow_jobs SET status='dismissed',updated_at=? WHERE id=?",
+                     (_now(), identity))
+        return get_job(conn, identity)
 
 
 def recover_job(conn, identity: str) -> dict:

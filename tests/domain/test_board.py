@@ -37,6 +37,7 @@ class StoryStateTests(unittest.TestCase):
         cases = [
             (StoryFacts(), ("draft", "")),
             (StoryFacts(session="refining"), ("refining", "")),
+            (StoryFacts(session="refining", refine_failed=True), ("notready", "refinement failed")),
             (StoryFacts(session="needs_input", questions=3), ("needs", "3 questions")),
             (StoryFacts(session="blocked", uncertainties=2), ("notready", "2 uncertainties")),
             (StoryFacts(session="ready", plan_ready=True), ("ready", "")),

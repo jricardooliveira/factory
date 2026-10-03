@@ -47,7 +47,7 @@ Screen { background: $background; }
 #views { height: 1fr; }
 
 .panel { border: round $dim; border-title-color: $chip-off-fg; border-title-background: $chip-off-bg;
-         border-title-style: bold; border-subtitle-color: $dim; padding: 0 1; height: 1fr; }
+         border-title-style: bold; border-subtitle-color: $dim; padding: 0 1; }
 .panel:focus-within { border: round $accent; border-title-color: $ink;
                       border-title-background: $accent; }
 .panel .top { height: auto; }
