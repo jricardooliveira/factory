@@ -59,6 +59,11 @@ Run all four. Each maps to a sub-verdict in the tester's output.
     shows it, it is covered: put it in `ac_coverage`. Do NOT demand a unit test for
     "the README mentions the start command" — that produces absurd tests or an
     endless remediation loop, and proves nothing the diff doesn't already show.
+- **Code you were not shown is not a missing test.** A large diff is truncated: its
+  last line names each file that was cut and how much of it is shown. When the test
+  file for a criterion is in the diff but its body is cut, the criterion goes in
+  `ac_coverage` with the note "test file present, body not shown" — never in
+  `missing_coverage` for that reason alone, and never `qa_verdict: fail` for it.
 - Are negative and edge cases covered: wrong input, missing resource, empty
   collection, and — where the project is access-scoped — **wrong role** and
   **wrong tenant**?

@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1027 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1027 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1030 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1030 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -334,6 +334,11 @@ input/output is stored, so any run replays offline for free. Evidence is version
   dismiss): that run's passed tasks stay committed, so `factory next` passes it to
   `run_pipeline(base_commit=...)` and the re-run reviews them too (falls back to HEAD if it is
   not a commit in the repo). A dismissed COMPLETED run stays released (`pipeline_runs.archived_from`).
+- **A review diff over budget keeps every file** (`workspace.git._fit_diff`,
+  `MAX_REVIEW_DIFF_CHARS`): the longest files are cut first, each keeps its header and
+  start, and the last line names what was cut. Cutting the tail dropped the test files and
+  the tester failed every criterion as "no test visible"; REVIEW.md now says code not
+  shown is not a missing test.
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins
   `candidate_commit`: `release` refuses if code changed since (evidence commits excluded).
 - Editing anything in `agents/`, `domain/gates.py`, `domain/ambiguity.py`, `agent_config/`, or

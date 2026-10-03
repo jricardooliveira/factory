@@ -76,6 +76,12 @@ MAX_STORY_INTERVIEW_QUESTIONS = 8
 # notice, so a huge file cannot blow the coder's context or its call timeout.
 MAX_SCOPE_FILE_CHARS = 12000
 
+# What the tester / release agent / remediation pass see of a story's diff. 16000 cut a
+# 35k-char story in half (live, habits run #5): the test files vanished and every
+# criterion failed as "no test visible". A full-size story (MAX_MODULES_PER_STORY files)
+# must fit; beyond it each file keeps a fair share rather than the tail being dropped.
+MAX_REVIEW_DIFF_CHARS = 60000
+
 
 # Ambiguity detection (THRESHOLD_TERMS, unbound_criteria, ...) lives in
 # factory.domain.ambiguity; gate 1 below applies it.

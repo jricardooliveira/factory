@@ -7,11 +7,13 @@ not verification checks. The trust package and the pipeline both read from here.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
+from factory.domain.gates import MAX_REVIEW_DIFF_CHARS
 from factory.workspace.layout import is_evidence_path
 
 _TIMEOUT = 60
@@ -200,7 +202,35 @@ def _exclude_pathspecs(exclude: tuple[str, ...]) -> list[str]:
 
 # Git's well-known empty-tree object — a valid "diff from nothing" baseline.
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-_DIFF_MAX_CHARS = 16000
+_DIFF_MAX_CHARS = MAX_REVIEW_DIFF_CHARS
+
+
+def _fit_diff(diff: str, max_chars: int) -> str:
+    """`diff` within `max_chars`, cutting the LONGEST files first and never dropping one.
+
+    Cutting the tail dropped whole files — in practice the tests, which sort last — and
+    a reviewer cannot tell "not shown" from "not written". Every file keeps its header
+    and its start; short files are shown whole; the notice names what was cut.
+    """
+    if len(diff) <= max_chars:
+        return diff
+    files = [f for f in re.split(r"(?m)^(?=diff --git )", diff) if f]
+    shown = [len(f) for f in files]
+    left, pending = max_chars, sorted(range(len(files)), key=lambda i: len(files[i]))
+    for rank, i in enumerate(pending):  # smallest first: their slack goes to the rest
+        shown[i] = min(len(files[i]), left // (len(pending) - rank))
+        left -= shown[i]
+    cut: list[str] = []
+    out: list[str] = []
+    for f, n in zip(files, shown):
+        if n >= len(f):
+            out.append(f)
+            continue
+        name = f.split("\n", 1)[0].removeprefix("diff --git a/").split(" b/")[0]
+        cut.append(f"{name}: {n} of {len(f)} chars shown")
+        out.append(f[:n].rstrip("\n") + f"\n... [{name}: the rest is not shown]\n")
+    return "".join(out).rstrip("\n") + (
+        f"\n... [diff truncated to fit {max_chars} chars; " + "; ".join(cut) + "]")
 
 
 def _git_resolve(root: Path, ref: str) -> str | None:
@@ -268,9 +298,7 @@ def collect_repo_diff(
         return None
     parts = [p.stdout for p in (committed, working) if p.returncode == 0 and p.stdout.strip()]
     diff = "\n".join(parts).strip()
-    if len(diff) > max_chars:
-        diff = diff[:max_chars] + f"\n... [diff truncated at {max_chars} chars]"
-    return diff
+    return _fit_diff(diff, max_chars)
 
 
 def git_head(root: Path) -> str | None:

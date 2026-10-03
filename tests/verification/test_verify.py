@@ -105,8 +105,42 @@ class CollectRepoDiffTests(unittest.TestCase):
         git_commit_all(self.root, "factory: T-0001 big")
         diff = collect_repo_diff(self.root, max_chars=200)
         assert diff is not None
-        self.assertLessEqual(len(diff), 200 + 60)
+        self.assertLessEqual(len(diff), 200 + 200)  # the cut body + the notices
         self.assertIn("truncated", diff)
+
+    def test_an_oversized_diff_still_shows_every_file_and_says_what_was_cut(self) -> None:
+        # Live (habits run #5): a 35k diff was cut at 16k from the END, so every test
+        # file vanished and the tester failed all 13 criteria as "no test visible".
+        from factory.workspace.git import collect_repo_diff, git_commit_all, git_init
+
+        git_init(self.root)
+        git_commit_all(self.root, "initial")
+        (self.root / "app.py").write_text("x = 1  # " + "y" * 6000 + "\n")
+        (self.root / "small.py").write_text("z = 2\n")
+        (self.root / "tests").mkdir()
+        (self.root / "tests" / "test_app.py").write_text(
+            "def test_x():\n    assert True  # " + "t" * 6000 + "\n")
+        git_commit_all(self.root, "factory: T-0001")
+        diff = collect_repo_diff(self.root, max_chars=1500)
+        assert diff is not None
+        for name in ("app.py", "small.py", "tests/test_app.py"):
+            self.assertIn(f"diff --git a/{name}", diff)
+        self.assertIn("z = 2", diff)            # a small file is never the one cut
+        self.assertIn("def test_x", diff)       # the start of the test file is shown
+        self.assertRegex(diff, r"truncated.*app\.py")
+        self.assertRegex(diff, r"tests/test_app\.py: \d+ of \d+")
+
+    def test_the_review_budget_fits_a_full_size_story(self) -> None:
+        from factory.domain.gates import MAX_REVIEW_DIFF_CHARS
+
+        self.assertGreaterEqual(MAX_REVIEW_DIFF_CHARS, 60000)
+
+    def test_the_review_policy_says_unseen_code_is_not_a_missing_test(self) -> None:
+        from factory.agent_config.location import agents_dir
+
+        policy = (agents_dir() / "policies" / "REVIEW.md").read_text(encoding="utf-8")
+        self.assertIn("not shown", policy)
+        self.assertIn("truncated", policy)
 
 
 class RunTestsTests(unittest.TestCase):
