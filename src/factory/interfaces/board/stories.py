@@ -72,6 +72,9 @@ class StoriesView(BoardView):
         super().show(model)
         narrow = self.screen.has_class("narrow") if self.is_mounted else False
         self.set_class(narrow, "narrow")
+        if not narrow and self.screen.size.width:
+            # The design's list width: min(64, 38% of the terminal).
+            self.query_one("#st-list-panel").styles.width = min(64, int(self.screen.size.width * 0.38))
         self.set_class(self.open, "open")
         self.set_class(self.board_mode, "board")
         self._fill_list()
