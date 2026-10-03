@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from rich.markup import escape
+
 from rich.console import Group
 from rich.panel import Panel
 from rich.rule import Rule
@@ -33,7 +35,7 @@ def print_queue(
             if gate and gate.get("human_questions"):
                 for q in gate["human_questions"].split("\n\n"):
                     if q.strip():
-                        output.console.print(f"    [yellow]?[/yellow] {q.strip()}")
+                        output.console.print(f"    [yellow]?[/yellow] {escape(q.strip())}")
             output.console.print(
                 f"    [green]factory approve {run['id']}[/green] · "
                 f"[red]factory reject {run['id']} \"<feedback>\"[/red]"
@@ -108,7 +110,7 @@ def board_renderable(
     for run, gate, _ in active:
         if run["status"] == "waiting_human" and gate and gate.get("human_questions"):
             qs = [q.strip() for q in gate["human_questions"].split("\n\n") if q.strip()]
-            body = "\n".join(f"[yellow]?[/yellow] {q}" for q in qs)
+            body = "\n".join(f"[yellow]?[/yellow] {escape(q)}" for q in qs)
             blocks.append(
                 Panel(body, title=f"⏸ Run #{run['id']} needs your input", border_style="yellow")
             )

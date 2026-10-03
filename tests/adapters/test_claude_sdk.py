@@ -96,6 +96,7 @@ class ClaudeSdkTests(unittest.TestCase):
     def test_sdk_model_strips_the_requesty_provider_prefix(self) -> None:
         self.assertEqual(claude_sdk.sdk_model("requesty/claude-opus-5-5"), "claude-opus-5-5")
         self.assertEqual(claude_sdk.sdk_model("claude-opus-5-5"), "claude-opus-5-5")
+        self.assertEqual(claude_sdk.sdk_model("claude/claude-opus-5-5"), "claude-opus-5-5")
 
     def test_available_needs_the_module_and_the_claude_cli(self) -> None:
         module, _ = _fake_sdk([])

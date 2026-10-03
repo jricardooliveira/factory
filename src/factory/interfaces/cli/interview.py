@@ -89,7 +89,7 @@ def interview(project_ref: str, *, amend: str | None = None) -> InterviewOutcome
     except (RunError, ValueError) as exc:
         fail(str(exc))
     if outcome.approved:
-        render.print_interview_approved(outcome.brief_path)
+        render.print_interview_approved(outcome.brief_path, None if amend else project_ref)
     else:
         render.print_interview_paused(project_ref, outcome.answers)
     return outcome
@@ -130,7 +130,7 @@ def _repropose_backlog(project_ref: str) -> None:
     except (RunError, ValueError) as exc:
         fail(str(exc))
     if outcome.approved:
-        print_backlog_approved(outcome.stories)
+        print_backlog_approved(outcome.stories, project_ref)
     else:
         print_backlog_not_approved(project_ref)
 

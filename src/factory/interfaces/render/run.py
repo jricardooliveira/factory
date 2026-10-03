@@ -217,7 +217,8 @@ def print_resume_entered(event: ResumeEntered) -> None:
         ))
 
 
-def print_final_status(status: str, error: str | None = None, human_questions: list[str] | None = None) -> None:
+def print_final_status(status: str, error: str | None = None, human_questions: list[str] | None = None,
+                       run_id: int | None = None) -> None:
     output.console.print()
     if status == "completed":
         output.console.print(Rule("[bold green]✅ Pipeline Completed[/bold green]", style="green"))
@@ -225,10 +226,12 @@ def print_final_status(status: str, error: str | None = None, human_questions: l
         output.console.print(Rule("[bold yellow]⏸️  Pipeline Paused — Human Approval Required[/bold yellow]", style="yellow"))
         if human_questions:
             for q in human_questions:
-                output.console.print(Panel(q, border_style="yellow"))
+                # Text, not markup: gate questions carry tags like "[security]".
+                output.console.print(Panel(Text(q), border_style="yellow"))
+        rid = run_id if run_id is not None else "<run_id>"
         output.console.print("\n  [dim]To continue:[/dim]")
-        output.console.print("    factory [bold cyan]approve <run_id>[/bold cyan]    Accept and continue to coder")
-        output.console.print("    factory [bold cyan]reject <run_id>[/bold cyan]     Reject and stop the pipeline")
+        output.console.print(f"    factory [bold cyan]approve {rid}[/bold cyan]    Accept and continue")
+        output.console.print(f"    factory [bold cyan]reject {rid}[/bold cyan]     Reject and stop the pipeline")
     elif status == "blocked":
         output.console.print(Rule("[bold yellow]⏸️  Pipeline Blocked[/bold yellow]", style="yellow"))
         if error:
@@ -279,5 +282,6 @@ def gate_result_label(gate: dict) -> tuple[str, str]:
 
 
 def print_run_finished(outcome: RunOutcome, logs: list[dict], gates: list[dict]) -> None:
-    print_final_status(outcome.status, outcome.error, human_questions=outcome.human_questions)
+    print_final_status(outcome.status, outcome.error, human_questions=outcome.human_questions,
+                       run_id=outcome.run_id)
     print_review_table(logs, gates)

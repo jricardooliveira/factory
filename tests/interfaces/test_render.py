@@ -55,3 +55,48 @@ class GateResultLabelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NextStepHintTests(unittest.TestCase):
+    """After the brief and the backlog, the operator is told the exact next command."""
+
+    def _printed(self, fn, *args) -> str:
+        from factory.interfaces.render import output
+
+        with output.console.capture() as captured:
+            fn(*args)
+        return " ".join(captured.get().split())
+
+    def test_brief_approved_names_factory_backlog(self) -> None:
+        from pathlib import Path
+
+        from factory.interfaces.render import print_interview_approved
+
+        text = self._printed(print_interview_approved, Path("/x/BRIEF.md"), "habits")
+        self.assertIn("factory backlog habits", text)
+
+    def test_backlog_approved_names_factory_next_with_the_project(self) -> None:
+        from factory.interfaces.render.backlog import print_backlog_approved
+
+        text = self._printed(print_backlog_approved, 9, "habits")
+        self.assertIn("factory next habits", text)
+
+
+class PausedRunTests(unittest.TestCase):
+    def _printed(self, fn, *args, **kwargs) -> str:
+        from factory.interfaces.render import output
+
+        with output.console.capture() as captured:
+            fn(*args, **kwargs)
+        return " ".join(captured.get().split())
+
+    def test_a_checkpoint_question_keeps_its_bracketed_tags(self) -> None:
+        # Gate text like "[security]" is data, not rich markup: it must not vanish.
+        from factory.interfaces.render.run import print_final_status
+
+        text = self._printed(print_final_status, "waiting_human",
+                             human_questions=["SENSITIVE WORK detected [security] — ok?"],
+                             run_id=12)
+        self.assertIn("[security]", text)
+        self.assertIn("factory approve 12", text)
+        self.assertIn("factory reject 12", text)

@@ -18,7 +18,7 @@ from pathlib import Path
 from rich.markup import escape
 from rich.text import Text
 from textual import on, work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import (
@@ -45,11 +45,26 @@ from factory.domain.interview import InterviewQuestion
 from factory.domain.project_spec import ProjectSpec
 from factory.evidence.backlog import BACKLOG_RELPATH
 from factory.evidence.brief import load_brief
-from factory.interfaces.board.interview_screen import QuestionScreen, ReviewScreen
+from factory.interfaces.board.interview_screen import PromptScreen, QuestionScreen, ReviewScreen
 from factory.interfaces.render.review import render_flow
-from factory.runs import RunError, dismiss_run, has_brief, resume_run, run_interview
+from factory.preflight.doctor import run_doctor
+from factory.runs import (
+    RunError,
+    dismiss_run,
+    has_brief,
+    mark_started,
+    next_story,
+    propose_backlog,
+    reconcile_stale,
+    replay_run,
+    resume_run,
+    retry_run,
+    run_interview,
+    run_project_pipeline,
+    run_story_interview,
+)
 from factory.runs.queries import run_stages
-from factory.workspace.projects import get_project, list_projects
+from factory.workspace.projects import create_project, get_project, list_projects
 
 
 def _col_slug(name: str) -> str:
@@ -90,6 +105,7 @@ class FactoryBoard(App):
         ("d", "dismiss", "Dismiss"),
         ("i", "interview", "Interview"),
         ("B", "brief", "Brief/backlog"),
+        ("m", "command_palette", "Menu"),
     ]
 
     def __init__(self, db_path: Path) -> None:
@@ -460,6 +476,157 @@ class FactoryBoard(App):
     def _confirm_stack(self, spec: ProjectSpec) -> bool | str:
         return self._modal(ReviewScreen("Proposed tech stack (project-spec.json)",
                                         spec.model_dump_json(indent=2), review=True))
+
+    # ── menu (m / ctrl+p): every major `factory` verb ─────────────
+    def get_system_commands(self, screen: Screen):
+        yield from super().get_system_commands(screen)
+        commands = [
+            ("New project", "factory project create <slug>", self._menu_new_project),
+            ("Interview: product brief", "factory interview <project>", self.action_interview),
+            ("Interview: amend brief", "factory interview <project> --amend", self._menu_amend),
+            ("Brief & backlog: show", "the approved brief and story list", self.action_brief),
+            ("Backlog: propose", "factory backlog <project>", self._menu_backlog),
+            ("Story: run next from backlog", "factory next <project>", self._menu_next),
+            ("Story: run a new request", "factory run --project <project>", self._menu_story),
+            ("Run: retry selected", "factory retry <run>", lambda: self._menu_run("retry")),
+            ("Run: replay selected", "factory replay <run> (zero tokens)",
+             lambda: self._menu_run("replay")),
+            ("Runs: reconcile stale", "factory reconcile", self._menu_reconcile),
+            ("Doctor (offline)", "factory doctor --offline",
+             lambda: self._job("Doctor", self._doctor_text, True)),
+            ("Doctor (probe models)", "factory doctor (one paid probe per model)",
+             lambda: self._job("Doctor", self._doctor_text, False)),
+            ("Evals", "factory evals (offline)", lambda: self._job("Evals", self._evals_text)),
+            ("Simulate", "factory simulate (offline)",
+             lambda: self._job("Simulate", self._simulate_text)),
+            ("Metrics", "factory metrics", lambda: self._job("Metrics", self._metrics_text)),
+            ("Model tiers", "factory tiers", lambda: self._job("Model tiers", self._tiers_text)),
+        ]
+        for title, help_text, callback in commands:
+            yield SystemCommand(title, help_text, callback)
+
+    @work(thread=True, group="menu")
+    def _job(self, title: str, fn, *args) -> None:
+        """Run one menu command off the UI thread; show its text, or notify its error."""
+        try:
+            text = fn(*args)
+        except Exception as exc:  # a refusal or a crash: surface, never kill the board
+            self.call_from_thread(self.notify, f"{title}: {exc}", severity="error")
+            return
+        if text:
+            self.call_from_thread(self.push_screen, ReviewScreen(title, text, review=False))
+
+    def _prompt(self, title: str, placeholder: str, then) -> None:
+        self.push_screen(PromptScreen(title, placeholder),
+                         lambda value: value and then(value))
+
+    def _menu_new_project(self) -> None:
+        def create(slug: str) -> None:
+            try:
+                project = create_project(self.db_path, slug=slug)
+            except (ValueError, OSError) as exc:
+                self.notify(str(exc), severity="error")
+                return
+            self._project_filter = project["slug"]
+            self.sub_title = f"Project: {self._project_filter}  ·  {self._view}"
+            self._last_sig = None
+            self.notify(f"{project['id']} {project['slug']} created — press i to interview.")
+        self._prompt("New project", "slug, e.g. habits", create)
+
+    def _menu_amend(self) -> None:
+        if ref := self._selected_project():
+            self._prompt(f"Amend the {ref} brief", "what changed",
+                         lambda change: self._job("Amend", self._interview_text, ref, change))
+
+    def _interview_text(self, ref: str, amend: str) -> str:
+        outcome = run_interview(ref, db_path=self.db_path, ask=self._ask, approve=self._approve,
+                                confirm_stack=self._confirm_stack, amend=amend)
+        return (f"Brief updated: {outcome.brief_path}\nRe-propose the backlog next."
+                if outcome.approved else "Amendment paused; the answers so far are saved.")
+
+    def _menu_backlog(self) -> None:
+        if ref := self._selected_project():
+            self._job("Backlog", self._backlog_text, ref)
+
+    def _backlog_text(self, ref: str) -> str:
+        def review(stories) -> bool | str:
+            body = "\n\n".join(f"{i}. {s.title}\n   {s.request}" for i, s in enumerate(stories, 1))
+            return self._modal(ReviewScreen("Approve this backlog?", body, review=True))
+        outcome = propose_backlog(ref, db_path=self.db_path, review=review)
+        return (f"Backlog approved: {len(outcome.stories)} stories. Menu → Story: run next."
+                if outcome.approved else "Backlog not approved.")
+
+    def _menu_next(self) -> None:
+        if ref := self._selected_project():
+            self._job("Next story", self._next_text, ref)
+
+    def _next_text(self, ref: str) -> str:
+        row = next_story(ref, db_path=self.db_path)
+        if row is None:
+            return f"No approved story left in the {ref} backlog."
+        outcome = self._start_story(ref, row["request"])
+        mark_started(row["id"], story_id=outcome.story_id, run_id=outcome.run_id,
+                     db_path=self.db_path)
+        return f"Story {row['title']!r}: run #{outcome.run_id} {outcome.status}."
+
+    def _menu_story(self) -> None:
+        if ref := self._selected_project():
+            self._prompt(f"New story for {ref}", "what should be built",
+                         lambda request: self._job("Story", self._story_text, ref, request))
+
+    def _story_text(self, ref: str, request: str) -> str:
+        outcome = self._start_story(ref, request)
+        return f"Run #{outcome.run_id} {outcome.status}."
+
+    def _start_story(self, ref: str, request: str):
+        # Same order as `factory next`: the story-level interview first, when a brief exists.
+        if has_brief(ref, db_path=self.db_path):
+            request = run_story_interview(ref, request, db_path=self.db_path, ask=self._ask)
+        return run_project_pipeline(ref, request, db_path=self.db_path)
+
+    def _menu_run(self, verb: str) -> None:
+        if not self.selected_id:
+            self.notify("Select a run first.", severity="warning")
+            return
+        fn = retry_run if verb == "retry" else replay_run
+        self._job(verb.title(), lambda rid: (
+            f"Run #{(o := fn(rid, db_path=self.db_path)).run_id} {o.status}."), self.selected_id)
+
+    def _menu_reconcile(self) -> None:
+        self._job("Reconcile", lambda: (
+            f"Marked failed: {ids}" if (ids := reconcile_stale(db_path=self.db_path))
+            else "No stale runs."))
+
+    @staticmethod
+    def _doctor_text(offline: bool) -> str:
+        report = run_doctor(offline=offline)
+        icon = {"ok": "✅", "fail": "❌", "warn": "⚠️", "skip": "⏭"}
+        lines = [f"{icon.get(c.status, c.status)} {c.name}  {c.detail}" for c in report.checks]
+        lines.append("Ready." if report.passed else "A blocking check failed.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _evals_text() -> str:
+        from factory.selftest import evals
+        return evals.render_markdown(evals.run_all())
+
+    @staticmethod
+    def _simulate_text() -> str:
+        from factory.selftest.simulate import render_markdown, simulate_all
+        return render_markdown(simulate_all())
+
+    def _metrics_text(self) -> str:
+        from factory.evidence.metrics import compute, render_markdown
+        return render_markdown(compute(self.db_path))
+
+    @staticmethod
+    def _tiers_text() -> str:
+        from factory.agent_config import tiers
+        from factory.agent_config.settings import settings
+        lines = [f"Runner: {settings().runner.agents}"]
+        for agent, tier in sorted(tiers.AGENT_TIERS.items()):
+            lines.append(f"{agent:16} {tier:9} {tiers.model_for_tier(tier)}")
+        return "\n".join(lines)
 
 
 def run_board_tui(db_path: Path) -> None:

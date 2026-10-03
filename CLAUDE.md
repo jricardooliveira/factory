@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `875 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `875 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `895 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `895 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -32,6 +32,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 | `.venv/bin/factory backlog <project>` | proposes the ordered story list from the brief; approve, or type feedback to regenerate |
 | `.venv/bin/factory next <project> [--no-interview]` | starts the next approved backlog story (story-level interview first on a TTY) |
 | `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
+| `.venv/bin/factory board` | Textual board; `m` (or ctrl+p) opens the menu of every major verb (new project, interview, backlog, next/new story, retry/replay, doctor, evals, simulate, metrics, tiers) |
+| `FACTORY_RUNNER=claude .venv/bin/factory …` | runs every agent through the local Claude Code CLI (`claude -p`) on `agents/tiers.toml` `[claude_tiers]` instead of opencode; permanent via `factory.toml` `[runner] agents = "claude"` |
 | `.venv/bin/factory --help` | full CLI verb list |
 
 `ruff` is configured in `pyproject.toml` (line-length 100, `E,F,I,W`) but **is not installed** in
@@ -60,7 +62,7 @@ src/factory/
                         is decided from recorded answers, never the model's claim), resolve_answer.
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
                         review_policy.py, settings.py (factory.toml at the checkout root or $FACTORY_SETTINGS:
-                        budget cap + probe timeout; env > file > default; invalid = refused; `settings()` is read per call, never
+                        budget cap + probe timeout + runner (opencode|claude); env > file > default; invalid = refused; `settings()` is read per call, never
                         cached).
   pipeline/             The orchestrator (LangGraph). Owns routing/remediation. __init__ is the
                         PUBLIC API — other packages import only from `factory.pipeline`.
@@ -91,8 +93,10 @@ src/factory/
                         product repo), projects.py, templates.py, git.py (checkpoint + evidence
                         commits, baseline, real diff), materialize.py, repo_map.py, legacy.py
                         (`factory workspace import-legacy`).
-  adapters/             opencode.py + claude_sdk.py (the only places a model is called; the SDK
-                        one only for the interview, optional extra `.[claude]`), notify.py.
+  adapters/             opencode.py + claude_cli.py + claude_sdk.py (the only places a model is
+                        called; a `claude/<model>` id makes opencode.run_agent hand the call to
+                        `claude -p`; the SDK one only for the interview, optional extra `.[claude]`),
+                        result.py (AgentResult), notify.py.
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
   state/interviews.py   interview_answers / interview_turns accessors (verbatim agent I/O).
   state/backlog.py      backlog_stories accessors: a new proposal replaces only unstarted rows.
@@ -183,6 +187,12 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Agents cannot write files.** Code reaches disk only via `code_blocks` → `materialize_code_blocks`.
   Any file that appears in the repo undeclared is an out-of-band write and *blocks* gate-build.
   Don't "fix" that by enabling agent write tools.
+- **The runner is a choice, the tiers are not.** `settings().runner.agents` (`factory.toml`
+  `[runner] agents`, env `FACTORY_RUNNER`) = `opencode` (default) or `claude`; under `claude`,
+  `tiers.model_for_tier` reads `[claude_tiers]` (every tier, all `claude/<model>`, each priced)
+  and the adapter runs `claude -p --tools "" --system-prompt <agent .md body>`, prompt on stdin.
+  `FACTORY_TIER_*` still wins. Reviewer/author family independence does NOT hold under the
+  claude runner — the operator's trade-off. `tests/conftest.py` unsets `FACTORY_RUNNER`.
 - **Model choice lives in `agents/tiers.toml`, nowhere else.** Each agent's `.md` frontmatter
   repeats its `model_tier:` and that tier's `model:`; `tests/agent_config/test_tiers.py` and
   `factory evals` fail on drift. Change the toml and the frontmatter together. Default models
