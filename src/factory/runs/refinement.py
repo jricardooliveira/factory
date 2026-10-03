@@ -16,7 +16,7 @@ from factory.domain.interview import (
 from factory.domain.project_spec import ProjectSpec
 from factory.domain.contracts import SpecOutput, ArchitectOutput
 from factory.domain.workflow import design_conflicts
-from factory.domain.gates import gate_after_spec
+from factory.domain.gates import MAX_BACKLOG_REVISIONS, gate_after_spec
 from factory.domain.workflow import ResourceClaim, StoryPlan
 from factory.evidence.brief import load_brief, render_brief, write_brief
 from factory.runs.context import load_project_spec_text
@@ -64,7 +64,13 @@ def _enqueue(conn, session: dict) -> dict:
                              {'session_id': session['id']})
 
 
-def start_refinement(project_ref: str, backlog_id: int | None = None, *, db_path: Path) -> dict:
+def start_refinement(project_ref: str, backlog_id: int | None = None, *, db_path: Path,
+                     amendment: str | None = None) -> dict:
+    """Queue a refinement: the product interview (`backlog_id` None) or one story's.
+
+    `amendment` reopens an approved brief for that change only (asked first, then the
+    brief is re-reviewed); the agreement already given is not asked again.
+    """
     init_db(db_path)
     project = get_project(db_path, project_ref)
     with get_db(db_path) as conn, store.atomic(conn):
@@ -83,6 +89,10 @@ def start_refinement(project_ref: str, backlog_id: int | None = None, *, db_path
         draft = {'request': row['request'] if row else '', 'answers': [],
                  'context': project_context(project), 'context_revision': context_revision(project),
                  'base_commit': git_head(Path(project['repo_path'])), 'turns': 0}
+        if amendment and not row:
+            draft['amendment'] = amendment.strip()
+            # An amendment changes the product, not the agreement already given.
+            draft['technical_complete'] = agreement_complete(list_answers(conn, project['id']))
         if session:
             session = store.update_session(conn, session['id'], phase='story' if row else 'product',
                                            draft=draft)
@@ -252,7 +262,14 @@ def advance_refinement(job: dict, *, db_path: Path) -> dict:
         return {'status': 'ready' if plan.ready else 'blocked', 'plan_id': plan.id}
     # Reuse the existing topic coverage; the new sections add consequential technical choices.
     missing = uncovered_topics(answers)
-    if missing and not load_brief(repo):
+    amending = None
+    if draft.get('amendment') and not draft.get('amendment_done'):
+        amending = next_turn(project, answers, db_path=db_path, amendment=draft['amendment'])
+        if not (amending.questions and not amending.done):
+            draft['amendment_done'] = True
+    if amending and not draft.get('amendment_done'):
+        questions, phase = amending.questions, 'amend'
+    elif missing and not load_brief(repo):
         turn = next_turn(project, answers, db_path=db_path)
         questions = turn.questions or fallback_questions(missing[:2])
         phase = 'experience' if missing[0] in ('screens', 'errors', 'success') else 'product'
@@ -318,15 +335,18 @@ def advance_backlog(job: dict, *, db_path: Path) -> dict:
     project = get_project(db_path, job['project_id'])
     if context_revision(project) != job['payload']['context_revision']:
         raise RunError('Brief changed; propose the backlog again')
+    feedback = list(job['payload'].get('feedback', []))
     with get_db(db_path) as conn:
         current = list_backlog(conn, project['id'])
     stories = _propose(project, build_backlog_prompt(project, load_brief(Path(project['repo_path'])),
-                                                    current, []), db_path=db_path)
+                                                    current, feedback), db_path=db_path)
     with get_db(db_path) as conn:
         store.add_decision(conn, project['id'], f"backlog:{job['id']}", 'Review the proposed backlog',
                            kind='backlog', context={'stories': [s.model_dump() for s in stories],
                                                    'context_revision': context_revision(project),
-                                                   'effect': 'Type approve to save these stories. Existing refinement is retained.'})
+                                                   'feedback': feedback,
+                                                   'effect': 'Approving saves these stories as the backlog; '
+                                                             'stories already refined are kept.'})
     return {'status': 'needs_input'}
 
 
@@ -335,7 +355,7 @@ def answer_backlog(decision_id: str, text: str, *, db_path: Path) -> dict:
     from factory.runs.backlog import _write_and_commit
     from factory.state.backlog import replace_unstarted
     if text.strip().lower() != 'approve':
-        raise RunError('Type approve to accept this backlog; amend the brief before requesting a new proposal')
+        return request_backlog_changes(decision_id, text, db_path=db_path)
     with get_db(db_path) as conn:
         decision = store.get_decision(conn, decision_id)
     project = get_project(db_path, decision['project_id'])
@@ -353,3 +373,69 @@ def answer_backlog(decision_id: str, text: str, *, db_path: Path) -> dict:
             result = store.answer_decision(conn, decision_id, text)
         _write_and_commit(project, db_path=db_path)
         return result
+
+
+def request_backlog_changes(decision_id: str, feedback: str, *, db_path: Path) -> dict:
+    """Send the proposal back to the backlog-agent with the operator's words.
+
+    Bounded like the terminal flow (MAX_BACKLOG_REVISIONS): every round is a paid
+    call, and a backlog that keeps missing means the brief needs amending.
+    """
+    feedback = feedback.strip()
+    if not feedback:
+        raise RunError('Say what should change, or approve the proposal')
+    with get_db(db_path) as conn, store.atomic(conn):
+        decision = store.get_decision(conn, decision_id)
+        if decision['status'] == 'answered':
+            return decision
+        earlier = list(decision['context'].get('feedback', []))
+        if len(earlier) >= MAX_BACKLOG_REVISIONS:
+            raise RunError(f'This backlog went back {MAX_BACKLOG_REVISIONS} times already; '
+                           'amend the brief instead, then propose a new backlog')
+        result = store.answer_decision(conn, decision_id, feedback)
+        store.enqueue_job(conn, decision['project_id'], 'backlog', f'backlog:{uuid.uuid4().hex}',
+                          {'context_revision': decision['context']['context_revision'],
+                           'feedback': [*earlier, feedback]})
+        store.add_event(conn, decision['project_id'], 'backlog', 'Backlog changes requested',
+                        {'feedback': feedback})
+        return result
+
+
+def request_changes(decision_id: str, text: str, *, db_path: Path) -> dict:
+    """Send a proposal (backlog, or brief + technical choices) back with the operator's words.
+
+    Never an approval: "approve" typed into the changes box is refused, not obeyed.
+    """
+    text = text.strip()
+    if not text:
+        raise RunError('Say what should change, or approve it')
+    if text.lower() in ('approve', 'yes'):
+        raise RunError('That reads as an approval: use Approve, or say what should change')
+    with get_db(db_path) as conn:
+        kind = store.get_decision(conn, decision_id)['kind']
+    if kind == 'backlog':
+        return request_backlog_changes(decision_id, text, db_path=db_path)
+    if kind == 'brief':
+        return answer(decision_id, text, db_path=db_path)
+    raise RunError('Only a proposal can be sent back with changes')
+
+
+def agreement_complete(answers: list[dict]) -> bool:
+    """The product's execution agreement was given (the last section of the intake)."""
+    return any(a['topic'] == 'execution' for a in answers)
+
+
+# Work whose failure wrote nothing that a second attempt could repeat: a refinement
+# step or a backlog proposal re-reads its saved state, and its model call failed.
+RETRYABLE_JOBS = ('refine', 'backlog')
+
+
+def retry_job(job_id: str, *, db_path: Path) -> dict:
+    with get_db(db_path) as conn, store.atomic(conn):
+        job = store.get_job(conn, job_id)
+        if job['status'] != 'failed' or job['kind'] not in RETRYABLE_JOBS:
+            raise RunError('Only a failed refinement or backlog proposal can be retried here')
+        fresh = store.retry_failed_job(conn, job_id)
+        store.add_event(conn, job['project_id'], 'job', f"{job['kind']}: retried",
+                        {'job_id': job_id, 'retry': fresh['id']})
+        return fresh

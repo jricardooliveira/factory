@@ -6,18 +6,23 @@ from pathlib import Path
 
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Footer, Header, Select, Static, Tab, Tabs, TextArea
 
+from factory.interfaces.board.answer import AnswerPicker
+from factory.interfaces.board.interview_screen import PromptScreen
+from factory.interfaces.board.views import (decision_actions, decision_body, decision_row, job_body,
+                                            job_row, project_actions)
 from factory.runs.batches import abandon_batch, launch_batch, propose_batch, queue_integration, queue_release
 from factory.runs.dashboard import dashboard, pause_project, recover_job, stop_job
-from factory.runs.refinement import answer, save_draft, start_backlog, start_refinement
+from factory.runs.refinement import (answer, request_changes, retry_job, save_draft,
+                                      start_backlog, start_refinement)
 from factory.runs.worker import start_worker
 
 
 class WorkflowScreen(Screen[int | None]):
-    BINDINGS = [('escape', 'close', 'Run details'), ('r', 'refresh', 'Refresh'),
+    BINDINGS = [('escape', 'close', 'All runs'), ('r', 'refresh', 'Refresh'),
                 ('m', 'menu', 'Menu'), ('q', 'quit_board', 'Quit board')]
     DEFAULT_CSS = '''
     WorkflowScreen { background: $background; overflow-y: auto; }
@@ -25,7 +30,8 @@ class WorkflowScreen(Screen[int | None]):
     #wf-top { height: auto; }
     #wf-summary { height: auto; padding: 1; }
     #wf-list { height: 1fr; min-height: 4; }
-    #wf-detail { height: 2fr; min-height: 8; border: round $panel; padding: 0 1; }
+    #wf-detail-box { height: 2fr; min-height: 10; border: round $panel; padding: 0 1; }
+    #wf-detail { height: 1fr; }
     #wf-text { height: auto; }
     #wf-answer { height: 5; margin-top: 1; }
     #wf-buttons { height: auto; }
@@ -44,6 +50,9 @@ class WorkflowScreen(Screen[int | None]):
         self._signature = None
         self._loading = False
         self._acting = False
+        # Drafts live here first (instant, survives navigation) and in the DB second
+        # (survives a restart); the DB write happens off the UI thread.
+        self._drafts: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -58,19 +67,24 @@ class WorkflowScreen(Screen[int | None]):
             yield Button('Propose backlog', id='wf-backlog')
             yield Button('Propose batch', id='wf-propose')
             yield Button('Pause new starts', id='wf-pause')
-            yield Button('Start worker', id='wf-worker')
+            yield Button('Restart worker', id='wf-worker', variant='warning')
         yield DataTable(id='wf-list', cursor_type='row')
-        with VerticalScroll(id='wf-detail'):
-            yield Static('Select an item to see its context and next action.', id='wf-text', markup=False)
-            yield TextArea(id='wf-answer', disabled=True)
+        with Vertical(id='wf-detail-box'):
+            with VerticalScroll(id='wf-detail'):
+                yield Static('Select an item to see its context and next action.', id='wf-text',
+                             markup=False)
+                yield AnswerPicker(id='wf-picker')
+                yield TextArea(id='wf-answer', disabled=True)
+            # Outside the scroll: however long the document, its actions stay on screen.
             with Horizontal(id='wf-buttons'):
                 yield Button('Select an item', id='wf-primary', variant='primary', disabled=True)
+                yield Button('Request changes', id='wf-secondary')
                 yield Button('Stop at safe boundary', id='wf-stop', disabled=True)
-                yield Button('Run details', id='wf-runs')
             yield Static('', id='wf-note', markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
+        self.title, self.sub_title = 'Factory', self.project_ref or 'All projects'
         self.query_one('#wf-list', DataTable).add_columns('Project / item', 'State', 'What is happening')
         self.action_refresh()
         self.set_interval(2, self.action_refresh)
@@ -93,20 +107,37 @@ class WorkflowScreen(Screen[int | None]):
             counts = {state: sum(s['state'] == state for s in stories)
                       for state in ('Refining', 'Ready', 'Working', 'Needs input', 'Blocked')}
             scope = self.project_ref or 'All projects'
+            queued = sum(j['status'] in ('queued', 'running') for j in self.data['jobs'])
+            stuck = self.data['worker'] != 'active' and queued
+            worker = ('worker running' if self.data['worker'] == 'active'
+                      else f'worker stopped with {queued} queued' if stuck else 'idle')
             self.query_one('#wf-summary', Static).update(
-                f"{scope} · Worker {self.data['worker']}\n" + '  |  '.join(f'{k}: {v}' for k, v in counts.items())
+                f"{scope} · {worker}\n" + '  |  '.join(f'{k}: {v}' for k, v in counts.items())
                 + '\nInterview → Refine → Select batch → Build & verify → Human release'
                 + ('\nNew starts paused. Running calls finish at their next safe boundary.' if self.data['paused'] else '')
-                + ('\nNo stories yet. Interview → approve brief → Menu: propose backlog → refine stories.' if not stories else ''))
-            self.query_one('#wf-pause', Button).label = 'Resume new starts' if self.data['paused'] else 'Pause new starts'
+                + ('' if self.project_ref else '\nChoose a project above to interview, plan and launch.'))
+            self._apply_project_actions(bool(stuck))
             self._fill()
         except Exception as exc:
             self.query_one('#wf-note', Static).update(str(exc))
+
+    def _apply_project_actions(self, stuck: bool) -> None:
+        actions = {a.id: a for a in project_actions(self.data.get('project'))}
+        for button in self.query_one('#wf-controls').query(Button):
+            if button.id == 'wf-worker':
+                button.display = stuck
+                continue
+            action = actions.get(button.id)
+            button.display = action is not None
+            if action:
+                button.label, button.disabled = action.label, not action.enabled
+                button.tooltip = action.reason if not action.enabled else None
 
     @on(Select.Changed, '#wf-project')
     def project_changed(self, event: Select.Changed) -> None:
         self.project_ref = str(event.value) or None
         self.app._project_filter = self.project_ref
+        self.sub_title = self.project_ref or 'All projects'
         self._signature = None
         self.action_refresh()
 
@@ -120,14 +151,14 @@ class WorkflowScreen(Screen[int | None]):
         tab = self.query_one('#wf-tabs', Tabs).active
         items = []
         if tab in ('overview', 'inbox'):
-            items += [('decision:' + d['id'], 'decision', d, d['project'], d['kind'], d['question'])
+            items += [('decision:' + d['id'], 'decision', d, d['project'], *decision_row(d))
                       for d in self.data['decisions']]
             items += [('batch:' + p['id'], 'batch', p, p['project'], p['status'], 'Compatible batch / combined candidate')
                       for p in self.data['proposals'] if p['status'] in ('proposed', 'launched', 'blocked', 'integrating')]
             items += [('run:' + str(r['id']), 'run', r, r['project_slug'], r['status'],
                        f"Run #{r['id']} · {r['current_stage']} · {r.get('error') or r['story_title']}")
                       for r in self.data['runs'] if tab == 'overview' or r['status'] != 'running']
-            items += [('job:' + j['id'], 'job', j, j['project'], j['status'], j['error'] or j['kind'])
+            items += [('job:' + j['id'], 'job', j, j['project'], *job_row(j))
                       for j in self.data['jobs'] if j['status'] in ('failed', 'interrupted')]
         elif tab == 'stories':
             items = [('story:' + str(s['id']), 'story', s, s['project'], s['state'], s['title'])
@@ -135,7 +166,7 @@ class WorkflowScreen(Screen[int | None]):
         elif tab == 'activity':
             items = [('event:' + str(e['id']), 'event', e, e['project'], e['created_at'][11:19], e['message'])
                      for e in self.data['events'][:100]]
-            items = [('job:' + j['id'], 'job', j, j['project'], j['status'], j['kind'])
+            items = [('job:' + j['id'], 'job', j, j['project'], *job_row(j))
                      for j in self.data['jobs'] if j['status'] in ('queued', 'running')] + items
         else:
             items = [('settings', 'settings', {}, self.project_ref or 'All', 'Policy',
@@ -173,25 +204,31 @@ class WorkflowScreen(Screen[int | None]):
         area = self.query_one('#wf-answer', TextArea)
         primary = self.query_one('#wf-primary', Button)
         stop = self.query_one('#wf-stop', Button)
+        picker = self.query_one('#wf-picker', AnswerPicker)
+        secondary = self.query_one('#wf-secondary', Button)
+        secondary.display = False
         primary.disabled, stop.disabled, area.disabled = True, True, True
         stop.label = 'Stop at safe boundary'
         area.load_text('')
+        picker.display, area.display = False, True
         kind, row = self.items.get(key, ('', {}))
         text, label = 'Nothing needs your input in this view.', 'Select an item'
         if kind == 'decision':
-            context = row['context']
-            question = context.get('question', {})
-            options = '\n'.join(f"{i}. {o['label']} — {o.get('description', '')}"
-                                for i, o in enumerate(question.get('options', []), 1))
-            text = row['question'] + '\n\n'
-            if question:
-                text += context.get('why', '') + '\n' + options + '\n\n' + context.get('effect', '')
-                text += '\nType an option number, your answer, or “you decide” to delegate.'
+            actions = decision_actions(row)
+            draft = self._drafts.get(row['id'], row.get('draft_text') or '')
+            text = decision_body(row)
+            label = actions.primary
+            if actions.picker:
+                text += '\n\n↑↓ or 1-9 choose · Enter answers · Esc back to the list'
+                picker.display, area.display = True, False
+                picker.load(row['context']['question'], draft)
             else:
-                text += json.dumps(context, indent=2, ensure_ascii=False)
-            label = 'Approve integration' if row['kind'] == 'release' else 'Submit answer'
-            area.disabled = row['kind'] == 'release'
-            area.load_text(row.get('draft_text') or '')
+                area.display = actions.placeholder is not None
+                area.disabled = actions.placeholder is None
+                area.placeholder = actions.placeholder or ''
+                area.load_text(draft)
+            if actions.secondary:
+                secondary.label, secondary.display = actions.secondary, True
             primary.disabled = False
         elif kind == 'story':
             text = f"Story #{row['id']} · {row['title']}\n{row['request']}\n\nState: {row['state']}"
@@ -215,11 +252,11 @@ class WorkflowScreen(Screen[int | None]):
             text = f"Run #{row['id']} · {row['story_title']}\n{row['current_stage']}\n{row.get('error') or ''}"
             label, primary.disabled = 'Open run / decision', False
         elif kind == 'job':
-            text = json.dumps(row, indent=2)
+            text = job_body(row)
             stop.disabled = row['status'] not in ('running', 'queued')
             if row['status'] in ('failed', 'interrupted'):
-                label, primary.disabled = 'Reconcile stopped job', False
-                text += '\n\nWork is retained. Inspect the saved error/workspace before retrying; a lost lease is never automatically repeated.'
+                label = 'Retry' if row.get('retryable') else 'Reconcile stopped job'
+                primary.disabled = False
         elif kind == 'event':
             text = row['message'] + '\n' + json.dumps(row['details'], indent=2)
         elif kind == 'settings':
@@ -236,18 +273,58 @@ class WorkflowScreen(Screen[int | None]):
 
     @on(TextArea.Changed, '#wf-answer')
     def draft_changed(self) -> None:
-        if self._loading:
+        area = self.query_one('#wf-answer', TextArea)
+        # load_text's Changed arrives after _loading is reset: a hidden or disabled box
+        # is never the operator typing, and must not overwrite the picker's draft.
+        if self._loading or not area.display or area.disabled:
             return
         kind, row = self.items.get(self.selected, ('', {}))
         if kind == 'decision' and row['kind'] != 'release':
-            save_draft(row['id'], self.query_one('#wf-answer', TextArea).text, db_path=self.db_path)
+            self._keep_draft(row['id'], self.query_one('#wf-answer', TextArea).text)
+
+    @on(AnswerPicker.DraftChanged)
+    def picker_draft_changed(self, event: AnswerPicker.DraftChanged) -> None:
+        kind, row = self.items.get(self.selected, ('', {}))
+        if kind == 'decision' and not self._loading:
+            self._keep_draft(row['id'], event.value)
+
+    def _keep_draft(self, decision_id: str, value: str) -> None:
+        self._drafts[decision_id] = value
+        self._save_draft(decision_id, value)
+
+    @work(thread=True, group='draft')
+    def _save_draft(self, decision_id: str, value: str) -> None:
+        try:
+            save_draft(decision_id, value, db_path=self.db_path)
+        except Exception as exc:  # a locked DB must never take the board down
+            self.app.call_from_thread(self._note, f'Draft not saved yet: {exc}')
+
+    def _note(self, message: str) -> None:
+        self.query_one('#wf-note', Static).update(message)
+
+    @on(DataTable.RowSelected, '#wf-list')
+    def row_entered(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        kind, row = self.items.get(str(event.row_key.value), ('', {}))
+        if kind == 'decision' and row['context'].get('question'):
+            self.query_one('#wf-picker', AnswerPicker).focus_choices()
+
+    @on(AnswerPicker.Answered)
+    def picked(self, event: AnswerPicker.Answered) -> None:
+        kind, row = self.items.get(self.selected, ('', {}))
+        if kind == 'decision' and not self._acting:
+            self._acting = True
+            self._perform('wf-primary', kind, row, event.value)
+
+    def on_key(self, event) -> None:
+        if event.key == 'escape' and self.query_one('#wf-picker', AnswerPicker).query_one(
+                'OptionList').has_focus:
+            event.stop()
+            self.query_one('#wf-list', DataTable).focus()
 
     @on(Button.Pressed)
     def button(self, event: Button.Pressed) -> None:
         identity = event.button.id
-        if identity == 'wf-runs':
-            self.dismiss(None)
-            return
         if self._acting:
             return
         kind, row = self.items.get(self.selected, ('', {}))
@@ -257,7 +334,24 @@ class WorkflowScreen(Screen[int | None]):
         if identity in ('wf-intake', 'wf-backlog', 'wf-propose', 'wf-pause') and not self.project_ref:
             self.notify('Choose a project using the selector first.', severity='warning')
             return
+        if identity == 'wf-intake' and str(event.button.label).startswith('Amend'):
+            def amend(change: str | None) -> None:
+                if change and not self._acting:
+                    self._acting = True
+                    self._perform('wf-amend', kind, row, change)
+            self.app.push_screen(PromptScreen(f'Amend the {self.project_ref} brief: what changed?',
+                                              'e.g. add gift wrapping at checkout'), amend)
+            return
         text = self.query_one('#wf-answer', TextArea).text
+        if kind == 'decision' and identity == 'wf-primary' and row['context'].get('question'):
+            text = self.query_one('#wf-picker', AnswerPicker).value
+            if not text:
+                self._note('Choose an option, or write your answer under Other.')
+                return
+        if identity == 'wf-secondary' and not text.strip():
+            self._note('Say what should change first, in the box above.')
+            self.query_one('#wf-answer', TextArea).focus()
+            return
         self._acting = True
         self._perform(identity, kind, row, text)
 
@@ -268,6 +362,9 @@ class WorkflowScreen(Screen[int | None]):
             launch_worker = False
             if identity == 'wf-intake':
                 start_refinement(self.project_ref, db_path=db)
+                launch_worker = True
+            elif identity == 'wf-amend':
+                start_refinement(self.project_ref, db_path=db, amendment=text)
                 launch_worker = True
             elif identity == 'wf-backlog':
                 start_backlog(self.project_ref, db_path=db)
@@ -284,7 +381,10 @@ class WorkflowScreen(Screen[int | None]):
                 else:
                     stop_job(row['id'], db_path=db)
             elif identity == 'wf-primary':
-                if kind == 'job':
+                if kind == 'job' and row.get('retryable'):
+                    retry_job(row['id'], db_path=db)
+                    launch_worker = True
+                elif kind == 'job':
                     recover_job(row['id'], db_path=db)
                 elif kind == 'story':
                     start_refinement(row['project'], row['id'], db_path=db)
@@ -292,10 +392,11 @@ class WorkflowScreen(Screen[int | None]):
                 elif kind == 'decision':
                     if row['kind'] == 'release':
                         queue_release(row['id'], db_path=db)
-                        launch_worker = True
+                    elif row['kind'] in ('backlog', 'brief'):
+                        answer(row['id'], 'approve', db_path=db)  # never the changes box
                     else:
                         answer(row['id'], text, db_path=db)
-                        launch_worker = True
+                    launch_worker = True
                 elif kind == 'batch':
                     if row['status'] == 'proposed':
                         ids = [int(i.strip()) for i in text.split(',') if i.strip()]
@@ -303,12 +404,16 @@ class WorkflowScreen(Screen[int | None]):
                     else:
                         queue_integration(row['id'], db_path=db)
                     launch_worker = True
+            elif identity == 'wf-secondary' and kind == 'decision':
+                request_changes(row['id'], text, db_path=db)
+                launch_worker = True
             if launch_worker:
                 start_worker(db_path=db)
             message = 'Action saved. The board will show the resulting state.'
         except Exception as exc:
             message = str(exc)
-        self.call_from_thread(self._finished, message)
+        # call_from_thread is the App's, not the Screen's: calling it on self crashed the board.
+        self.app.call_from_thread(self._finished, message)
 
     def _finished(self, message: str) -> None:
         self._acting = False

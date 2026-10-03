@@ -128,6 +128,11 @@ _MAX_DELEGATION_WORDS = 20
 def _delegates(text: str) -> bool:
     return len(text.split()) <= _MAX_DELEGATION_WORDS and bool(_DELEGATES.search(text))
 
+
+def is_delegation(text: str) -> bool:
+    """The text hands the choice back to the factory ("you decide", "up to you")."""
+    return _delegates(text)
+
 # Unsure without handing it back: the question is still open.
 _UNSURE = re.compile(
     r"\b(not (?:really |so )?sure|unsure|no idea|dunno|can'?t decide|"

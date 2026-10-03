@@ -113,7 +113,7 @@ class FactoryBoard(App):
         ("i", "interview", "Interview"),
         ("B", "brief", "Brief/backlog"),
         ("s", "status", "Status"),
-        ("o", "project_overview", "Project overview"),
+        ("o", "project_overview", "Home"),
         ("m", "command_palette", "Menu"),
     ]
 
@@ -152,6 +152,18 @@ class FactoryBoard(App):
                     yield Button("Dismiss", id="dismiss", variant="warning", disabled=True)
                 yield Static("", id="result")
         yield Footer()
+
+    # The run board's own keys. With the home (workflow) screen on top they stay inert
+    # and out of its footer: "a" approved whatever run was selected underneath.
+    _RUN_BOARD_ACTIONS = frozenset({
+        "approve", "reject", "dismiss", "toggle_view", "focus_left", "focus_right",
+        "cycle_project", "brief", "interview", "status", "refresh",
+    })
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action in self._RUN_BOARD_ACTIONS and isinstance(self.screen, WorkflowScreen):
+            return False
+        return True
 
     def on_mount(self) -> None:
         table = self.query_one("#runs", DataTable)
@@ -233,8 +245,10 @@ class FactoryBoard(App):
                 item.run_id = r.id  # type: ignore[attr-defined]
                 lv.append(item)
 
-    @on(DataTable.RowSelected)
+    @on(DataTable.RowSelected, "#runs")
     def _row_selected(self, event: DataTable.RowSelected) -> None:
+        # Scoped to the run table: unscoped, Enter on the workflow screen's list bubbled
+        # here and crashed the board on int("decision:…").
         if event.row_key.value is None:
             return
         self.selected_id = int(event.row_key.value)
@@ -451,13 +465,11 @@ class FactoryBoard(App):
         self.push_screen(ReviewScreen(f"Project {ref}", body, review=False))
 
     def action_interview(self) -> None:
-        if ref := self._selected_project():
-            try:
-                start_refinement(ref, db_path=self.db_path)
-                start_worker(db_path=self.db_path)
-                self.action_project_overview()
-            except Exception as exc:
-                self.notify(str(exc), severity="error")
+        # The workflow screen's project bar knows whether this is a first Interview,
+        # completing the agreement, or an amendment; starting one blind from here
+        # spent a paid technical interview on an already approved brief.
+        if self._selected_project():
+            self.action_project_overview()
 
     @work(thread=True, exclusive=True, group="interview")
     def _do_interview(self, ref: str) -> None:
@@ -516,6 +528,8 @@ class FactoryBoard(App):
             ("Brief & backlog: show", "the approved brief and story list", self.action_brief),
             ("Backlog: propose", "factory backlog <project>", self._menu_backlog),
             ("Story: refine next from backlog", "Prepare the next story without starting a build", self._menu_next),
+            ("Story: run next from backlog", "factory next <project>: one story, straight into the pipeline",
+             self._menu_run_next),
             ("Story: run a new request", "factory run --project <project>", self._menu_story),
             ("Run: retry selected", "factory retry <run>", lambda: self._menu_run("retry")),
             ("Run: replay selected", "factory replay <run> (zero tokens)",
@@ -622,6 +636,11 @@ class FactoryBoard(App):
                 self.action_project_overview()
             else:
                 self.notify("No approved story to refine; propose a backlog first.")
+
+    def _menu_run_next(self) -> None:
+        # The direct one-story path, next to refine → batch (operator decision, 2026-10-03).
+        if ref := self._selected_project():
+            self._job("Next story", self._next_text, ref)
 
     def _next_text(self, ref: str) -> str:
         row = next_story(ref, db_path=self.db_path)
