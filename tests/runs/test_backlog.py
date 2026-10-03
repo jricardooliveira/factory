@@ -35,6 +35,18 @@ def _proposal(*titles: str, ok: bool = True) -> AgentResult:
     )
 
 
+class BacklogAgentDefinitionTests(unittest.TestCase):
+    def test_it_states_the_size_a_story_must_fit(self) -> None:
+        # Live (habits story 2): a backlog story needed 9 tasks, then 17 files. The limits
+        # were discovered at gate-1 / gate-2, after the spec and the design were paid for.
+        from factory.agent_config.location import agents_dir
+        from factory.domain.gates import MAX_MODULES_PER_STORY, MAX_TASKS_PER_STORY
+
+        text = (agents_dir() / "backlog-agent.md").read_text(encoding="utf-8")
+        self.assertIn(f"at most {MAX_TASKS_PER_STORY} tasks", text)
+        self.assertIn(f"at most {MAX_MODULES_PER_STORY} files", text)
+
+
 class BacklogServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
