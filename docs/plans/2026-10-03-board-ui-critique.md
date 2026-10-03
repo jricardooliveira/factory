@@ -88,7 +88,7 @@ the board loses nothing. The surface on top of it is where the problems are.
 21. The command palette repeats the buttons with different behaviour ("Story: refine next
     from backlog" vs the Stories tab; "Backlog: propose" vs the button).
 
-## Target
+## Target (as first sketched; see the loop below for what was built)
 
 ```
 FACTORY  checkers ▾   ● worker running   ⏸ paused?                       17:35
@@ -127,8 +127,8 @@ the worker is automatic (Restart shown only when queued work is stuck).
 7. [x] Overview is a summary with the ONE next step; counts on tabs and in the summary;
    success is a toast, errors stay red; local times; readable events and stories;
    the question heading is pinned above its options (11, 13, 15–18).
-8. [ ] Batch proposal as text with stories to tick (not "edit the backlog IDs"); Launch.
+8. [x] Batch proposal as text with stories to tick (not "edit the backlog IDs"); Launch.
 9. [ ] Narrow (<100 cols): list → detail as separate views (18, 19 — the pinned heading
    and compact controls make 90 columns usable already).
-10. [ ] Retire the duplicate paths: the modal QuestionScreen (amend/story interview from
+10. [x] Retire the duplicate paths: the modal QuestionScreen (amend/story interview from
     the menu) answers with the same pick list (20, 21).

@@ -48,7 +48,11 @@ Output text is byte-for-byte tested; change it only deliberately.
 | Module | What it does |
 |---|---|
 | `data.py` | TUI-free data layer: `BoardRun`, `load_board_runs`, `find_run`, `column_for`, `group_by_column`; columns `Needs You, Spec, Architect, Coder, Done, Blocked`. Reads only through `runs.queries.board_entries`. |
-| `tui.py` | `FactoryBoard` (Textual app), `run_board_tui(db_path)`. Keys: `q` `r` `v` (table/kanban) arrows `p` (project filter) `a` approve `x` reject `d` dismiss. Approve/reject call `runs.resume_run` in a worker thread with no event callback; dismiss calls `runs.dismiss_run`. |
+| `workflow_screen.py` | `WorkflowScreen`, the board's home: Overview (top of Needs you, what is working, the ONE next step, recent events), Needs you, Stories, Activity, Settings; state-aware project actions (Interview → Complete agreement → Amend brief…, Propose backlog, Propose batch, Pause). Every action writes a record through `runs` in a worker thread and starts the detached worker; success is a toast, failure stays on screen. |
+| `answer.py` | `AnswerPicker`: a question answered like Claude Code's AskUserQuestion — options (recommended first), You decide, Other… (the only text field); posts what `domain.interview.resolve_answer` reads. Used by home and by `QuestionScreen`. |
+| `views.py` | Pure text for every item (decisions, jobs, stories, events, batches, the next step, project actions): what the operator reads is unit-testable and never a JSON dump. |
+| `tui.py` | `FactoryBoard` (Textual app), `run_board_tui(db_path)`; pushes home on mount. Underneath is "All runs" (Esc from home, `o` back): the run table/kanban, `a` approve `x` reject `d` dismiss `v` `p` — inert while home is on top (`check_action`). Approve/reject queue the decision (`runs.batches.queue_resume`) for the worker. |
+| `interview_screen.py` | Modals: `QuestionScreen` (the pick list, for the menu's direct story run), `ReviewScreen` (read a document), `PromptScreen` (one line, e.g. "what changed?"). |
 | `html_report.py` | `generate_factory_visualization(db_path, output_path)`: static HTML via `runs.queries`. |
 
 ## How it works / invariants

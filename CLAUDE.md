@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1075 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1075 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1121 passed` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1121 passed` (~4 min; 1 skipped when `tsc` is absent — the tsc-dependent TS test; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -33,7 +33,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 | `.venv/bin/factory backlog <project>` | proposes the ordered story list from the brief; approve, or type feedback to regenerate |
 | `.venv/bin/factory next <project> [--no-interview]` | starts the next approved backlog story (story-level interview first on a TTY) |
 | `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, a Python product without its own `.venv` (warning), leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
-| `.venv/bin/factory board` | Textual board; `m` (or ctrl+p) opens the menu of every major verb (new project, interview, backlog, next/new story, retry/replay, doctor, evals, simulate, metrics, tiers) |
+| `.venv/bin/factory board` | Textual board. Home = Overview / Needs you (questions as a pick list, approvals as Approve / Request changes) / Stories / Activity; Esc = All runs (approve/reject a parked run); `m` (or ctrl+p) opens the menu of every major verb |
 | `FACTORY_RUNNER=claude .venv/bin/factory …` | runs every agent through the local Claude Code CLI (`claude -p`) on `agents/tiers.toml` `[claude_tiers]` instead of opencode; permanent via `factory.toml` `[runner] agents = "claude"` |
 | `.venv/bin/factory --help` | full CLI verb list |
 
@@ -102,20 +102,30 @@ src/factory/
                         result.py (AgentResult), notify.py.
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
   state/interviews.py   interview_answers / interview_turns accessors (verbatim agent I/O).
-  state/backlog.py      backlog_stories accessors: a new proposal replaces only unstarted rows.
+  state/backlog.py      backlog_stories accessors: a new proposal supersedes (keeps) only unrefined
+                        unstarted rows.
+  state/workflow.py     Durable workflow tables: refinement sessions, decisions (+ drafts), jobs
+                        with leases, story plans, batch proposals, budgets, events; `atomic()` is a
+                        SAVEPOINT — never `conn.commit()` inside it.
   selftest/             evals/ (agent-configuration regression), simulate.py (scenario matrix).
   preflight/doctor.py   `factory doctor` preflight; probes go through run_agent.
   runs/                 Application service: run / replay / resume / retry (service.py), resume
                         context + decision recovery (context.py), the intake interview that runs
                         BEFORE the pipeline (interview.py), the
-                        story backlog + `factory next` (backlog.py), `factory status` (status.py). NEVER prints: reports progress through
+                        story backlog + `factory next` (backlog.py), `factory status` (status.py),
+                        durable refinement: interview/story questions as decisions, backlog
+                        proposals with Request changes, retry (refinement.py), batch proposal →
+                        launch → combined candidate (batches.py), the detached worker (worker.py),
+                        the board's read model (dashboard.py). NEVER prints: reports progress through
                         an `on_event` callback (events.py) — the interview through `ask`/`approve`
                         callbacks — and refuses with `RunError`.
   interfaces/           render.py (every rich print helper; takes data, never reads the DB),
                         cli/ (main.py = argv dispatch + usage; run.py, review.py, project.py,
                         interview.py, backlog.py, selftest.py, board.py, workspace.py = one module per command
                         group),
-                        board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
+                        board/ (tui.py app + All runs, workflow_screen.py home, answer.py pick
+                        list, views.py item text, interview_screen.py modals, data.py,
+                        html_report.py). Nothing imports interfaces.
 skills/                 Anti-slop skills (ponytail, ponytail-review, karpathy-guidelines, superpowers
                         TDD / systematic-debugging / verification-before-completion; MIT, LICENSES.md)
                         copied into every product's .claude/skills/ (`create_project`, `factory
@@ -369,6 +379,15 @@ input/output is stored, so any run replays offline for free. Evidence is version
   start, and the last line names what was cut. Cutting the tail dropped the test files and
   the tester failed every criterion as "no test visible"; REVIEW.md now says code not
   shown is not a missing test.
+- **Board tests drive real flows on a simulated factory** (`tests/simulated.py`): `ScriptedAgents`
+  answers at `run_agent` from the prompt's `# Mode:`; `simulate()` also makes the board's
+  `start_worker` run `drain` in-process, which runs ONLY refine/backlog jobs (a launched batch's
+  builds stay queued) and makes `factory.pipeline.agent_calls.run_agent` raise. Drive the
+  screen with the Textual pilot; read widget state INSIDE `async with app.run_test()` (a
+  torn-down widget reports `display` False). Textual traps that crashed the live board:
+  `call_from_thread` is the App's (a Screen has none — use `self.app.call_from_thread`); an
+  App-level `@on(DataTable.RowSelected)` without a selector catches every screen's tables;
+  a worker thread must not read widgets (capture on the UI thread first).
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins
   `candidate_commit`: `release` refuses if code changed since (evidence commits excluded).
 - Editing anything in `agents/`, `domain/gates.py`, `domain/ambiguity.py`, `agent_config/`, or

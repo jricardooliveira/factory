@@ -1,113 +1,61 @@
-# Factory workflow handoff for the next agent
+# Factory workflow handoff
 
-## User intent and decisions
+Status at the end of the 2026-10-03 session (supersedes the earlier version of this file,
+which described the pre-merge state). Design: `2026-10-03-factory-workflow-design.md`.
+UI critique and its loop: `2026-10-03-board-ui-critique.md`.
 
-The operator approved the design in `docs/plans/2026-10-03-factory-workflow-design.md`
-and implementation here. Preserve the Anthropic AI-native SDLC: artifact chain, gate
-authorization, approved write scope, independent verification/review, replay and human
-release authority. Product/story refinement may proceed independently of builds.
-The scheduler proposes a compatible batch; the operator chooses exactly which stories
-launch. Routine work may run automatically within saved policy. Meaningful uncertainty,
-release and material exceptions still require a person. The board is the control surface.
+## Where things stand
 
-The operator asked us to stop feature work, merge the current state to `main`, push it,
-and leave a clear task list for a new agent. A tmux/asciinema walkthrough was requested
-after that, but the operator then said stop; no recording was made.
+- `feature/factory-workflow` is merged into `main` and pushed; the branch and its worktree
+  are removed. `main` is green: `make check` = 1121 passed, 12/12 scenarios, 68/68 evals.
+- The merge had been pushed red (25 failing tests). Fixed: `resume_run` committed inside
+  `workflow_store.atomic()` (every approve/reject/resume/release raised "no such
+  savepoint"); a retry never learnt which failed test it may change (macOS
+  `/var` → `/private/var`); "unsure twice" is an assumption again (CLAUDE.md's rule); the
+  project lock names a parked run; a regenerated backlog numbers after the visible rows.
+- The board crashed on every workflow action (`Screen.call_from_thread`), on Enter in the
+  workflow list (the run table's unscoped handler), and lost drafts. All fixed and pinned.
+- The board UI was reworked in a loop (critique items 1–8 and 10 done): pick-list answers,
+  Approve / Request changes, state-aware project actions, Retry for failed refinement and
+  backlog jobs, one board with honest keys, Overview as a summary with the one next step,
+  readable stories/events/batches, local times, tick-to-launch batches.
+- `tests/simulated.py` drives real flows through the board with scripted agents and an
+  in-process worker that never runs build jobs; the pipeline's agent boundary raises if
+  reached. No live model call anywhere in the suite.
 
-## Current repository state
+## Operator decisions taken this session
 
-- Feature branch: `feature/factory-workflow` in `.claude/worktrees/workflow`.
-- Feature implementation checkpoint: `c54d046 feat: add durable refinement and isolated batch workflow`.
-- This branch began at `b23c0d9`, merged the freshly fetched `origin/main` (`8226cc4`),
-  and contains merge resolutions and board test edits not committed yet.
-- The automatic merge has a resolved but not yet staged conflict in
-  `src/factory/verification/python.py`. The worktree reports `UU`; its conflict markers
-  were resolved in the working file by keeping the upstream short traceback, the
-  configured timeout, and both branches' failure excerpt code. Stage the file to mark
-  the conflict resolved.
-- More staged upstream merge edits, unstaged handoff fixes, and a new board test
-  conftest are present. Review `git status` before staging. Do not drop staged changes.
-- The original `main` worktree still has the basic overview edits from before this
-  isolated worktree was made. Those same edits are already included in commit `c54d046`.
-  Preserve them while switching/integrating; stashing those duplicate dirty changes,
-  merging, and then checking the stash is one safe option.
-- `origin/main` was fetched as `8226cc4`. It adds design-wide scope enforcement and
-  failed-test retries. Those upstream changes are in the feature merge resolution.
-- A prior offline test run was terminated after failures appeared. It had inadvertently
-  started two detached workers in disposable test homes; both worker processes and the
-  test parent were terminated. A UI test conftest now stubs worker startup. Confirm no
-  temporary workers remain before running tests. No live model call was intended.
-- Static AST parsing and `git diff --check` passed before the latest merge-resolution
-  edits. They have not been repeated after all edits. No test suite passed.
+Fix forward on `main`; write tests for the new workflow code; keep both the direct "run
+next story" path and refine → batch; one board (home + All runs); answers as a pick list +
+Other; board tests simulate both sides (never the coding stage); Interview is state-aware
+(Interview → Complete agreement → Amend brief…); Overview is a summary; the worker is
+automatic; `feature/sandbox-and-pr-release` is reconciled later; no walkthrough recording.
 
-## Immediate integration steps
+## Open work, in order
 
-1. In the feature worktree inspect the resolved `python.py`, all unstaged test edits,
-   and upstream integration. Stage the resolved file, then run `git status` and
-   `git diff --cached --check`.
-2. Continue with small offline focused tests before retrying `make check`. Ensure the
-   board test guard stubs both `tui.start_worker` and `workflow_screen.start_worker`.
-   The earlier run started worker processes from existing UI tests, so verify that no
-   test can reach adapters or spawn a real worker. Tests should use temporary DBs and
-   disposable repositories only.
-3. Fix all failures, and check architectural layering and migration behavior. There
-   are no independent code review results; prior subagents stopped because of an
-   account usage limit.
-4. Update this file with actual checks and risks. The current README says the board
-   flow is implemented more completely than it has been verified; qualify any steps
-   that remain unfinished.
-5. Commit the merge resolution and test fixes on `feature/factory-workflow`.
-6. Preserve the dirty overview files in the original checkout, merge the feature into
-   `main`, inspect the resulting diff, then push `main` to origin. Do not force-push.
-7. Only after the merge and push, check `asciinema` availability. If installed and a
-   useful, safe walkthrough can be created with synthetic data (no live models or real
-   product mutations), record it for the operator. If not available, skip it.
+1. **Verify the build half end to end, offline.** Launch → `dispatch_job` builds in
+   worktrees → combined candidate verification → integration approval is not driven by any
+   test. Extend the simulated factory with frozen pipeline outputs (the replay-fixture
+   pattern, `tests/fixtures/agent_outputs/`) so a launched story builds without a model,
+   then cover: two independent stories progress, a shared-area story waits, an unanswered
+   question leaves unrelated work running (design acceptance 4–5).
+2. **The original review targets still open:** worker lease ownership and restart, stale
+   job recovery from the board, unknown usage holding its budget reservation, crash
+   recovery between member approvals / combined verification / fast-forward, double
+   launch and double answer across two processes, migration idempotency on an existing
+   DB, `FACTORY_CONFIG` vs `FACTORY_SETTINGS`.
+3. **Narrow terminals (< 100 columns):** list → detail as separate views (critique item 9).
+   90 columns is usable now (pinned question heading, compact controls), 80 is not tested.
+4. **Sandbox / PR release:** `feature/sandbox-and-pr-release` (generated tests in a
+   container, release = merged PR — operator decisions of 2026-10-02) conflicts with the
+   batch flow's ff-only local integration and host-run combined checks. Reconcile before
+   anyone relies on batch integration.
+5. Housekeeping: `stash@{0}` ("codex-pre-pull") holds the factory.toml settings refactor,
+   which is already on `main` — drop it once the operator agrees.
 
-## Important code review targets
+## How to check a UI change
 
-- **Feature still needs end-to-end validation.** The new durable job, refinement,
-  decision, budget, plan, proposal, and resource-lock tables are in
-  `src/factory/state/workflow.py`. Confirm all records migrate idempotently from an
-  existing DB, answer/start transactions are single-use, unknown usage holds its
-  reservation, and lost workers never repeat an uncertain write.
-- **Worker / board:** `runs/worker.py` currently launches a detached process. Confirm
-  worker lease ownership and shutdown/restart behavior, UI refresh while a worker acts,
-  no duplicate submissions, useful recovery for stale jobs, and reachability at narrow
-  terminal widths. Ensure old board approval paths do not silently bypass queueing or
-  report success after a failed resume.
-- **Refinement:** `runs/refinement.py` saves interview answers and story plans, but
-  review whether technical questioning is genuinely resumable and records the saved
-  recommendation/delegation correctly. Make sure rejections/revisions do not loop on
-  paid calls or strand sessions. Verify backlog approval preserves refined stories.
-- **Prepared pipeline:** plans now carry spec and architecture used as initial prepared
-  output. Ensure story spec/design decisions are immutable and logged/evidenced under
-  the existing playbook; gate-1/gate-2 and the boundary agent must still execute their
-  normal deterministic and independent checks. An accepted batch must not silently
-  grant new authority when a model revises scope.
-- **Concurrency:** check `runs/service.py` legacy exclusion and every resume path. Ensure
-  isolated batch runs do not share product checkouts and locks cover code publication,
-  integration, review, and release. Validate duplicate launch races across two DB
-  connections/processes and leases on SQLite.
-- **Integration/release:** `runs/batches.py` merges story heads into a candidate
-  worktree and verifies it, then asks for approval before ff-only integration. Check
-  crash recovery between member approvals, merged candidate verification, DB decision
-  recording, and Git fast-forward. Stale approvals, merge conflicts, dirty candidate
-  worktrees, failed/missing test scripts and pre-existing test opt-out must never be
-  described as success. Deployment is not implemented.
-- **Scope incident:** upstream now allows files in the accepted architecture design,
-  including design scope during remediation. Keep the `.prettierignore` regression case
-  and do not add global filename exemptions.
-- **Settings merge:** retain `FACTORY_SETTINGS` compatibility while supporting
-  `FACTORY_CONFIG`, and verify the merged upstream settings/test behavior.
-- **Board:** the original overview screen coexists with the new workflow screen. Decide
-  whether to remove dead/duplicated overview code only after checking old board callers.
-  Make sure UI actions are nonblocking, preserve draft answers, and show failures as
-  failures. Existing test behavior was changed but is not yet green.
-- **Checks and docs:** run AST/syntax, formatting, focused tests, then `make check` once
-  offline isolation is proved. Review the new CLI help and README examples. Preserve
-  Claude CLI selection through `FACTORY_RUNNER=claude` and the `[runner]` config.
-
-## Recording constraint
-
-Do not record a walkthrough until the requested feature branch has been validated,
-committed, merged into `main`, and pushed. Use only fake/synthetic data in the recording.
+`make check`, then look at it: drive `FactoryBoard` with the Textual pilot on a copy of
+`$FACTORY_HOME` (rewrite `projects.repo_path` in the copy; put stub `opencode`/`claude`
+scripts first on `PATH` so no model is reachable), `app.save_screenshot()` to SVG, render
+with headless Chrome, and read the PNG — at 140×45 and 90×34.

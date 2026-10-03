@@ -78,7 +78,7 @@ both. `tiers.toml` loads on first use, so read-only verbs never need it.
 | `runs/` | `service.py` (run / resume / retry / replay), `lifecycle.py` (dismiss + reconcile, one policy for CLI and TUI), `queries.py` (the read side the interfaces render), `context.py` (resume context, decision recovery), `events.py` (`on_event` callback types, `RunError`) | print, or import `interfaces` / `selftest` |
 | `selftest/` | offline and zero-token: `evals/` (`config`, `cases`, `capture`, `report`), `simulate.py` (scenario matrix, driven through `runs.run_pipeline`) | import `interfaces`, or spend a token |
 | `preflight/` | `doctor.py`: the live environment check (opencode, one probe per tier model, toolchains, tiers.toml, escalation, the workspace) | be part of the zero-token evals contract |
-| `interfaces/` | `cli/main.py` (argv dispatch + usage + the typo guard), one module per command group, `render/` (one module per command group + `output.py`; takes data, never reads the DB), `board/` (`tui.py`, `data.py`, `html_report.py`) | import `state`, `pipeline`, `adapters` or `verification` (go through `runs`); be imported by anything but the console script |
+| `interfaces/` | `cli/main.py` (argv dispatch + usage + the typo guard), one module per command group, `render/` (one module per command group + `output.py`; takes data, never reads the DB), `board/` (`tui.py` app + All runs, `workflow_screen.py` home, `answer.py` pick list, `views.py` item text, `interview_screen.py` modals, `data.py`, `html_report.py`) | import `state`, `pipeline`, `adapters` or `verification` (go through `runs`); be imported by anything but the console script |
 
 ---
 
