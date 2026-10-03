@@ -25,9 +25,9 @@ def available() -> bool:
 
 def sdk_model(model: str) -> str:
     # tiers.toml names Claude models as opencode reaches them, through Requesty
-    # ("requesty/claude-opus-5-5"); the SDK talks to Anthropic directly and wants
-    # the bare model id.
-    return model.removeprefix("requesty/")
+    # ("requesty/claude-opus-5-5"), or as the claude runner does ("claude/..."); the
+    # SDK talks to Anthropic directly and wants the bare model id.
+    return model.removeprefix("requesty/").removeprefix("claude/")
 
 
 def run_prompt(

@@ -122,6 +122,17 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["opencode"].status, "fail")
         self.assertEqual(checks["model openai/gpt-6-astra"].status, "fail")
 
+    def test_the_claude_runner_needs_claude_not_opencode_and_probes_its_models(self) -> None:
+        with patch.dict(os.environ, {"FACTORY_RUNNER": "claude"}):
+            with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
+                report = doctor.run_doctor(which=_which({"claude", "go", "node", "tsc"}))
+        self.assertTrue(report.passed)
+        checks = _by_name(report)
+        self.assertEqual(checks["claude"].status, "ok")
+        self.assertNotIn("opencode", checks)
+        probed = {call.kwargs["model"] for call in probe.call_args_list}
+        self.assertEqual(probed, set(mt.config().claude_tiers.values()))
+
     def test_missing_toolchains_warn_but_do_not_fail(self) -> None:
         # A missing go/node/tsc only matters for projects in that stack, so it is
         # reported, not fatal.

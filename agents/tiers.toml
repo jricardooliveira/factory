@@ -36,6 +36,20 @@ check = "requesty/claude-sonnet-5-5"    # independent boundary review of the des
 special = "requesty/claude-fable-5.1"   # special cases: a failed attempt, retried
 standard = "requesty/claude-haiku-4-5"  # fallback for any agent not listed below
 
+# Tier -> Claude model when the operator picks the `claude` runner (factory.toml
+# `[runner] agents = "claude"` or FACTORY_RUNNER=claude): every agent then runs through
+# the local Claude Code CLI (`claude -p`, its own login) instead of opencode. Trade-off
+# the operator accepts by choosing it: reviewers share the authors' model family.
+[claude_tiers]
+frontier = "claude/claude-opus-5-5"
+build = "claude/claude-sonnet-5-5"
+notes = "claude/claude-haiku-4-5"
+review = "claude/claude-opus-5-5"
+intake = "claude/claude-opus-5-5"
+check = "claude/claude-sonnet-5-5"
+special = "claude/claude-fable-5-1"
+standard = "claude/claude-haiku-4-5"
+
 # Agent -> tier on its first attempt.
 [agents]
 interview-agent = "intake"     # pre-pipeline product interview — "what are we building?"
@@ -84,6 +98,23 @@ input = 1.0
 output = 5.0
 
 [prices."requesty/claude-fable-5.1"]
+input = 10.0
+output = 50.0
+
+# The claude runner: `claude -p` reports its own cost, which wins; these back it up.
+[prices."claude/claude-opus-5-5"]
+input = 4.0
+output = 20.0
+
+[prices."claude/claude-sonnet-5-5"]
+input = 2.0
+output = 10.0
+
+[prices."claude/claude-haiku-4-5"]
+input = 1.0
+output = 5.0
+
+[prices."claude/claude-fable-5-1"]
 input = 10.0
 output = 50.0
 

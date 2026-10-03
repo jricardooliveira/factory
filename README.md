@@ -90,6 +90,14 @@ opencode auth login
 factory doctor
 ```
 
+Or run every agent through Claude Code instead of opencode, using its own login.
+The Claude models per tier are in `agents/tiers.toml` `[claude_tiers]`:
+
+```bash
+FACTORY_RUNNER=claude factory doctor        # one run
+printf '[runner]\nagents = "claude"\n' >> factory.toml   # every run
+```
+
 `factory doctor` sends one small probe to each configured model. Those probes may
 cost money. The later `factory run` command also makes model calls. `factory --help`
 lists every command. If you do not want to make model calls yet, stop after
@@ -114,7 +122,7 @@ typos such as `factory lsit` before making a model call.
 
 ```bash
 factory queue          # what is waiting for you, and why
-factory board          # interactive board — approve/reject in place
+factory board          # interactive board — approve/reject in place; `m` opens the menu of every verb
 factory review 17      # the full package for one run
 ```
 

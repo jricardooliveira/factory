@@ -10,6 +10,9 @@ default — a typo'd budget silently becoming $10 would spend money nobody appro
 
     [timeouts]
     probe = 120                 # seconds per `factory doctor` model probe; env FACTORY_PROBE_TIMEOUT
+
+    [runner]
+    agents = "opencode"         # or "claude" (the local Claude Code CLI); env FACTORY_RUNNER
 """
 
 from __future__ import annotations
@@ -30,6 +33,10 @@ SETTINGS_FILENAME = "factory.toml"
 # minutes is not usable for a run either, and the preflight must not stall.
 DEFAULT_PROBE_TIMEOUT_SECS = 120
 
+# What runs every agent call: `opencode run` with the tier models in agents/tiers.toml
+# [tiers], or `claude -p` with the Claude models in [claude_tiers].
+RUNNERS = ("opencode", "claude")
+
 
 @dataclass(frozen=True)
 class Budget:
@@ -42,9 +49,15 @@ class Timeouts:
 
 
 @dataclass(frozen=True)
+class Runner:
+    agents: str
+
+
+@dataclass(frozen=True)
 class Settings:
     budget: Budget
     timeouts: Timeouts
+    runner: Runner
 
 
 def settings_path() -> Path:
@@ -77,6 +90,17 @@ def _value(data: dict[str, Any], table: str, key: str, env: str, default: Any, k
     return value
 
 
+def _choice(data: dict[str, Any], table: str, key: str, env: str, choices: tuple[str, ...]) -> str:
+    raw, source = choices[0], "default"
+    if key in (data.get(table) or {}):
+        raw, source = data[table][key], f"{table}.{key}"
+    if os.environ.get(env, "").strip():
+        raw, source = os.environ[env].strip(), env
+    if raw not in choices:
+        raise ValueError(f"{source} must be one of {', '.join(choices)}, got {raw!r}")
+    return raw
+
+
 def settings() -> Settings:
     data = _load(settings_path())
     return Settings(
@@ -92,4 +116,5 @@ def settings() -> Settings:
                 DEFAULT_PROBE_TIMEOUT_SECS, int,
             ),
         ),
+        runner=Runner(agents=_choice(data, "runner", "agents", "FACTORY_RUNNER", RUNNERS)),
     )

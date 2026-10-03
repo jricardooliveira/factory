@@ -40,8 +40,10 @@ def print_brief_for_approval(brief: str) -> None:
     output.console.print(Panel(escape(brief), title="Product brief", border_style="cyan"))
 
 
-def print_interview_approved(brief_path: Path | None) -> None:
+def print_interview_approved(brief_path: Path | None, project_ref: str | None = None) -> None:
     output.print_created(brief_path, "Product Brief Approved")
+    if project_ref:
+        output.console.print(f"Next: propose the stories with: factory backlog {escape(project_ref)}")
 
 
 def print_interview_paused(project_ref: str, answers: int) -> None:

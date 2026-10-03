@@ -46,7 +46,7 @@ def backlog_command(args: list[str]) -> None:
     except (RunError, ValueError) as exc:
         fail(str(exc))
     if outcome.approved:
-        print_backlog_approved(outcome.stories)
+        print_backlog_approved(outcome.stories, args[0])
     else:
         print_backlog_not_approved(args[0])
 

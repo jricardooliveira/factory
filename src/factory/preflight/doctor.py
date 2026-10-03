@@ -8,7 +8,8 @@ instead of half a run.
 
 What it checks:
 
-- ``opencode`` is on PATH (blocking — nothing runs without it).
+- the runner (``opencode``, or ``claude`` under ``[runner] agents = "claude"``) is
+  on PATH (blocking — nothing runs without it).
 - each DISTINCT model in ``agents/tiers.toml`` (with ``FACTORY_TIER_*`` overrides
   applied) answers a one-line probe (blocking; skipped with ``offline=True``).
 - ``go`` / ``node`` / ``tsc`` are on PATH (warning only — ``verification`` needs
@@ -230,11 +231,18 @@ def run_doctor(
 ) -> DoctorReport:
     report = DoctorReport()
 
-    opencode = which("opencode")
+    # The runner (factory.toml [runner] agents) is the one binary every agent call needs.
+    try:
+        runner = settings().runner.agents
+    except ValueError as exc:
+        report.checks.append(Check("settings", "fail", str(exc)))
+        return report
+    install = {"opencode": "https://opencode.ai", "claude": "https://claude.com/claude-code"}
+    found = which(runner)
     report.checks.append(
-        Check("opencode", "ok", opencode)
-        if opencode
-        else Check("opencode", "fail", "not on PATH — install it from https://opencode.ai")
+        Check(runner, "ok", found)
+        if found
+        else Check(runner, "fail", f"not on PATH — install it from {install[runner]}")
     )
 
     try:
@@ -254,9 +262,9 @@ def run_doctor(
         backs = f"tiers: {', '.join(model_tiers)}"
         if offline:
             report.checks.append(Check(f"model {model}", "skip", f"{backs} — --offline"))
-        elif not opencode:
+        elif not found:
             report.checks.append(
-                Check(f"model {model}", "fail", f"{backs} — cannot probe without opencode")
+                Check(f"model {model}", "fail", f"{backs} — cannot probe without {runner}")
             )
         else:
             report.checks.append(_probe(model, model_tiers))

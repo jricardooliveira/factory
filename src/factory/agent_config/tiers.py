@@ -37,7 +37,12 @@ from pathlib import Path
 from typing import Any
 
 from factory.agent_config.location import TIERS_FILENAME, agents_dir
+from factory.agent_config.settings import settings
 from factory.domain.budget import ModelPrice
+
+# A model id with this prefix runs through the local `claude` CLI, not opencode
+# (adapters.opencode.run_agent routes on it).
+CLAUDE_PREFIX = "claude/"
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,8 @@ class TierConfig:
     default_tier: str
     escalate_on_retry: dict[str, str] = field(default_factory=dict)
     prices: dict[str, ModelPrice] = field(default_factory=dict)
+    # tier -> `claude/<model>`: what each tier runs on under `[runner] agents = "claude"`.
+    claude_tiers: dict[str, str] = field(default_factory=dict)
 
 
 def default_tiers_path() -> Path:
@@ -82,6 +89,7 @@ def load_tiers(path: Path | None = None) -> TierConfig:
     tier_models = _str_table(data, "tiers", path)
     agent_tiers = _str_table(data, "agents", path)
     escalate = _str_table(data, "escalate_on_retry", path, required=False)
+    claude_tiers = _str_table(data, "claude_tiers", path, required=False)
     default_tier = data.get("default_tier")
 
     for tier, model in tier_models.items():
@@ -93,6 +101,11 @@ def load_tiers(path: Path | None = None) -> TierConfig:
         for agent, tier in mapping.items():
             if tier not in tier_models:
                 raise ValueError(f"{path}: [{section}] {agent} uses undefined tier {tier!r}")
+    for tier, model in claude_tiers.items():
+        if tier not in tier_models:
+            raise ValueError(f"{path}: [claude_tiers] {tier} is not a defined tier")
+        if not model.startswith(CLAUDE_PREFIX):
+            raise ValueError(f"{path}: [claude_tiers] {tier} must be {CLAUDE_PREFIX}<model>")
     if default_tier not in tier_models:
         raise ValueError(f"{path}: default_tier {default_tier!r} is not a defined tier")
 
@@ -102,6 +115,7 @@ def load_tiers(path: Path | None = None) -> TierConfig:
         default_tier=default_tier,
         escalate_on_retry=escalate,
         prices=_prices(data, path),
+        claude_tiers=claude_tiers,
     )
 
 
@@ -144,12 +158,18 @@ def __getattr__(name: str) -> Any:
 
 
 def model_for_tier(tier: str) -> str:
-    """Concrete model id for a tier, honoring a ``FACTORY_TIER_<TIER>`` override."""
+    """Concrete model id for a tier, honoring a ``FACTORY_TIER_<TIER>`` override.
+
+    Under the claude runner (settings ``[runner] agents``) the tier's model comes
+    from ``[claude_tiers]`` instead: the `claude` CLI only runs Claude models.
+    """
     override = os.environ.get(f"FACTORY_TIER_{tier.upper()}")
     if override:
         return override
+    table = (config().claude_tiers if settings().runner.agents == "claude"
+             else config().tier_models)
     try:
-        return config().tier_models[tier]
+        return table[tier]
     except KeyError:
         raise ValueError(f"Unknown model tier: {tier!r}") from None
 

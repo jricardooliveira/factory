@@ -18,7 +18,7 @@ from textual.widgets import Button, Input, Static
 from factory.domain.interview import TOPIC_TITLES, InterviewQuestion
 
 _CSS = """
-QuestionScreen, ReviewScreen { align: center middle; }
+QuestionScreen, ReviewScreen, PromptScreen { align: center middle; }
 #box { width: 90%; height: auto; max-height: 90%; border: round $accent;
        padding: 1 2; background: $surface; }
 #body { height: auto; max-height: 30; }
@@ -108,3 +108,31 @@ class ReviewScreen(ModalScreen[bool | str | None]):
     def action_close(self) -> None:
         # Escape on a review stops (nothing approved); on a plain view it just closes.
         self.dismiss(False if self.review else None)
+
+
+class PromptScreen(ModalScreen[str | None]):
+    """One line of text for a menu command (a slug, a story request); Escape cancels."""
+
+    DEFAULT_CSS = _CSS
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, placeholder: str = "") -> None:
+        super().__init__()
+        self.title_text = title
+        self.placeholder = placeholder
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="box"):
+            yield Static(self.title_text, markup=False)
+            yield Input(placeholder=self.placeholder, id="prompt")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    @on(Input.Submitted)
+    def _typed(self, event: Input.Submitted) -> None:
+        if event.value.strip():
+            self.dismiss(event.value.strip())
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
