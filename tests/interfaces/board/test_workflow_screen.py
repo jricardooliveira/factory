@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from textual.widgets import Select, Static
+from textual.widgets import Select
 
 from factory.evidence.brief import BRIEF_RELPATH
 from factory.interfaces.board.tui import FactoryBoard
@@ -51,8 +51,8 @@ class WorkflowScreenActionTests(unittest.IsolatedAsyncioTestCase):
             await pilot.click("#wf-backlog")
             await self._settle(screen, pilot)
             self.assertIs(app.screen, screen)
-            note = str(screen.query_one("#wf-note", Static).render())
-            self.assertIn("saved", note.lower())
+            toasts = [str(n.message) for n in app._notifications]
+            self.assertTrue(any("Backlog proposal requested" in t for t in toasts), toasts)
         with db.get_db(self.db_path) as conn:
             jobs = store.list_jobs(conn, self.project["id"])
         self.assertEqual([j["kind"] for j in jobs], ["backlog"])

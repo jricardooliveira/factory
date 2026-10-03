@@ -106,13 +106,29 @@ Needs you (4) │ Stories (9) │ Runs (1) │ Activity
 
 ## Loop backlog (each item: a pilot test that drives it, then the change)
 
-1. [x] P0 crashes 1–2.
-2. [ ] Simulated-flow harness: scripted agents at `run_agent`, jobs drained in-process,
-   a scripted operator; one end-to-end test interview → brief → backlog → refine → ready.
-3. [ ] Pick list + Other for questions (4, 6, 7); guarded draft saving (3).
-4. [ ] Approve / Request changes for backlog and brief, rendered as text (5).
-5. [ ] State-aware project actions, duplicate guards, reasons for disabled (10, 12).
-6. [ ] One board: own bindings and footer, run detail view, honest header (8, 9, 11).
-7. [ ] Status: counts, Retry for failed jobs, local times, readable events (13–17).
-8. [ ] Narrow layout (18, 19).
-9. [ ] Retire the duplicate paths (20, 21).
+Further operator decisions (2026-10-03): Interview is state-aware (Interview →
+Complete agreement → Amend brief…); Overview is a summary, Needs you the full inbox;
+the worker is automatic (Restart shown only when queued work is stuck).
+
+1. [x] P0 crashes 1–2 (+ a third found by the tests: Enter on the workflow list bubbled
+   into the run table's handler and crashed on `int("decision:…")`).
+2. [x] Simulated-flow harness `tests/simulated.py`: scripted agents at `run_agent`, jobs
+   drained in-process; flows: interview → brief, backlog → approve/changes, refine →
+   ready plans → batch proposal (`tests/runs/test_refinement_flow.py`,
+   `tests/interfaces/board/test_workflow_*.py`).
+3. [x] Pick list + Other (`interfaces/board/answer.py`); drafts survive navigation and
+   are saved off the UI thread (3, 4, 6).
+4. [x] Approve / Request changes for backlog and brief, rendered as text; backlog
+   feedback bounded by MAX_BACKLOG_REVISIONS (5).
+5. [x] State-aware project actions, no duplicate backlog proposal, reasons as tooltips,
+   automatic worker, failed refinement/backlog jobs offer Retry (10, 12, 14).
+6. [x] One board: home shows and obeys only its own keys; Esc = All runs; header names
+   the project (8, 9).
+7. [x] Overview is a summary with the ONE next step; counts on tabs and in the summary;
+   success is a toast, errors stay red; local times; readable events and stories;
+   the question heading is pinned above its options (11, 13, 15–18).
+8. [ ] Batch proposal as text with stories to tick (not "edit the backlog IDs"); Launch.
+9. [ ] Narrow (<100 cols): list → detail as separate views (18, 19 — the pinned heading
+   and compact controls make 90 columns usable already).
+10. [ ] Retire the duplicate paths: the modal QuestionScreen (amend/story interview from
+    the menu) answers with the same pick list (20, 21).

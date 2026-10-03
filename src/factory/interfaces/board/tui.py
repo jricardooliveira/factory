@@ -161,8 +161,9 @@ class FactoryBoard(App):
     })
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action in self._RUN_BOARD_ACTIONS and isinstance(self.screen, WorkflowScreen):
-            return False
+        if isinstance(self.screen, WorkflowScreen) and (
+                action in self._RUN_BOARD_ACTIONS or action == "project_overview"):
+            return False  # "o Home" on home is noise
         return True
 
     def on_mount(self) -> None:

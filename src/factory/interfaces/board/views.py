@@ -7,6 +7,7 @@ is unit-testable without a terminal.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from factory.domain.interview import TOPIC_TITLES
@@ -79,11 +80,18 @@ def decision_body(d: dict[str, Any]) -> str:
         lines = [d["question"], context.get("effect", ""), ""]
         lines += [f"{k.replace('_', ' ').capitalize()}: {v}" for k, v in shown.items()]
         return "\n".join(lines)
+    return "\n".join([why(d), context.get("effect", "")])
+
+
+def decision_head(d: dict[str, Any]) -> str:
+    """Pinned above the scroll: what this is about, never scrolled out of view."""
+    if d["kind"] != "question" and not d["context"].get("question"):
+        return decision_row(d)[1]
     position = d.get("position")
     head = d.get("subject") or "Question"
     if position:
         head += f" · question {position[0]} of {position[1]}"
-    return "\n".join([head, "", d["question"], "", why(d), context.get("effect", "")])
+    return f"{head}\n{d['question']}"
 
 
 def decision_actions(d: dict[str, Any]) -> Actions:
@@ -148,3 +156,111 @@ def job_body(job: dict[str, Any]) -> str:
         lines += ["", "Work is retained. Inspect the saved error and workspace before "
                       "reconciling; a lost worker's step is never repeated automatically."]
     return "\n".join(lines)
+
+
+def local_time(stamp: str) -> str:
+    """HH:MM:SS in the operator's timezone (records are UTC; the clock on screen is not)."""
+    return datetime.fromisoformat(stamp).astimezone().strftime("%H:%M:%S")
+
+
+_EVENT_TEXT = {
+    "backlog: needs_input": "Backlog proposal ready for your review",
+    "refine: needs_input": "Refinement has questions for you",
+    "refine: ready": "Story prepared: ready for a batch",
+    "refine: blocked": "Story prepared, with open points",
+    "refine: refining": "Refinement moved to its next step",
+}
+
+
+def event_text(event: dict[str, Any]) -> str:
+    """One line in the operator's words, not the worker's status codes."""
+    details = event.get("details") or {}
+    if event["message"] == "Decision answered" and details.get("question"):
+        answered = f"Answered: {details['question']}"
+        return f"{answered} — {details['answer']}" if details.get("answer") else answered
+    return _EVENT_TEXT.get(event["message"], event["message"])
+
+
+def event_body(event: dict[str, Any]) -> str:
+    lines = [f"{event_text(event)}  ({local_time(event['created_at'])})"]
+    for key, value in (event.get("details") or {}).items():
+        if key.endswith("_id") or key in ("question", "answer"):
+            continue  # identifiers mean nothing to the operator
+        shown = ", ".join(map(str, value)) if isinstance(value, list) else value
+        lines.append(f"{key.replace('_', ' ').capitalize()}: {shown}")
+    return "\n".join(lines)
+
+
+_STORY_STATE = {
+    "Draft": "Not refined yet. Refine story prepares its spec, design and impact — no coding.",
+    "Refining": "Being refined; its questions will appear in Needs you.",
+    "Needs input": "Waiting on you: answer its questions in Needs you.",
+    "Ready": "Prepared and ready to join a batch (Propose batch).",
+    "Blocked": "Prepared, but something prevents a batch: see Open points.",
+    "Scheduled": "In a launched batch, waiting for capacity.",
+    "Working": "Being built.",
+    "Done": "Built and released.",
+}
+
+
+def story_body(story: dict[str, Any]) -> str:
+    lines = [story["request"], "", f"State: {story['state']} — {_STORY_STATE.get(story['state'], '')}"]
+    plan = story.get("plan")
+    if plan:
+        spec = plan.get("spec") or {}
+        if spec.get("acceptance_criteria"):
+            lines += ["", "Acceptance criteria"] + [f"- {c}" for c in spec["acceptance_criteria"]]
+        if spec.get("tasks"):
+            lines += ["", "Tasks"] + [
+                f"- {t['id']} {t['title']}" + (f" ({', '.join(t['scope'])})" if t.get("scope") else "")
+                for t in spec["tasks"]]
+        if plan.get("resources"):
+            lines += ["", "Changes"] + [f"- {r['mode']}s {r['kind']} {r['name']}"
+                                        for r in plan["resources"]]
+        if plan.get("dependencies"):
+            lines += ["", "Depends on: " + ", ".join(f"#{d}" for d in plan["dependencies"])]
+        if plan.get("uncertainties"):
+            lines += ["", "Open points"] + [f"- {u}" for u in plan["uncertainties"]]
+        if plan.get("rationale"):
+            lines += ["", f"Why it can go alone: {plan['rationale']}"]
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class NextStep:
+    action: str  # the workflow screen's action id
+    label: str  # the button
+    title: str  # the list row
+    explanation: str
+    story_id: int | None = None
+
+
+def next_step(data: dict[str, Any]) -> NextStep | None:
+    """The ONE thing that can start now for the selected project, if any."""
+    state = data.get("project")
+    if not state:
+        return None
+    if not state["brief"]:
+        if state["intake_open"]:
+            return None
+        return NextStep("wf-intake", "Interview", "Interview: define the product",
+                        "The factory needs the product brief before anything can be planned.")
+    stories = [s for s in data["stories"] if s["project"] == state["slug"]]
+    if not stories:
+        if state["backlog_open"]:
+            return None
+        return NextStep("wf-backlog", "Propose backlog", "Propose the backlog",
+                        "The brief is approved; the backlog-agent proposes the stories, you approve them.")
+    if state["ready"] and not any(p["status"] == "proposed" for p in data["proposals"]):
+        return NextStep("wf-propose", "Propose batch", f"Propose a batch of the {state['ready']} ready stories",
+                        "Ready stories that do not touch the same areas can be launched together.")
+    draft = next((s for s in stories if s["state"] == "Draft" and s["status"] == "approved"), None)
+    if draft:
+        return NextStep("wf-refine", "Refine story", f"Refine story #{draft['id']} {draft['title']}",
+                        "Preparing a story asks only what its request leaves open, then plans it. "
+                        "No code is written.", draft["id"])
+    # Last: refining does not need it, and the stories should not wait on it.
+    if not state["agreement"] and not state["intake_open"]:
+        return NextStep("wf-intake", "Complete agreement", "Complete the technical and execution agreement",
+                        "This brief predates the technical and execution sections; they are asked once.")
+    return None

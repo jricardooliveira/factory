@@ -1,4 +1,9 @@
-"""The human's home: decisions first, independent stories and meaningful activity."""
+"""The human's home: what needs you, what is working, the one next thing — then the detail.
+
+Every action writes a record (a job, an answer) and returns; model calls happen in
+the detached worker. The screen polls the database every 2 s. What an item SAYS is
+`views` (pure text); this module only arranges it and wires the buttons.
+"""
 from __future__ import annotations
 
 import json
@@ -12,33 +17,45 @@ from textual.widgets import Button, DataTable, Footer, Header, Select, Static, T
 
 from factory.interfaces.board.answer import AnswerPicker
 from factory.interfaces.board.interview_screen import PromptScreen
-from factory.interfaces.board.views import (decision_actions, decision_body, decision_row, job_body,
-                                            job_row, project_actions)
+from factory.interfaces.board.views import (
+    decision_actions, decision_body, decision_head, decision_row, event_body, event_text,
+    job_body, job_row, local_time, next_step, project_actions, story_body,
+)
 from factory.runs.batches import abandon_batch, launch_batch, propose_batch, queue_integration, queue_release
 from factory.runs.dashboard import dashboard, pause_project, recover_job, stop_job
 from factory.runs.refinement import (answer, request_changes, retry_job, save_draft,
                                       start_backlog, start_refinement)
 from factory.runs.worker import start_worker
 
+SETTINGS_TEXT = (
+    'Preparation is independent of builds. A selected batch pins plans, baseline and budget.\n'
+    'Unknown impact, overlapping resources and unmet dependencies prevent parallel launch.\n'
+    'Human gates remain for unresolved choices, exceptions and combined release.\n'
+    'Pause stops new claims; Stop takes effect at a safe job boundary. Closing the board detaches.\n\n'
+    'Runner: set FACTORY_RUNNER=claude before starting the worker, or [runner] agents="claude" in factory.toml.\n'
+    'Generated test execution remains opt-in: FACTORY_RUN_TESTS=1. Missing checks block integration.\n'
+    'Workspaces, logs and the database live under FACTORY_HOME. Worktrees are not OS sandboxes.')
+
 
 class WorkflowScreen(Screen[int | None]):
     BINDINGS = [('escape', 'close', 'All runs'), ('r', 'refresh', 'Refresh'),
                 ('m', 'menu', 'Menu'), ('q', 'quit_board', 'Quit board')]
     DEFAULT_CSS = '''
-    WorkflowScreen { background: $background; overflow-y: auto; }
+    WorkflowScreen { background: $background; }
     #wf-project { width: 1fr; }
     #wf-top { height: auto; }
-    #wf-summary { height: auto; padding: 1; }
+    #wf-summary { height: auto; padding: 0 1; }
+    #wf-controls { height: auto; }
+    #wf-controls Button { margin-right: 1; }
     #wf-list { height: 1fr; min-height: 4; }
     #wf-detail-box { height: 2fr; min-height: 10; border: round $panel; padding: 0 1; }
+    #wf-head { height: auto; max-height: 4; text-style: bold; }
     #wf-detail { height: 1fr; }
-    #wf-text { height: auto; }
+    #wf-text { height: auto; color: $text-muted; }
     #wf-answer { height: 5; margin-top: 1; }
     #wf-buttons { height: auto; }
-    #wf-controls { height: auto; }
-    #wf-note { height: auto; color: $warning; }
-    .narrow #wf-controls { layout: grid; grid-size: 2; grid-gutter: 0; }
-    .narrow #wf-buttons { layout: grid; grid-size: 2; grid-gutter: 0; }
+    #wf-buttons Button { margin-right: 1; }
+    #wf-note { height: auto; color: $error; }
     '''
 
     def __init__(self, db_path: Path, project_ref: str | None = None):
@@ -57,19 +74,22 @@ class WorkflowScreen(Screen[int | None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id='wf-top'):
-            yield Select([('All projects', '')], value='', id='wf-project', allow_blank=False)
+            yield Select([('All projects', '')], value='', id='wf-project', allow_blank=False,
+                         compact=True)
         yield Static('', id='wf-summary', markup=False)
         yield Tabs(Tab('Overview', id='overview'), Tab('Needs you', id='inbox'),
                    Tab('Stories', id='stories'), Tab('Activity', id='activity'),
                    Tab('Settings', id='settings'), id='wf-tabs')
         with Horizontal(id='wf-controls'):
-            yield Button('Interview', id='wf-intake')
-            yield Button('Propose backlog', id='wf-backlog')
-            yield Button('Propose batch', id='wf-propose')
-            yield Button('Pause new starts', id='wf-pause')
-            yield Button('Restart worker', id='wf-worker', variant='warning')
+            yield Button('Interview', id='wf-intake', compact=True)
+            yield Button('Propose backlog', id='wf-backlog', compact=True)
+            yield Button('Propose batch', id='wf-propose', compact=True)
+            yield Button('Pause new starts', id='wf-pause', compact=True)
+            yield Button('Restart worker', id='wf-worker', variant='warning', compact=True)
         yield DataTable(id='wf-list', cursor_type='row')
         with Vertical(id='wf-detail-box'):
+            # Pinned: what this is about never scrolls away from its options.
+            yield Static('', id='wf-head', markup=False)
             with VerticalScroll(id='wf-detail'):
                 yield Static('Select an item to see its context and next action.', id='wf-text',
                              markup=False)
@@ -77,21 +97,23 @@ class WorkflowScreen(Screen[int | None]):
                 yield TextArea(id='wf-answer', disabled=True)
             # Outside the scroll: however long the document, its actions stay on screen.
             with Horizontal(id='wf-buttons'):
-                yield Button('Select an item', id='wf-primary', variant='primary', disabled=True)
-                yield Button('Request changes', id='wf-secondary')
-                yield Button('Stop at safe boundary', id='wf-stop', disabled=True)
+                yield Button('Select an item', id='wf-primary', variant='primary', disabled=True,
+                             compact=True)
+                yield Button('Request changes', id='wf-secondary', compact=True)
+                yield Button('Stop at safe boundary', id='wf-stop', disabled=True, compact=True)
             yield Static('', id='wf-note', markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
         self.title, self.sub_title = 'Factory', self.project_ref or 'All projects'
-        self.query_one('#wf-list', DataTable).add_columns('Project / item', 'State', 'What is happening')
+        self.query_one('#wf-list', DataTable).add_columns('Project', 'State', 'What')
         self.action_refresh()
         self.set_interval(2, self.action_refresh)
 
     def on_resize(self, event) -> None:
         self.set_class(event.size.width < 100, 'narrow')
 
+    # ── read model → screen ─────────────────────────────────────────
     def action_refresh(self) -> None:
         if self._acting:
             return
@@ -103,23 +125,32 @@ class WorkflowScreen(Screen[int | None]):
                 self._choices = choices
                 selector.set_options(choices)
                 selector.value = self.project_ref or ''
-            stories = self.data['stories']
-            counts = {state: sum(s['state'] == state for s in stories)
-                      for state in ('Refining', 'Ready', 'Working', 'Needs input', 'Blocked')}
-            scope = self.project_ref or 'All projects'
-            queued = sum(j['status'] in ('queued', 'running') for j in self.data['jobs'])
-            stuck = self.data['worker'] != 'active' and queued
-            worker = ('worker running' if self.data['worker'] == 'active'
-                      else f'worker stopped with {queued} queued' if stuck else 'idle')
-            self.query_one('#wf-summary', Static).update(
-                f"{scope} · {worker}\n" + '  |  '.join(f'{k}: {v}' for k, v in counts.items())
-                + '\nInterview → Refine → Select batch → Build & verify → Human release'
-                + ('\nNew starts paused. Running calls finish at their next safe boundary.' if self.data['paused'] else '')
-                + ('' if self.project_ref else '\nChoose a project above to interview, plan and launch.'))
-            self._apply_project_actions(bool(stuck))
+            self._summarize()
             self._fill()
         except Exception as exc:
-            self.query_one('#wf-note', Static).update(str(exc))
+            self._note(str(exc))
+
+    def _summarize(self) -> None:
+        data, stories = self.data, self.data['stories']
+        queued = sum(j['status'] in ('queued', 'running') for j in data['jobs'])
+        stuck = data['worker'] != 'active' and queued > 0
+        worker = ('worker running' if data['worker'] == 'active'
+                  else f'worker stopped with {queued} queued' if stuck else 'idle')
+        waiting = len(self._inbox())
+        counts = [f'{waiting} need you',
+                  f"{sum(s['state'] == 'Working' for s in stories) + queued} working",
+                  f"{sum(s['state'] == 'Ready' for s in stories)} ready",
+                  f"{sum(s['state'] in ('Draft', 'Refining') for s in stories)} to refine",
+                  f"{sum(s['state'] == 'Blocked' for s in stories)} blocked"]
+        # The header and the selector already name the project; this line is the state.
+        line = ' · '.join([worker.capitalize(), *counts])
+        if data['paused']:
+            line += ' · new starts paused'
+        if not self.project_ref:
+            line += '\nChoose a project above to interview, plan and launch.'
+        self.query_one('#wf-summary', Static).update(line)
+        self.query_one('#inbox', Tab).label = f'Needs you ({waiting})' if waiting else 'Needs you'
+        self._apply_project_actions(stuck)
 
     def _apply_project_actions(self, stuck: bool) -> None:
         actions = {a.id: a for a in project_actions(self.data.get('project'))}
@@ -132,6 +163,38 @@ class WorkflowScreen(Screen[int | None]):
             if action:
                 button.label, button.disabled = action.label, not action.enabled
                 button.tooltip = action.reason if not action.enabled else None
+
+    def _inbox(self) -> list[tuple]:
+        """Everything waiting on the operator, decisions first."""
+        data = self.data
+        items = [('decision:' + d['id'], 'decision', d, d['project'], *decision_row(d))
+                 for d in data['decisions']]
+        items += [('batch:' + p['id'], 'batch', p, p['project'], p['status'].capitalize(),
+                   f"Batch · {len(p['payload']['plan_ids'])} stories")
+                  for p in data['proposals'] if p['status'] in ('proposed', 'blocked')]
+        items += [('run:' + str(r['id']), 'run', r, r['project_slug'],
+                   'Sign off' if r['status'] == 'waiting_human' else r['status'].capitalize(),
+                   f"Run #{r['id']} {r['story_title']} · "
+                   + (r.get('error') or r['current_stage'] or '').split('\n', 1)[0])
+                  for r in data['runs'] if r['status'] != 'running']
+        items += [('job:' + j['id'], 'job', j, j['project'], *job_row(j))
+                  for j in data['jobs'] if j['status'] in ('failed', 'interrupted')]
+        return items
+
+    def _working(self) -> list[tuple]:
+        data = self.data
+        return ([('run:' + str(r['id']), 'run', r, r['project_slug'], 'Working',
+                  f"Run #{r['id']} {r['story_title']} · {r['current_stage']}")
+                 for r in data['runs'] if r['status'] == 'running']
+                + [('job:' + j['id'], 'job', j, j['project'], *job_row(j))
+                   for j in data['jobs'] if j['status'] in ('queued', 'running')]
+                + [('batch:' + p['id'], 'batch', p, p['project'], p['status'].capitalize(),
+                    f"Batch · {len(p['payload']['plan_ids'])} stories")
+                   for p in data['proposals'] if p['status'] in ('launched', 'integrating')])
+
+    def _events(self, limit: int) -> list[tuple]:
+        return [('event:' + str(e['id']), 'event', e, e['project'], local_time(e['created_at']),
+                 event_text(e)) for e in self.data['events'][:limit]]
 
     @on(Select.Changed, '#wf-project')
     def project_changed(self, event: Select.Changed) -> None:
@@ -149,25 +212,18 @@ class WorkflowScreen(Screen[int | None]):
 
     def _fill(self) -> None:
         tab = self.query_one('#wf-tabs', Tabs).active
-        items = []
-        if tab in ('overview', 'inbox'):
-            items += [('decision:' + d['id'], 'decision', d, d['project'], *decision_row(d))
-                      for d in self.data['decisions']]
-            items += [('batch:' + p['id'], 'batch', p, p['project'], p['status'], 'Compatible batch / combined candidate')
-                      for p in self.data['proposals'] if p['status'] in ('proposed', 'launched', 'blocked', 'integrating')]
-            items += [('run:' + str(r['id']), 'run', r, r['project_slug'], r['status'],
-                       f"Run #{r['id']} · {r['current_stage']} · {r.get('error') or r['story_title']}")
-                      for r in self.data['runs'] if tab == 'overview' or r['status'] != 'running']
-            items += [('job:' + j['id'], 'job', j, j['project'], *job_row(j))
-                      for j in self.data['jobs'] if j['status'] in ('failed', 'interrupted')]
+        if tab == 'overview':
+            items = self._inbox()[:3] + self._working()
+            if step := next_step(self.data):
+                items.append(('next', 'next', step, self.project_ref, 'Next', step.title))
+            items += self._events(3)
+        elif tab == 'inbox':
+            items = self._inbox()
         elif tab == 'stories':
-            items = [('story:' + str(s['id']), 'story', s, s['project'], s['state'], s['title'])
-                     for s in self.data['stories']]
+            items = [('story:' + str(s['id']), 'story', s, s['project'], s['state'],
+                      f"#{s['id']} {s['title']}") for s in self.data['stories']]
         elif tab == 'activity':
-            items = [('event:' + str(e['id']), 'event', e, e['project'], e['created_at'][11:19], e['message'])
-                     for e in self.data['events'][:100]]
-            items = [('job:' + j['id'], 'job', j, j['project'], *job_row(j))
-                     for j in self.data['jobs'] if j['status'] in ('queued', 'running')] + items
+            items = self._working() + self._events(100)
         else:
             items = [('settings', 'settings', {}, self.project_ref or 'All', 'Policy',
                       'Automatic routine work; human batch launch and release; strict scope and verification')]
@@ -179,9 +235,9 @@ class WorkflowScreen(Screen[int | None]):
         table = self.query_one('#wf-list', DataTable)
         table.clear()
         for key, _kind, _row, project, state, title in items:
-            width = max(20, self.size.width - 45)
+            width = max(20, self.size.width - 40)
             title = str(title).replace('\n', ' ')
-            table.add_row(str(project)[:18], str(state)[:20],
+            table.add_row(str(project or '')[:14], str(state)[:12],
                           title if len(title) <= width else title[:width - 1] + '…', key=key)
         keys = [i[0] for i in items]
         if self.selected in keys:
@@ -203,74 +259,74 @@ class WorkflowScreen(Screen[int | None]):
         self._loading = True
         area = self.query_one('#wf-answer', TextArea)
         primary = self.query_one('#wf-primary', Button)
+        secondary = self.query_one('#wf-secondary', Button)
         stop = self.query_one('#wf-stop', Button)
         picker = self.query_one('#wf-picker', AnswerPicker)
-        secondary = self.query_one('#wf-secondary', Button)
         secondary.display = False
         primary.disabled, stop.disabled, area.disabled = True, True, True
         stop.label = 'Stop at safe boundary'
         area.load_text('')
-        picker.display, area.display = False, True
+        picker.display, area.display = False, False
         kind, row = self.items.get(key, ('', {}))
-        text, label = 'Nothing needs your input in this view.', 'Select an item'
+        head, text, label = '', 'Nothing needs your input in this view.', 'Select an item'
         if kind == 'decision':
             actions = decision_actions(row)
             draft = self._drafts.get(row['id'], row.get('draft_text') or '')
-            text = decision_body(row)
-            label = actions.primary
+            head, text, label = decision_head(row), decision_body(row), actions.primary
             if actions.picker:
                 text += '\n\n↑↓ or 1-9 choose · Enter answers · Esc back to the list'
-                picker.display, area.display = True, False
+                picker.display = True
                 picker.load(row['context']['question'], draft)
-            else:
-                area.display = actions.placeholder is not None
-                area.disabled = actions.placeholder is None
-                area.placeholder = actions.placeholder or ''
+            elif actions.placeholder is not None:
+                area.display, area.disabled = True, False
+                area.placeholder = actions.placeholder
                 area.load_text(draft)
             if actions.secondary:
                 secondary.label, secondary.display = actions.secondary, True
             primary.disabled = False
+        elif kind == 'next':
+            head, text, label = row.title, row.explanation, row.label
+            primary.disabled = False
         elif kind == 'story':
-            text = f"Story #{row['id']} · {row['title']}\n{row['request']}\n\nState: {row['state']}"
-            if row['plan']:
-                text += '\n\nPlanned impact:\n' + json.dumps(row['plan'], indent=2)
-            label, primary.disabled = 'Refine story', row['status'] != 'approved'
+            head, text = f"Story #{row['id']} · {row['title']}", story_body(row)
+            label = 'Refine story'
+            primary.disabled = row['status'] != 'approved' or row['state'] in ('Refining', 'Needs input')
         elif kind == 'batch':
             stop.label = 'Abandon batch'
             stop.disabled = row['status'] in ('integrating',)
             plans = [self.data['plans'].get(i, {'id': i}) for i in row['payload']['plan_ids']]
-            text = 'Batch ' + row['id'] + '\n' + json.dumps({**row['payload'], 'plans': plans}, indent=2)
+            head = f"Batch · {len(plans)} stories · {row['status']}"
+            text = json.dumps({**row['payload'], 'plans': plans}, indent=2)
             if row['status'] == 'proposed':
-                label, primary.disabled, area.disabled = 'Launch selected stories', False, False
+                label, primary.disabled = 'Launch selected stories', False
+                area.display, area.disabled = True, False
                 area.load_text(', '.join(str(p['backlog_id']) for p in plans if 'backlog_id' in p))
-                text += '\n\nEdit the backlog IDs below to deselect stories. Launch authorizes model usage within the displayed allowances.'
+                text += ('\n\nEdit the backlog IDs below to deselect stories. Launch authorizes '
+                         'model usage within the displayed allowances.')
             elif row['status'] in ('launched', 'blocked'):
                 label, primary.disabled = 'Verify combined candidate', False
             else:
                 label = 'Integration in progress'
         elif kind == 'run':
-            text = f"Run #{row['id']} · {row['story_title']}\n{row['current_stage']}\n{row.get('error') or ''}"
-            label, primary.disabled = 'Open run / decision', False
+            head = f"Run #{row['id']} · {row['story_title']}"
+            text = f"{row['current_stage']}\n{row.get('error') or ''}"
+            label, primary.disabled = 'Open run', False
         elif kind == 'job':
-            text = job_body(row)
+            head, text = job_row(row)[1], job_body(row)
             stop.disabled = row['status'] not in ('running', 'queued')
             if row['status'] in ('failed', 'interrupted'):
                 label = 'Retry' if row.get('retryable') else 'Reconcile stopped job'
                 primary.disabled = False
         elif kind == 'event':
-            text = row['message'] + '\n' + json.dumps(row['details'], indent=2)
+            head, text = event_text(row), event_body(row)
         elif kind == 'settings':
-            text = ('Preparation is independent of builds. A selected batch pins plans, baseline and budget.\n'
-                    'Unknown impact, overlapping resources and unmet dependencies prevent parallel launch.\n'
-                    'Human gates remain for unresolved choices, exceptions and combined release.\n'
-                    'Pause stops new claims; Stop takes effect at a safe job boundary. Closing the board detaches.\n\n'
-                    'Runner: set FACTORY_RUNNER=claude before starting the worker, or [runner] agents="claude" in factory.toml.\n'
-                    'Generated test execution remains opt-in: FACTORY_RUN_TESTS=1. Missing checks block integration.\n'
-                    'Workspaces, logs and the database live under FACTORY_HOME. Worktrees are not OS sandboxes.')
+            head, text = 'How this board works', SETTINGS_TEXT
+        self.query_one('#wf-head', Static).update(head)
         self.query_one('#wf-text', Static).update(text)
         primary.label = label
         self._loading = False
 
+    # ── drafts ──────────────────────────────────────────────────────
     @on(TextArea.Changed, '#wf-answer')
     def draft_changed(self) -> None:
         area = self.query_one('#wf-answer', TextArea)
@@ -280,7 +336,7 @@ class WorkflowScreen(Screen[int | None]):
             return
         kind, row = self.items.get(self.selected, ('', {}))
         if kind == 'decision' and row['kind'] != 'release':
-            self._keep_draft(row['id'], self.query_one('#wf-answer', TextArea).text)
+            self._keep_draft(row['id'], area.text)
 
     @on(AnswerPicker.DraftChanged)
     def picker_draft_changed(self, event: AnswerPicker.DraftChanged) -> None:
@@ -302,6 +358,7 @@ class WorkflowScreen(Screen[int | None]):
     def _note(self, message: str) -> None:
         self.query_one('#wf-note', Static).update(message)
 
+    # ── keys and buttons ────────────────────────────────────────────
     @on(DataTable.RowSelected, '#wf-list')
     def row_entered(self, event: DataTable.RowSelected) -> None:
         event.stop()
@@ -358,67 +415,87 @@ class WorkflowScreen(Screen[int | None]):
     @work(thread=True, exclusive=True, group='workflow-action')
     def _perform(self, identity, kind, row, text) -> None:
         try:
-            db = self.db_path
-            launch_worker = False
-            if identity == 'wf-intake':
-                start_refinement(self.project_ref, db_path=db)
-                launch_worker = True
-            elif identity == 'wf-amend':
-                start_refinement(self.project_ref, db_path=db, amendment=text)
-                launch_worker = True
-            elif identity == 'wf-backlog':
-                start_backlog(self.project_ref, db_path=db)
-                launch_worker = True
-            elif identity == 'wf-propose':
-                propose_batch(self.project_ref, db_path=db)
-            elif identity == 'wf-pause':
-                pause_project(self.project_ref, not self.data['paused'], db_path=db)
-            elif identity == 'wf-worker':
-                launch_worker = True
-            elif identity == 'wf-stop':
-                if kind == 'batch':
-                    abandon_batch(row['id'], db_path=db)
-                else:
-                    stop_job(row['id'], db_path=db)
-            elif identity == 'wf-primary':
-                if kind == 'job' and row.get('retryable'):
-                    retry_job(row['id'], db_path=db)
-                    launch_worker = True
-                elif kind == 'job':
-                    recover_job(row['id'], db_path=db)
-                elif kind == 'story':
-                    start_refinement(row['project'], row['id'], db_path=db)
-                    launch_worker = True
-                elif kind == 'decision':
-                    if row['kind'] == 'release':
-                        queue_release(row['id'], db_path=db)
-                    elif row['kind'] in ('backlog', 'brief'):
-                        answer(row['id'], 'approve', db_path=db)  # never the changes box
-                    else:
-                        answer(row['id'], text, db_path=db)
-                    launch_worker = True
-                elif kind == 'batch':
-                    if row['status'] == 'proposed':
-                        ids = [int(i.strip()) for i in text.split(',') if i.strip()]
-                        launch_batch(row['id'], db_path=db, selected_ids=ids)
-                    else:
-                        queue_integration(row['id'], db_path=db)
-                    launch_worker = True
-            elif identity == 'wf-secondary' and kind == 'decision':
-                request_changes(row['id'], text, db_path=db)
-                launch_worker = True
+            message, launch_worker = self._do(identity, kind, row, text)
             if launch_worker:
-                start_worker(db_path=db)
-            message = 'Action saved. The board will show the resulting state.'
+                start_worker(db_path=self.db_path)
+            ok = True
         except Exception as exc:
-            message = str(exc)
+            message, ok = str(exc), False
         # call_from_thread is the App's, not the Screen's: calling it on self crashed the board.
-        self.app.call_from_thread(self._finished, message)
+        self.app.call_from_thread(self._finished, message, ok)
 
-    def _finished(self, message: str) -> None:
+    def _do(self, identity: str, kind: str, row, text: str) -> tuple[str, bool]:
+        """Perform one action; (what happened, in the operator's words; start the worker?)."""
+        db, project = self.db_path, self.project_ref
+        if kind == 'next' and identity == 'wf-primary':
+            identity = row.action
+        if identity == 'wf-intake':
+            start_refinement(project, db_path=db)
+            return 'Interview started: its questions will appear in Needs you.', True
+        if identity == 'wf-amend':
+            start_refinement(project, db_path=db, amendment=text)
+            return 'Amendment queued: what it affects will be asked in Needs you.', True
+        if identity == 'wf-backlog':
+            start_backlog(project, db_path=db)
+            return 'Backlog proposal requested: it will appear in Needs you.', True
+        if identity == 'wf-propose':
+            propose_batch(project, db_path=db)
+            return 'Batch proposed: review it in Needs you.', False
+        if identity == 'wf-pause':
+            pause_project(project, not self.data['paused'], db_path=db)
+            return ('New starts resumed.' if self.data['paused'] else 'New starts paused.'), False
+        if identity == 'wf-worker':
+            return 'Worker restarted.', True
+        if identity == 'wf-refine' or (identity == 'wf-primary' and kind == 'story'):
+            if kind == 'next':
+                ref, story, title = project, row.story_id, row.title.removeprefix('Refine story ')
+            else:
+                ref, story, title = row['project'], row['id'], f"#{row['id']} {row['title']}"
+            start_refinement(ref, story, db_path=db)
+            return f'Refining story {title}: its questions will appear in Needs you.', True
+        if identity == 'wf-stop':
+            if kind == 'batch':
+                abandon_batch(row['id'], db_path=db)
+                return 'Batch abandoned; its stories and history are kept.', False
+            stop_job(row['id'], db_path=db)
+            return 'Stop requested: it takes effect at the next safe boundary.', False
+        if identity == 'wf-secondary' and kind == 'decision':
+            request_changes(row['id'], text, db_path=db)
+            return 'Changes sent: a new proposal will appear in Needs you.', True
+        if identity == 'wf-primary' and kind == 'job':
+            if row.get('retryable'):
+                retry_job(row['id'], db_path=db)
+                return f"Retrying: {row['subject']}.", True
+            recover_job(row['id'], db_path=db)
+            return 'Stopped job settled; nothing was repeated.', False
+        if identity == 'wf-primary' and kind == 'decision':
+            if row['kind'] == 'release':
+                queue_release(row['id'], db_path=db)
+                return 'Integration queued for this exact revision.', True
+            if row['kind'] in ('backlog', 'brief'):
+                answer(row['id'], 'approve', db_path=db)  # never the changes box
+                return ('Backlog approved.' if row['kind'] == 'backlog'
+                        else 'Brief approved: publishing it.'), True
+            answer(row['id'], text, db_path=db)
+            return 'Answer saved.', True
+        if identity == 'wf-primary' and kind == 'batch':
+            if row['status'] == 'proposed':
+                ids = [int(i.strip()) for i in text.split(',') if i.strip()]
+                launch_batch(row['id'], db_path=db, selected_ids=ids)
+                return 'Batch launched.', True
+            queue_integration(row['id'], db_path=db)
+            return 'Combined verification queued.', True
+        return 'Nothing to do for this item.', False
+
+    def _finished(self, message: str, ok: bool) -> None:
         self._acting = False
         self.selected = None
-        self.query_one('#wf-note', Static).update(message)
+        if ok:
+            self._note('')
+            self.app.notify(message, timeout=4)
+        else:
+            self._note(message)
+            self.app.notify(message, severity='error', timeout=8)
         self._signature = None
         self.action_refresh()
 

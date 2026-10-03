@@ -34,7 +34,8 @@ def dashboard(project_ref: str | None, *, db_path: Path) -> dict:
             data['jobs'] += jobs
             data['proposals'] += [{**p, 'project': project['slug']} for p in store.list_proposals(conn, pid)
                                   if p['status'] not in ('integrated', 'abandoned')]
-            data['events'] += [{**e, 'project': project['slug']} for e in store.list_events(conn, pid)]
+            decided = {d['id']: d for d in store.list_decisions(conn, pid)}
+            data['events'] += [_event(e, project['slug'], decided) for e in store.list_events(conn, pid)]
             data['paused'] |= store.is_paused(conn, pid)
             for row in list_backlog(conn, pid):
                 session = next((s for s in sessions if s['backlog_id'] == row['id']), None)
@@ -100,6 +101,16 @@ def _job(job: dict, slug: str, sessions: list[dict]) -> dict:
         subject = job['kind'].capitalize()
     return {**job, 'project': slug, 'subject': subject,
             'retryable': job['status'] == 'failed' and job['kind'] in RETRYABLE_JOBS}
+
+
+def _event(event: dict, slug: str, decisions: dict[str, dict]) -> dict:
+    """An event with the question and answer it refers to, when it names a decision."""
+    details = dict(event['details'] or {})
+    if (decision := decisions.get(details.get('decision_id'))) is not None:
+        details.setdefault('question', decision['question'])
+        if decision.get('answer'):
+            details.setdefault('answer', decision['answer'])
+    return {**event, 'project': slug, 'details': details}
 
 
 def _described(pending: list[dict], slug: str, sessions: list[dict],
