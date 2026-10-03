@@ -16,9 +16,10 @@ from pathlib import Path
 _IGNORE_DIRS = {
     ".git", "__pycache__", ".venv", "venv", ".opencode", ".claude", ".pytest_cache",
     "node_modules", ".sandbox", ".mypy_cache", ".ruff_cache", "dist", "build",
-    ".egg-info", "vendor",
+    ".egg-info", "vendor", "htmlcov",
 }
-_CODE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go"}
+# Templates are listed by path only: a view the coder must edit is part of the codebase.
+_CODE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".html", ".j2", ".jinja"}
 _MAX_METHODS = 10
 
 

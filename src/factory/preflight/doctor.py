@@ -20,6 +20,8 @@ What it checks:
 - each registered product's directory exists and its ``.opencode`` resolves to
   THIS checkout's agent definitions (warning — a stale link runs another
   checkout's agent configuration, not the one ``factory evals`` validated).
+- each registered Python product has its own ``.venv`` (warning — without one its
+  tests run with the factory's interpreter, which lacks the product's dependencies).
 - no pre-$FACTORY_HOME ``factory.db`` is left in the checkout (warning — the
   factory would start on an empty home and the run history would look lost).
 
@@ -32,6 +34,7 @@ non-zero exit.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
@@ -183,11 +186,38 @@ def _workspace_checks() -> list[Check]:
             f"{home} — {_plural(runs, 'run')}, {_plural(len(projects), 'project')}",
         )
     ]
-    checks.extend(
-        _project_check(slug, layout.resolve_location(repo, db) or Path(""))
-        for slug, repo in projects
-    )
+    for slug, repo in projects:
+        path = layout.resolve_location(repo, db) or Path("")
+        checks.append(_project_check(slug, path))
+        venv = _venv_check(slug, path)
+        if venv is not None:
+            checks.append(venv)
     return checks
+
+
+def _is_python_product(repo: Path) -> bool:
+    if (repo / "requirements.txt").is_file() or (repo / "pyproject.toml").is_file():
+        return True
+    try:
+        spec = json.loads((repo / "project-spec.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(spec, dict) and "python" in str(spec.get("language", "")).lower()
+
+
+def _venv_check(slug: str, repo: Path) -> Check | None:
+    """A Python product without its own .venv has its tests run by the FACTORY's
+    interpreter (verification.python.product_python), which lacks its deps."""
+    if not str(repo) or not repo.is_dir() or not _is_python_product(repo):
+        return None
+    if any((repo / ".venv" / p).is_file() for p in ("bin/python", "Scripts/python.exe")):
+        return None
+    return Check(
+        f"project {slug} python", "warn",
+        "no .venv — its tests would run with the factory's interpreter; create one: "
+        f"cd {repo} && uv venv && uv pip install -r requirements.txt",
+        blocking=False,
+    )
 
 
 def _project_check(slug: str, repo: Path) -> Check:

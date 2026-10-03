@@ -24,13 +24,21 @@ def print_header(request: str) -> None:
 
 
 def print_agent_start(agent: str) -> None:
-    output.console.print(f"  🤖 [bold cyan]{agent}[/bold cyan] running...", end="")
+    # Its own line, not a "\r" overwrite: a piped or logged run keeps both lines.
+    output.console.print(f"  🤖 [bold cyan]{agent}[/bold cyan] running…")
 
 
-def print_agent_done(agent: str, verdict: str, duration: float) -> None:
+def print_agent_done(
+    agent: str, verdict: str, duration: float | None = None, cost: float | None = None
+) -> None:
     style = output.verdict_style(verdict)
+    # An unknown figure is left out, never shown as a made-up 0.0s / $0.00.
+    figures = ([f"{duration:.1f}s"] if duration else []) + (
+        [f"${cost:.2f}"] if cost is not None else []
+    )
+    suffix = f" ({' · '.join(figures)})" if figures else ""
     output.console.print(
-        f"\r  🤖 [bold cyan]{agent}[/bold cyan] → [{style}]{verdict.upper()}[/{style}] ({duration:.1f}s)"
+        f"  🤖 [bold cyan]{agent}[/bold cyan] → [{style}]{verdict.upper()}[/{style}]{suffix}"
     )
 
 
@@ -113,15 +121,18 @@ def print_run_started(event: RunStarted) -> None:
     output.console.print(f"  📦 Run [bold]#{event.run_id}[/bold] | Story [bold]{event.story_id}[/bold]\n")
 
 
-def print_run_node(node_name: str, node_output: dict[str, Any]) -> None:
+def print_run_node(
+    node_name: str, node_output: dict[str, Any],
+    duration: float | None = None, cost: float | None = None,
+) -> None:
     """One node of a fresh or replayed run, as it completes."""
     if node_name == "spec-agent":
         if node_output.get("status") in ("failed", "blocked"):
-            print_agent_done("spec-agent", node_output.get("status", "error"), 0)
+            print_agent_done("spec-agent", node_output.get("status", "error"), duration, cost)
         else:
             spec = node_output.get("spec", {})
             v = spec.get("verdict", "unknown")
-            print_agent_done("spec-agent", v, 0)
+            print_agent_done("spec-agent", v, duration, cost)
             print_spec_summary(spec)
             for label, key in (("INTENT", "intent_path"), ("SPEC", "spec_path")):
                 if node_output.get(key):
@@ -133,11 +144,11 @@ def print_run_node(node_name: str, node_output: dict[str, Any]) -> None:
 
     elif node_name == "architect-agent":
         if node_output.get("status") == "failed":
-            print_agent_done("architect-agent", "error", 0)
+            print_agent_done("architect-agent", "error", duration, cost)
         else:
             arch = node_output.get("architect", {})
             v = arch.get("verdict", "unknown")
-            print_agent_done("architect-agent", v, 0)
+            print_agent_done("architect-agent", v, duration, cost)
             print_architect_summary(arch)
             if node_output.get("adr_path"):
                 output.console.print(f"    [dim]📝 ADR: {node_output['adr_path']}[/dim]")
@@ -152,16 +163,19 @@ def print_run_node(node_name: str, node_output: dict[str, Any]) -> None:
         coder = node_output.get("coder", {})
         if coder:
             v = coder.get("verdict", "unknown")
-            print_agent_done("coder-agent", v, 0)
+            print_agent_done("coder-agent", v, duration, cost)
             print_coder_summary(coder)
         elif node_output.get("status") == "failed":
-            print_agent_done("coder-agent", "error", 0)
+            print_agent_done("coder-agent", "error", duration, cost)
         gb = node_output.get("gate_build")
         if gb:
             print_gate("Gate Build (Verify)", gb.get("passed", False), gb.get("reason", ""))
 
 
-def print_resume_node(node_name: str, node_output: dict[str, Any]) -> None:
+def print_resume_node(
+    node_name: str, node_output: dict[str, Any],
+    duration: float | None = None, cost: float | None = None,
+) -> None:
     """One node of a resumed run.
 
     Deliberately terser than `print_run_node` (no architect summary, no line for a
@@ -169,7 +183,7 @@ def print_resume_node(node_name: str, node_output: dict[str, Any]) -> None:
     """
     if node_name == "architect-agent":
         arch = node_output.get("architect", {})
-        print_agent_done("architect-agent", arch.get("verdict", "unknown"), 0)
+        print_agent_done("architect-agent", arch.get("verdict", "unknown"), duration, cost)
         if node_output.get("adr_path"):
             output.console.print(f"    [dim]📝 ADR: {node_output['adr_path']}[/dim]")
     elif node_name == "gate-2":
@@ -178,7 +192,7 @@ def print_resume_node(node_name: str, node_output: dict[str, Any]) -> None:
     elif node_name == "coder-agent":
         coder = node_output.get("coder", {})
         if coder:
-            print_agent_done("coder-agent", coder.get("verdict", "unknown"), 0)
+            print_agent_done("coder-agent", coder.get("verdict", "unknown"), duration, cost)
             print_coder_summary(coder)
         gb = node_output.get("gate_build")
         if gb:

@@ -14,7 +14,7 @@ callback and refusals are raised as `RunError`.
 |---|---|
 | `__init__.py` | Public API; re-exports everything below except `queries` (imported as `factory.runs.queries`). |
 | `service.py` | `run_pipeline`, `run_project_pipeline`, `replay_run`, `resume_run`, `retry_run`; private `_resume_state`, `_finish`, `_commit_pipeline_record`, `_notify_if_parked`, `_refuse_if_project_busy`, `_require_agents_link`, `_unresumable`. |
-| `events.py` | Event dataclasses `RunStarted`, `NodeCompleted`, `RetryStarted`, `ResumeEntered`, `RunFinished`; `RunOutcome`; the `RunEvent` union and `OnEvent` alias; `RunError`; `ignore_events` (default callback). |
+| `events.py` | Event dataclasses `RunStarted`, `NodeStarted`, `NodeCompleted` (with the node's agent duration + cost), `RetryStarted`, `ResumeEntered`, `RunFinished`; `RunOutcome`; the `RunEvent` union and `OnEvent` alias; `RunError`; `ignore_events` (default callback). |
 | `context.py` | Rebuilds resume inputs from the DB: `decision_from_response`, `build_resume_context` (latest spec + architecture), `last_boundary_review`, `park_unresumable`, `load_project_spec_text`. |
 | `lifecycle.py` | `dismiss_run` (archive; refuses `waiting_human` and `running`), `reconcile_stale` (mark runs stuck `running` past `DEFAULT_STALE_SECS` = 3600 as failed). One policy for CLI and TUI. |
 | `queries.py` | Read side: `all_runs`, `run_record`, `queue`, `board`, `board_entries` / `BoardEntry`, `review_bundle` / `RunReview`, `run_stages`, `factory_report` / `FactoryReport`, `factory_metrics`. |
@@ -23,7 +23,7 @@ callback and refusals are raised as `RunError`.
 
 - **Fresh run** (`run_pipeline`): inits the DB, creates a story (`next_story_id`, `create_story`), pins
   the repo's HEAD as the run's `base_commit`, opens the run (`start_run`), emits `RunStarted`, then
-  streams `compile_pipeline()` and emits a `NodeCompleted` per node. `_finish` builds the `RunOutcome`,
+  streams `compile_pipeline()` and emits `NodeStarted` / `NodeCompleted` around each node (`_stream`). `_finish` builds the `RunOutcome`,
   commits `PIPELINE.md`, emits `RunFinished` and notifies the operator when the run parks or fails.
 - **Replay**: `replay_run` calls `run_pipeline(replay_run_id=...)`. The replay reuses the original story
   and `base_commit`, and works in a scratch clone from `workspace.sandbox.prepare_replay_sandbox`, never in

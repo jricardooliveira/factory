@@ -150,6 +150,55 @@ class RunTestsTests(unittest.TestCase):
         self.assertFalse(result.passed)  # gate-build blocks on failing tests
 
 
+class ProductInterpreterTests(unittest.TestCase):
+    """Tests run with the PRODUCT's interpreter (its .venv), not the factory's —
+    the factory's venv lacks the product's dependencies — and the evidence names it."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.log = self.root / "argv.log"
+        self._env = {k: os.environ.get(k) for k in ("FACTORY_RUN_TESTS", "FACTORY_PRODUCT_PYTHON")}
+        os.environ["FACTORY_RUN_TESTS"] = "1"
+        os.environ.pop("FACTORY_PRODUCT_PYTHON", None)
+        (self.root / "test_x.py").write_text("def test_ok():\n    assert True\n")
+
+    def tearDown(self) -> None:
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self._tmp.cleanup()
+
+    def _shim(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'#!/bin/sh\necho "$@" > "{self.log}"\nexit 0\n')
+        path.chmod(0o755)
+        return path
+
+    def test_product_venv_interpreter_runs_the_tests(self) -> None:
+        shim = self._shim(self.root / ".venv" / "bin" / "python")
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "pass")
+        self.assertIn("-m pytest", self.log.read_text())
+        self.assertIn(str(shim), check.detail)
+
+    def test_env_override_when_no_venv(self) -> None:
+        shim = self._shim(self.root / "elsewhere" / "python")
+        os.environ["FACTORY_PRODUCT_PYTHON"] = str(shim)
+        check = run_tests(self.root)
+        self.assertTrue(self.log.is_file())
+        self.assertIn(str(shim), check.detail)
+
+    def test_falls_back_to_the_factory_interpreter(self) -> None:
+        import sys
+
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "pass")
+        self.assertIn(sys.executable, check.detail)
+
+
 class VerifyChangesTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

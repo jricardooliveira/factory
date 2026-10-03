@@ -6,12 +6,29 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 from factory.verification.base import TEST_TIMEOUT, VerifyCheck, run_command, tests_enabled
+
+
+def product_python(root: Path) -> str:
+    """The interpreter that runs the PRODUCT's tests: its own venv, else
+    $FACTORY_PRODUCT_PYTHON, else the factory's. The factory's venv lacks the
+    product's dependencies, so running tests with it fails for the wrong reason."""
+    for venv_python in (root / ".venv" / "bin" / "python", root / ".venv" / "Scripts" / "python.exe"):
+        if venv_python.is_file():
+            return str(venv_python.absolute())  # never resolve(): the venv python is a symlink
+    return os.environ.get("FACTORY_PRODUCT_PYTHON", "").strip() or sys.executable
+
+
+def _has_pytest(python: str) -> bool:
+    # Only the factory's own interpreter can be asked cheaply; a product venv
+    # without pytest fails loudly when run, which is the honest verdict.
+    return python != sys.executable or importlib.util.find_spec("pytest") is not None
 
 
 def py_compile_check(py_files: list[Path], root: Path) -> VerifyCheck:
@@ -167,17 +184,18 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
 
 
 def pytest_collect(root: Path) -> VerifyCheck | None:
-    if importlib.util.find_spec("pytest") is None:
+    python = product_python(root)
+    if not _has_pytest(python):
         return VerifyCheck("pytest_collect", "skip", "pytest not installed")
     try:
-        proc = run_command([sys.executable, "-m", "pytest", "--collect-only", "-q"], root)
+        proc = run_command([python, "-m", "pytest", "--collect-only", "-q"], root)
     except subprocess.TimeoutExpired:
         return VerifyCheck("pytest_collect", "warn", "timed out")
     if proc.returncode != 0:
         # A real bug in the coder's own code must FAIL; a merely-absent third-party
         # dep stays a WARN. Distinguishing the two closes a silent-failure crack.
         return _classify_collect_failure((proc.stdout or "") + "\n" + (proc.stderr or ""), root)
-    return VerifyCheck("pytest_collect", "pass", "collected")
+    return VerifyCheck("pytest_collect", "pass", f"collected (with {python})")
 
 
 def run_tests(root: Path) -> VerifyCheck:
@@ -188,19 +206,21 @@ def run_tests(root: Path) -> VerifyCheck:
     """
     if not tests_enabled():
         return VerifyCheck("pytest_run", "skip", "disabled (set FACTORY_RUN_TESTS=1 to run)")
-    if importlib.util.find_spec("pytest") is None:
+    python = product_python(root)
+    if not _has_pytest(python):
         return VerifyCheck("pytest_run", "skip", "pytest not installed")
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", str(root)],
+            [python, "-m", "pytest", "-q", str(root)],
             cwd=str(root), capture_output=True, text=True, timeout=TEST_TIMEOUT,
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
-        return VerifyCheck("pytest_run", "fail", f"tests timed out after {TEST_TIMEOUT}s")
+        return VerifyCheck("pytest_run", "fail", f"tests timed out after {TEST_TIMEOUT}s ({python})")
     if proc.returncode != 0:
-        return VerifyCheck("pytest_run", "fail", (proc.stdout or proc.stderr).strip()[-600:])
-    return VerifyCheck("pytest_run", "pass", "tests passed")
+        tail = (proc.stdout or proc.stderr).strip()[-600:]
+        return VerifyCheck("pytest_run", "fail", f"with {python}: {tail}")
+    return VerifyCheck("pytest_run", "pass", f"tests passed (with {python})")
 
 
 def is_py_test(path: Path) -> bool:

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from factory.domain.gates import MAX_CODER_ATTEMPTS
+from factory.domain.contracts import TaskDef
+from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_SCOPE_FILE_CHARS
 from factory.evidence.adr import load_project_memory
 from factory.evidence.brief import load_brief
-from factory.pipeline.state import PipelineState
+from factory.pipeline.state import PipelineState, factory_owned_paths
+from factory.workspace.layout import is_evidence_path
 from factory.workspace.repo_map import build_repo_inventory
 
 
@@ -49,6 +51,47 @@ def repo_inventory_block(state: PipelineState) -> str:
     return (
         "## Existing codebase (interfaces only — integrate with these, do not rewrite)\n\n"
         f"{inventory}\n\n"
+    )
+
+
+def scope_files_block(state: PipelineState, task: TaskDef) -> str:
+    """The CURRENT text of each file in the task's scope, so a `modify` is an edit
+    of what is there rather than a blind rewrite. '' when nothing applies.
+
+    Factory evidence is skipped (the coder may not write it), as is a directory,
+    a glob, or a path that resolves outside the project.
+    """
+    root = Path(state.get("opencode_cwd") or state.get("project_dir") or ".").resolve()
+    owned = factory_owned_paths(state)
+    sections: list[str] = []
+    for rel in task.scope:
+        rel = rel.strip()
+        if not rel or "*" in rel or (owned and is_evidence_path(rel, owned)):
+            continue
+        path = (root / rel).resolve()
+        if not path.is_relative_to(root) or path.is_dir():
+            continue
+        if not path.exists():
+            sections.append(f"### {rel} (new file)\n")
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        notice = ""
+        if len(text) > MAX_SCOPE_FILE_CHARS:
+            notice = (
+                f"\n… (truncated: showing {MAX_SCOPE_FILE_CHARS} of {len(text)} characters; "
+                "keep the rest of the file intact)\n"
+            )
+            text = text[:MAX_SCOPE_FILE_CHARS]
+        sections.append(f"### {rel}\n\n````\n{text}\n````{notice}\n")
+    if not sections:
+        return ""
+    return (
+        "## Current contents of files in scope (modify these; return the whole file)\n\n"
+        + "\n".join(sections)
+        + "\n"
     )
 
 

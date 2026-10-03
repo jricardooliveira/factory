@@ -102,6 +102,27 @@ class RunPipelineTests(_ServiceCase):
         self.assertIs(self.events[-1].outcome, outcome)
         self.assertEqual(self._status(outcome.run_id), "waiting_human")
 
+    def test_each_node_is_announced_before_it_completes_with_its_cost(self) -> None:
+        # The CLI showed nothing for the 30-120 s an agent runs, then "(0.0s)".
+        from factory import runs
+
+        source = self._parked_at_gate1()
+        with db.get_db(self.db_path) as conn:
+            conn.execute("UPDATE agent_logs SET cost_usd = 0.16 WHERE run_id = ?", (source,))
+        runs.run_pipeline("make it fast", opencode_cwd=str(self.cwd), db_path=self.db_path,
+                          replay_run_id=source, on_event=self.events.append)
+
+        steps = [(type(e).__name__, e.node) for e in self.events
+                 if isinstance(e, (runs.NodeStarted, runs.NodeCompleted))]
+        self.assertEqual(steps, [
+            ("NodeStarted", "spec-agent"), ("NodeCompleted", "spec-agent"),
+            ("NodeStarted", "gate-1"), ("NodeCompleted", "gate-1"),
+        ])
+        done = {e.node: e for e in self.events if isinstance(e, runs.NodeCompleted)}
+        self.assertAlmostEqual(done["spec-agent"].cost_usd, 0.16)
+        self.assertIsNone(done["gate-1"].cost_usd, "a gate calls no model")
+        self.assertIsNone(done["gate-1"].duration_secs)
+
     def test_no_callback_is_silent_and_still_returns_the_outcome(self) -> None:
         from factory import runs
 

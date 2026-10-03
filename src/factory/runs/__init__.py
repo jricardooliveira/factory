@@ -15,6 +15,7 @@ from factory.runs.context import (
 )
 from factory.runs.events import (
     NodeCompleted,
+    NodeStarted,
     OnEvent,
     ResumeEntered,
     RetryStarted,
@@ -48,6 +49,7 @@ __all__ = [
     "all_project_status",
     "project_status",
     "NodeCompleted",
+    "NodeStarted",
     "OnEvent",
     "ResumeEntered",
     "RetryStarted",

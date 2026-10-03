@@ -522,6 +522,21 @@ def usage_rows(
     return [dict(r) for r in rows]
 
 
+def last_agent_log_id(conn: sqlite3.Connection) -> int:
+    """The newest agent_logs id (0 if none): a mark to find the calls made after it."""
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM agent_logs").fetchone()[0]
+
+
+def agent_logs_after(conn: sqlite3.Connection, run_id: int, after_id: int) -> list[dict[str, Any]]:
+    """Usage + duration of one run's agent calls logged after `after_id` (one node's calls)."""
+    rows = conn.execute(
+        "SELECT duration_secs, tokens_in, tokens_out, cost_usd, model_name FROM agent_logs "
+        "WHERE run_id = ? AND id > ? ORDER BY id",
+        (run_id, after_id),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_agent_log(conn: sqlite3.Connection, run_id: int, agent: str) -> dict[str, Any] | None:
     """Return the most recent stored log for an agent in a run (for replay)."""
     row = conn.execute(

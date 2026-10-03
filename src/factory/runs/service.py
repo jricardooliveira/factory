@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from factory.adapters.notify import notify
+from factory.agent_config import tiers
+from factory.domain.budget import story_spend
 from factory.evidence.pipeline_record import write_pipeline_record
 from factory.pipeline import (
     PipelineState,
@@ -38,6 +40,7 @@ from factory.runs.context import (
 )
 from factory.runs.events import (
     NodeCompleted,
+    NodeStarted,
     OnEvent,
     ResumeEntered,
     RetryStarted,
@@ -48,6 +51,8 @@ from factory.runs.events import (
     ignore_events,
 )
 from factory.state.db import (
+    agent_logs_after,
+    last_agent_log_id,
     live_runs_in_project,
     create_story,
     get_answered_human_gate,
@@ -146,13 +151,41 @@ def run_pipeline(
     if replay_run_id:
         initial_state["replay_run_id"] = replay_run_id
 
-    final_state: dict[str, Any] = dict(initial_state)
-    for event in pipeline.stream(initial_state):
-        for node_name, node_output in event.items():
-            final_state.update(node_output)
-            emit(NodeCompleted(node_name, node_output))
-
+    final_state = _stream(pipeline, initial_state, run_id, db_path, emit)
     return _finish(run_id, story_id, final_state, db_path, emit, notify_operator)
+
+
+def _stream(
+    pipeline: Any, state: dict[str, Any], run_id: int, db_path: Path, emit: OnEvent
+) -> dict[str, Any]:
+    """Drive the graph to its end: NodeStarted before each node runs, NodeCompleted
+    (with the duration + cost of the agent calls it logged) after. Returns the final state."""
+    final_state = dict(state)
+    mark = 0
+    # "tasks" announces a node before it runs (and again with its result, ignored);
+    # "updates" carries the state update it returned.
+    for mode, chunk in pipeline.stream(state, stream_mode=["tasks", "updates"]):
+        if mode == "tasks":
+            if "input" in chunk:
+                with get_db(db_path) as conn:
+                    mark = last_agent_log_id(conn)
+                emit(NodeStarted(chunk["name"]))
+            continue
+        for node_name, node_output in chunk.items():
+            final_state.update(node_output)
+            emit(NodeCompleted(node_name, node_output, *_node_usage(db_path, run_id, mark)))
+    return final_state
+
+
+def _node_usage(db_path: Path, run_id: int, mark: int) -> tuple[float | None, float | None]:
+    """(seconds, USD) of the agent calls a node logged since `mark`; None = none / unknown."""
+    with get_db(db_path) as conn:
+        rows = agent_logs_after(conn, run_id, mark)
+    if not rows:
+        return None, None
+    duration = sum(r["duration_secs"] or 0.0 for r in rows) or None  # a replay logs 0.0
+    spend = story_spend(rows, tiers.config().prices)
+    return duration, (spend.estimated_usd if spend.priced_calls else None)
 
 
 def run_project_pipeline(
@@ -296,12 +329,7 @@ def resume_run(
             state.update({"boundary": review, "boundary_status": "reviewed"})
     emit(ResumeEntered(run_id, entry, action, decision))
 
-    final_state = state
-    for event in pipeline.stream(state, stream_mode="updates"):
-        for node_name, node_output in event.items():
-            final_state = {**final_state, **node_output}
-            emit(NodeCompleted(node_name, node_output))
-
+    final_state = _stream(pipeline, state, run_id, db_path, emit)
     return _finish(run_id, run["story_id"], final_state, db_path, emit)
 
 

@@ -100,3 +100,70 @@ class PausedRunTests(unittest.TestCase):
         self.assertIn("[security]", text)
         self.assertIn("factory approve 12", text)
         self.assertIn("factory reject 12", text)
+
+
+class AgentTimingTests(unittest.TestCase):
+    """Every agent line used to say "(0.0s)": the renderer was passed a literal 0."""
+
+    def _printed(self, fn, *args, **kwargs) -> str:
+        from factory.interfaces.render import output
+
+        with output.console.capture() as captured:
+            fn(*args, **kwargs)
+        return " ".join(captured.get().split())
+
+    def test_real_duration_and_cost_are_printed(self) -> None:
+        from factory.interfaces.render.run import print_run_node
+
+        text = self._printed(print_run_node, "spec-agent", {"spec": {"verdict": "pass"}},
+                             duration=52.2, cost=0.16)
+        self.assertIn("PASS (52.2s · $0.16)", text)
+        self.assertNotIn("0.0s", text)
+
+    def test_unknown_duration_is_omitted_not_zero(self) -> None:
+        from factory.interfaces.render.run import print_resume_node
+
+        text = self._printed(print_resume_node, "architect-agent",
+                             {"architect": {"verdict": "pass"}})
+        self.assertIn("PASS", text)
+        self.assertNotIn("0.0s", text)
+
+    def test_an_agent_announces_itself_when_it_starts(self) -> None:
+        from factory.interfaces.render.run import print_agent_start
+
+        self.assertIn("coder-agent running…", self._printed(print_agent_start, "coder-agent"))
+
+
+class TrustPackageCoverageTests(unittest.TestCase):
+    """`factory review` said "AC covered: 3" before any tester had run: it counted
+    the criteria, every one of them still unassessed."""
+
+    def _pkg(self, statuses: list[str], covered: int) -> dict:
+        return {
+            "verdict": "warn", "next_authorization": "fix",
+            "tests": {"passed": False, "ac_coverage": [
+                {"criterion": f"ac {i}", "covered_by": [], "status": s}
+                for i, s in enumerate(statuses)]},
+            "ac_traceability": {"total": len(statuses), "covered": covered,
+                                "flagged_missing": [], "unassessed": []},
+            "diff": {"files": []}, "adr": {"path": ""},
+            "security_boundary": {"overall": "not_applicable", "highest_severity": "none",
+                                  "findings": []},
+            "cost": {"usd": 0.0, "tokens_in": 0, "tokens_out": 0},
+        }
+
+    def _printed(self, pkg: dict) -> str:
+        from factory.interfaces.render import output
+        from factory.interfaces.render.review import _print_trust_package
+
+        with output.console.capture() as captured:
+            _print_trust_package(pkg, [])
+        return " ".join(captured.get().split())
+
+    def test_before_the_tester_ran_coverage_is_not_yet_measured(self) -> None:
+        text = self._printed(self._pkg(["unassessed"] * 3, covered=0))
+        self.assertIn("AC covered: not yet measured", text)
+
+    def test_after_the_tester_ran_it_is_covered_of_total(self) -> None:
+        text = self._printed(self._pkg(["covered", "covered", "unassessed"], covered=2))
+        self.assertIn("AC covered: 2/3", text)

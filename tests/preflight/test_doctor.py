@@ -213,6 +213,32 @@ class DoctorWorkspaceTests(unittest.TestCase):
         self.assertIn("ln -sfn", check.detail)
         self.assertTrue(report.passed, "one stale product must not block the others")
 
+    def test_python_product_without_a_venv_warns_with_the_fix(self) -> None:
+        # Its tests would run with the FACTORY's interpreter, which lacks the
+        # product's dependencies: a failure for the wrong reason.
+        create_project(db_path(), slug="shop", stack="fastapi")
+        report = self._run()
+        check = _by_name(report)["project shop python"]
+        self.assertEqual(check.status, "warn")
+        self.assertFalse(check.blocking)
+        self.assertIn("factory's interpreter", check.detail)
+        self.assertIn("uv venv && uv pip install -r requirements.txt", check.detail)
+        self.assertTrue(report.passed)
+
+    def test_python_product_with_a_venv_has_no_warning(self) -> None:
+        project = create_project(db_path(), slug="shop", stack="fastapi")
+        (Path(project["repo_path"]) / ".venv" / "bin").mkdir(parents=True)
+        (Path(project["repo_path"]) / ".venv" / "bin" / "python").write_text("")
+        self.assertNotIn("project shop python", _by_name(self._run()))
+
+    def test_python_detected_from_requirements_txt(self) -> None:
+        project = create_project(db_path(), slug="shop", stack="fastapi")
+        repo = Path(project["repo_path"])
+        (repo / "project-spec.json").write_text('{"language": "Go"}')
+        self.assertNotIn("project shop python", _by_name(self._run()))
+        (repo / "requirements.txt").write_text("fastapi\n")
+        self.assertEqual(_by_name(self._run())["project shop python"].status, "warn")
+
     def test_missing_project_repo_warns(self) -> None:
         project = create_project(db_path(), slug="shop", stack="fastapi")
         shutil.rmtree(project["repo_path"])

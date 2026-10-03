@@ -26,11 +26,24 @@ class RunStarted:
 
 
 @dataclass(frozen=True)
+class NodeStarted:
+    """One LangGraph node is about to run (an agent node may take minutes)."""
+
+    node: str
+
+
+@dataclass(frozen=True)
 class NodeCompleted:
-    """One LangGraph node finished: its name and the state update it returned."""
+    """One LangGraph node finished: its name and the state update it returned.
+
+    `duration_secs` / `cost_usd` total the agent calls the node logged; None when
+    it made none (a gate) or the figure is unknown — never a made-up zero.
+    """
 
     node: str
     output: dict[str, Any]
+    duration_secs: float | None = None
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +87,7 @@ class RunFinished:
     outcome: RunOutcome
 
 
-RunEvent = RunStarted | NodeCompleted | RetryStarted | ResumeEntered | RunFinished
+RunEvent = RunStarted | NodeStarted | NodeCompleted | RetryStarted | ResumeEntered | RunFinished
 OnEvent = Callable[[RunEvent], None]
 
 

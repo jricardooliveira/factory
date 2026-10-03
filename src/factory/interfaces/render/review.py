@@ -125,13 +125,25 @@ def _print_review_header(run: dict) -> None:
     output.console.print()
 
 
+def _ac_covered(pkg: dict) -> str:
+    """"covered/total", or "not yet measured" while every criterion is unassessed
+    (no tester has run) — counting the criteria themselves overstated coverage."""
+    entries = pkg["tests"]["ac_coverage"]
+    trace = pkg.get("ac_traceability") or {}
+    if not entries or all(e.get("status") == "unassessed" for e in entries):
+        return "not yet measured"
+    if trace.get("total"):
+        return f"{trace['covered']}/{trace['total']}"
+    return str(len(entries))  # no spec criteria: the tester's own list
+
+
 def _print_trust_package(pkg: dict, trust_issues: list[str]) -> None:
     """The release sign-off evidence, one panel."""
     sb = pkg["security_boundary"]
     tick = lambda b: "[green]✓[/green]" if b else "[red]✗[/red]"  # noqa: E731
     lines = [
         f"Verdict: [bold]{pkg['verdict']}[/bold]  ·  next: {pkg['next_authorization']}",
-        f"{tick(pkg['tests']['passed'])} tests passed  ·  AC covered: {len(pkg['tests']['ac_coverage'])}",
+        f"{tick(pkg['tests']['passed'])} tests passed  ·  AC covered: {_ac_covered(pkg)}",
         f"Files changed: {len(pkg['diff']['files'])}  ·  ADR: {pkg['adr']['path'] or '—'}",
         f"Security: {sb['overall']} (highest: {sb['highest_severity']})"
         + (f" — {sb['findings']}" if sb['findings'] else ""),

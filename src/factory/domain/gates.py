@@ -68,6 +68,11 @@ MAX_STACK_PROPOSALS = 3
 # leaves for ONE story; Checkpoint 1 still catches whatever it misses.
 MAX_STORY_INTERVIEW_QUESTIONS = 8
 
+# Characters of ONE in-scope file shown to the coder (EFFECTIVENESS.md §6: the
+# pack carries "the files in scope"). Past it the file is cut with a visible
+# notice, so a huge file cannot blow the coder's context or its call timeout.
+MAX_SCOPE_FILE_CHARS = 12000
+
 
 # Ambiguity detection (THRESHOLD_TERMS, unbound_criteria, ...) lives in
 # factory.domain.ambiguity; gate 1 below applies it.

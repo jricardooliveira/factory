@@ -13,6 +13,7 @@ from factory.pipeline.prompts.blocks import (
     project_memory_block,
     repo_inventory_block,
     retry_context_block,
+    scope_files_block,
 )
 from factory.pipeline.prompts.context_pack import build_remediation_pack, build_task_pack
 from factory.pipeline.state import PipelineState
@@ -38,6 +39,7 @@ def build_coder_task_prompt(
         repo_context=repo_inventory_block(state),
         retry_context=retry_context_block(state, attempt),
         boundary_context=boundary_rules_block(state),
+        scope_files_context=scope_files_block(state, task),
         completed=completed,
         position=(task_index + 1, task_count),
     )

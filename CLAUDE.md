@@ -32,7 +32,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 | `.venv/bin/factory interview <project> --import answers.json` | records answers from the `/factory-intake` skill (`[{topic, question, options?, answer, assumed?}]`); refuses, recording nothing, unless every required topic is answered |
 | `.venv/bin/factory backlog <project>` | proposes the ordered story list from the brief; approve, or type feedback to regenerate |
 | `.venv/bin/factory next <project> [--no-interview]` | starts the next approved backlog story (story-level interview first on a TTY) |
-| `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
+| `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, a Python product without its own `.venv` (warning), leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
 | `.venv/bin/factory board` | Textual board; `m` (or ctrl+p) opens the menu of every major verb (new project, interview, backlog, next/new story, retry/replay, doctor, evals, simulate, metrics, tiers) |
 | `FACTORY_RUNNER=claude .venv/bin/factory …` | runs every agent through the local Claude Code CLI (`claude -p`) on `agents/tiers.toml` `[claude_tiers]` instead of opencode; permanent via `factory.toml` `[runner] agents = "claude"` |
 | `.venv/bin/factory --help` | full CLI verb list |
@@ -102,8 +102,8 @@ src/factory/
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
   state/interviews.py   interview_answers / interview_turns accessors (verbatim agent I/O).
   state/backlog.py      backlog_stories accessors: a new proposal replaces only unstarted rows.
-  selftest/             evals.py (agent-configuration regression), simulate.py (scenario matrix),
-                        doctor.py (`factory doctor` preflight; probes go through run_agent).
+  selftest/             evals/ (agent-configuration regression), simulate.py (scenario matrix).
+  preflight/doctor.py   `factory doctor` preflight; probes go through run_agent.
   runs/                 Application service: run / replay / resume / retry (service.py), resume
                         context + decision recovery (context.py), the intake interview that runs
                         BEFORE the pipeline (interview.py), the
@@ -251,6 +251,17 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Default verification executes nothing the coder wrote.** No `pytest --collect-only`
   without `FACTORY_RUN_TESTS=1` (collection imports — runs — test modules); the static
   import check covers what it caught. A missing toolchain FAILS its files, never skips them.
+  Opted-in tests run with the PRODUCT's interpreter (`verification.python.product_python`:
+  `<repo>/.venv/bin/python`, else `$FACTORY_PRODUCT_PYTHON`, else `sys.executable`), named
+  in the check's detail.
+- **The coder's task pack carries the current text of its in-scope files**
+  (`prompts.blocks.scope_files_block`, capped by `MAX_SCOPE_FILE_CHARS`, evidence paths
+  skipped, a missing path marked "(new file)"); the block is omitted when the task has no
+  scope, which is why the goldens (scope-less tasks) did not change.
+- **Live progress is an event, not a print.** `runs.service._stream` streams LangGraph with
+  `stream_mode=["tasks", "updates"]`: `NodeStarted` before a node runs, `NodeCompleted`
+  after it with the duration/cost of the agent_logs rows it wrote (None, never 0, when
+  unknown — a replay logs 0.0s).
 - **`docs/work/BRIEF.md` existing IS the approved brief** (`runs.has_brief`); there is no flag
   in the DB. The intake interview (`factory interview`, `runs/interview.py`) runs BEFORE the
   pipeline — it is not a graph node, so the boss and `replay` know nothing about it — and

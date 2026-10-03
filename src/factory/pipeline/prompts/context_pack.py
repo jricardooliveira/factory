@@ -24,6 +24,7 @@ def build_task_pack(
     repo_context: str = "",
     retry_context: str = "",
     boundary_context: str = "",
+    scope_files_context: str = "",
     completed: list[str] | None = None,
     position: tuple[int, int] | None = None,
 ) -> str:
@@ -56,6 +57,7 @@ def build_task_pack(
         f"Implement ONLY this task. Other tasks are handled in separate calls.\n\n"
         f"**Purpose:** {task.purpose}\n\n"
         f"{scope_block}\n"
+        f"{scope_files_context}"
         f"**Done when:** {task.completion_evidence or 'the task purpose is satisfied and the code compiles'}\n\n"
         f"{done_block}"
         f"## Story context\n\n"
