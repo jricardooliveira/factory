@@ -22,10 +22,10 @@ def print_backlog_proposal(stories: list[BacklogStory]) -> None:
             output.console.print(f"   [dim]Why: {escape(story.rationale)}[/dim]")
 
 
-def print_backlog_approved(stories: int) -> None:
+def print_backlog_approved(stories: int, project_ref: str = "<project>") -> None:
     output.console.print(
         f"[green]Backlog approved[/green] — {stories} story(ies) in docs/work/BACKLOG.md. "
-        "Start the first with: factory next <project>"
+        f"Start the first with: factory next {escape(project_ref)}"
     )
 
 

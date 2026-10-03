@@ -20,6 +20,18 @@ def _write(tmp_path: Path, body: str) -> Path:
     path.write_text(body)
     return path
 
+    def test_runner_defaults_to_opencode_and_is_chosen_by_file_or_env(self) -> None:
+        self.assertEqual(settings().runner.agents, "opencode")
+        self.path.write_text('[runner]\nagents = "claude"\n')
+        self.assertEqual(settings().runner.agents, "claude")
+        with patch.dict("os.environ", {"FACTORY_RUNNER": "opencode"}):
+            self.assertEqual(settings().runner.agents, "opencode")
+
+    def test_an_unknown_runner_is_refused(self) -> None:
+        self.path.write_text('[runner]\nagents = "codex"\n')
+        with self.assertRaises(ValueError):
+            settings()
+
 
 def test_missing_file_yields_the_built_in_defaults(tmp_path: Path) -> None:
     s = st.load_settings(tmp_path / "nope.toml", environ={})

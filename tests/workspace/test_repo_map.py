@@ -49,6 +49,15 @@ class RepoInventoryTests(unittest.TestCase):
         inv = build_repo_inventory(self.root)
         self.assertIn("broken.py", inv)
 
+    def test_templates_are_listed_as_paths(self) -> None:
+        (self.root / "templates").mkdir()
+        for name in ("index.html", "row.j2", "page.jinja"):
+            (self.root / "templates" / name).write_text("<p>{{ x }}</p>")
+        inv = build_repo_inventory(self.root)
+        for name in ("index.html", "row.j2", "page.jinja"):
+            self.assertIn(f"- templates/{name}", inv)
+        self.assertNotIn("{{ x }}", inv)
+
     def test_truncates_when_too_many_files(self) -> None:
         for i in range(80):
             (self.root / f"m{i}.py").write_text("def f():\n    pass\n")

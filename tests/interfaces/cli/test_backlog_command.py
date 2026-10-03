@@ -13,7 +13,7 @@ from unittest.mock import ANY, patch
 from rich.console import Console
 
 from factory.domain.backlog import BacklogStory
-from factory.runs import BacklogOutcome, RunError, RunOutcome
+from factory.runs import BacklogOutcome, RunError, RunInterrupted, RunOutcome
 
 
 class _ScriptedConsole(Console):
@@ -87,31 +87,40 @@ class BacklogCommandTests(unittest.TestCase):
 class NextCommandTests(unittest.TestCase):
     ROW = {"id": 3, "position": 1, "title": "Skeleton", "request": "Build the app."}
 
-    def test_runs_the_next_story_and_marks_it_started(self) -> None:
+    def test_runs_the_next_story_through_the_backlog_service(self) -> None:
+        """`runs.run_backlog_story` marks the row started as soon as the run exists
+        (an interrupted story is not offered again) and passes its base_commit."""
         outcome = RunOutcome(run_id=9, story_id="STORY-002", status="waiting_human",
                              error=None, current_stage=None, db_path=Path("x"))
         with patch("factory.runs.next_story", return_value=self.ROW), \
-                patch("factory.runs.run_project_pipeline", return_value=outcome) as run, \
+                patch("factory.runs.run_backlog_story", return_value=outcome) as run, \
                 patch("factory.runs.mark_started") as mark:
             code, out = _main(["next", "shop"])
         self.assertEqual(code, 0)
-        run.assert_called_once_with("shop", "Build the app.", db_path=ANY, on_event=ANY)
-        mark.assert_called_once_with(3, story_id="STORY-002", run_id=9, db_path=ANY)
+        run.assert_called_once_with("shop", self.ROW, "Build the app.", db_path=ANY,
+                                    on_event=ANY)
+        mark.assert_not_called()  # not after the run: the service did it at RunStarted
         self.assertIn("Skeleton", out)
+
+    def test_an_interrupted_run_exits_with_a_short_notice_not_a_traceback(self) -> None:
+        with patch("factory.runs.next_story", return_value=self.ROW), \
+                patch("factory.runs.run_backlog_story", side_effect=RunInterrupted(9)):
+            code, out = _main(["next", "shop"])
+        self.assertEqual(code, 130)
+        self.assertIn("interrupted; run #9 marked failed", out)
 
     def _next(self, argv: list[str], *, tty: bool, brief: bool = True):
         outcome = RunOutcome(run_id=9, story_id="STORY-002", status="waiting_human",
                              error=None, current_stage=None, db_path=Path("x"))
         with patch("factory.runs.next_story", return_value=self.ROW), \
-                patch("factory.runs.run_project_pipeline", return_value=outcome) as run, \
-                patch("factory.runs.mark_started"), \
+                patch("factory.runs.run_backlog_story", return_value=outcome) as run, \
                 patch("factory.runs.has_brief", return_value=brief), \
                 patch("factory.runs.run_story_interview",
                       side_effect=lambda ref, req, **kw: req + " [clarified]") as story, \
                 patch("sys.stdin.isatty", return_value=tty):
             code, _out = _main(["next", *argv])
         self.assertEqual(code, 0)
-        return run.call_args.args[1], story
+        return run.call_args.args[2], story
 
     def test_on_a_terminal_the_story_interview_clarifies_the_request(self) -> None:
         request, story = self._next(["shop"], tty=True)
@@ -128,7 +137,7 @@ class NextCommandTests(unittest.TestCase):
 
     def test_empty_backlog(self) -> None:
         with patch("factory.runs.next_story", return_value=None), \
-                patch("factory.runs.run_project_pipeline") as run:
+                patch("factory.runs.run_backlog_story") as run:
             code, out = _main(["next", "shop"])
         self.assertEqual(code, 0)
         run.assert_not_called()

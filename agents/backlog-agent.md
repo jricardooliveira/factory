@@ -47,10 +47,16 @@ You MUST respond with ONLY a JSON object (no markdown fences, no commentary befo
 
 ## Rules
 
-- Propose 3 to 12 stories, in the order they should be delivered.
+- Propose 3 to 20 stories, in the order they should be delivered.
 - The FIRST story is a walking skeleton: the thinnest version that runs end to end.
 - Each story is small and independently shippable: when it is done, the product
   works and something new can be checked.
+- Size every story to fit the factory's limits, or it is refused after it was paid
+  for: the spec-agent may break it into at most 6 tasks, and its design may touch
+  at most 16 files (code, templates and tests counted together). A story that adds
+  a new kind of data, where it is stored, a screen and several rules at once is too
+  big: split it (for example storing and listing first, then one interaction or
+  rule per story). Prefer more, smaller stories over fewer large ones.
 - Write each `request` as the one-paragraph request the spec-agent will receive:
   plain words, what the operator gets, self-contained (do not say "as above").
 - Never invent requirements. Every story must trace to something the brief says;

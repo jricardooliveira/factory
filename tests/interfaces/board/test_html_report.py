@@ -67,6 +67,8 @@ class FactoryVisualizationTests(unittest.TestCase):
         self.assertIn("architect-agent", html)
         self.assertIn("gate-2", html)
         self.assertIn("coder-agent", html)
+        for stage in ("gate-build", "tester-agent", "gate-test", "release-agent", "gate-release"):
+            self.assertIn(stage, html)  # the whole line, through Checkpoint 3
         self.assertIn("FAILED", html)
         self.assertIn("Architect verdict is &#x27;fail&#x27;", html)
         self.assertIn("factory review 1", html)

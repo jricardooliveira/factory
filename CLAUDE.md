@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `875 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `875 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1027 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1027 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -26,12 +26,15 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
 | `.venv/bin/factory workspace` | resolved `$FACTORY_HOME` (default `~/.factory`), its `factory.db` and every project repo |
+| `.venv/bin/factory status [project]` | where each project stands (Define → Plan → Build → Release, backlog per story, intake + story spend) and the exact next command; board key `s` |
 | `.venv/bin/factory interview <project>` | interviews the operator about the product (live model calls), then writes + commits `docs/work/BRIEF.md` and `INTERVIEW.md` on approval; re-running resumes. `factory run --project` requires that brief (or `--no-interview`) |
 | `.venv/bin/factory interview <project> --amend "what changed"` | reopens an approved brief for that change only, rewrites + commits it, then offers `factory backlog` so unstarted stories are re-proposed |
 | `.venv/bin/factory interview <project> --import answers.json` | records answers from the `/factory-intake` skill (`[{topic, question, options?, answer, assumed?}]`); refuses, recording nothing, unless every required topic is answered |
 | `.venv/bin/factory backlog <project>` | proposes the ordered story list from the brief; approve, or type feedback to regenerate |
 | `.venv/bin/factory next <project> [--no-interview]` | starts the next approved backlog story (story-level interview first on a TTY) |
-| `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
+| `.venv/bin/factory doctor [--offline]` | preflight: opencode, a probe per distinct tier model (paid, tiny; skipped offline), go/node/tsc, `$FACTORY_HOME` + its DB, each product's `.opencode` link, a Python product without its own `.venv` (warning), leftover legacy `factory.db`; non-zero if a model is unreachable or the home is unusable |
+| `.venv/bin/factory board` | Textual board; `m` (or ctrl+p) opens the menu of every major verb (new project, interview, backlog, next/new story, retry/replay, doctor, evals, simulate, metrics, tiers) |
+| `FACTORY_RUNNER=claude .venv/bin/factory …` | runs every agent through the local Claude Code CLI (`claude -p`) on `agents/tiers.toml` `[claude_tiers]` instead of opencode; permanent via `factory.toml` `[runner] agents = "claude"` |
 | `.venv/bin/factory --help` | full CLI verb list |
 
 `ruff` is configured in `pyproject.toml` (line-length 100, `E,F,I,W`) but **is not installed** in
@@ -56,11 +59,12 @@ src/factory/
     traceability.py     Deterministic AC ↔ tester-claim cross-check (catches silently dropped criteria).
     agent_output.py     parse_agent_json & friends.   project_spec.py  ProjectSpec model.
     backlog.py          BacklogStory/BacklogOutput (the backlog-agent's contract).
+    lifecycle.py        A project's phases + the one next command (`factory status`, board `s`).
     interview.py        Intake interview: REQUIRED_TOPICS, InterviewTurn, uncovered_topics (coverage
                         is decided from recorded answers, never the model's claim), resolve_answer.
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
                         review_policy.py, settings.py (factory.toml at the checkout root or $FACTORY_SETTINGS:
-                        budget cap + probe timeout; env > file > default; invalid = refused; `settings()` is read per call, never
+                        budget cap + probe timeout + runner (opencode|claude); env > file > default; invalid = refused; `settings()` is read per call, never
                         cached).
   pipeline/             The orchestrator (LangGraph). Owns routing/remediation. __init__ is the
                         PUBLIC API — other packages import only from `factory.pipeline`.
@@ -91,17 +95,19 @@ src/factory/
                         product repo), projects.py, templates.py, git.py (checkpoint + evidence
                         commits, baseline, real diff), materialize.py, repo_map.py, legacy.py
                         (`factory workspace import-legacy`).
-  adapters/             opencode.py + claude_sdk.py (the only places a model is called; the SDK
-                        one only for the interview, optional extra `.[claude]`), notify.py.
+  adapters/             opencode.py + claude_cli.py + claude_sdk.py (the only places a model is
+                        called; a `claude/<model>` id makes opencode.run_agent hand the call to
+                        `claude -p`; the SDK one only for the interview, optional extra `.[claude]`),
+                        result.py (AgentResult), notify.py.
   state/db.py           SQLite schema + every accessor. Additive migrations via _ensure_column.
   state/interviews.py   interview_answers / interview_turns accessors (verbatim agent I/O).
   state/backlog.py      backlog_stories accessors: a new proposal replaces only unstarted rows.
-  selftest/             evals.py (agent-configuration regression), simulate.py (scenario matrix),
-                        doctor.py (`factory doctor` preflight; probes go through run_agent).
+  selftest/             evals/ (agent-configuration regression), simulate.py (scenario matrix).
+  preflight/doctor.py   `factory doctor` preflight; probes go through run_agent.
   runs/                 Application service: run / replay / resume / retry (service.py), resume
                         context + decision recovery (context.py), the intake interview that runs
                         BEFORE the pipeline (interview.py), the
-                        story backlog + `factory next` (backlog.py). NEVER prints: reports progress through
+                        story backlog + `factory next` (backlog.py), `factory status` (status.py). NEVER prints: reports progress through
                         an `on_event` callback (events.py) — the interview through `ask`/`approve`
                         callbacks — and refuses with `RunError`.
   interfaces/           render.py (every rich print helper; takes data, never reads the DB),
@@ -109,6 +115,13 @@ src/factory/
                         interview.py, backlog.py, selftest.py, board.py, workspace.py = one module per command
                         group),
                         board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
+skills/                 Anti-slop skills (ponytail, ponytail-review, karpathy-guidelines, superpowers
+                        TDD / systematic-debugging / verification-before-completion; MIT, LICENSES.md)
+                        copied into every product's .claude/skills/ (`create_project`, `factory
+                        project refresh`) for HUMANS / Claude Code sessions working on the
+                        product. Factory agents run with tools disabled and never load them:
+                        they only receive the "Code discipline" section of PROJECT_RULES.md,
+                        injected into every agent prompt (golden-pinned).
 evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected outcome).
 examples/specs/         Sample project specs.
 docs/ARCHITECTURE.md    One page: layer diagram, package ownership, the one-way rule, where to add things.
@@ -183,6 +196,19 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Agents cannot write files.** Code reaches disk only via `code_blocks` → `materialize_code_blocks`.
   Any file that appears in the repo undeclared is an out-of-band write and *blocks* gate-build.
   Don't "fix" that by enabling agent write tools.
+- **A run that stops mid-coding discards its own uncommitted writes** (`coder._discard_attempt`
+  → `workspace.git.git_discard_paths`): only the paths the factory materialized on this task's
+  attempts (or the remediation pass) — restored from HEAD if tracked, else deleted. Never
+  `git clean`: operator files, the out-of-band file itself and evidence stay. Otherwise the
+  NEXT story is blocked as out-of-band on its first task. The code survives in `agent_logs`.
+  `git_commit_all` (`git add -A`) never commits `__pycache__/`, `*.pyc`, `.pytest_cache/` or a
+  product `/.venv/` (`_INFRA_EXCLUDES` in `.git/info/exclude`).
+- **The runner is a choice, the tiers are not.** `settings().runner.agents` (`factory.toml`
+  `[runner] agents`, env `FACTORY_RUNNER`) = `opencode` (default) or `claude`; under `claude`,
+  `tiers.model_for_tier` reads `[claude_tiers]` (every tier, all `claude/<model>`, each priced)
+  and the adapter runs `claude -p --tools "" --system-prompt <agent .md body>`, prompt on stdin.
+  `FACTORY_TIER_*` still wins. Reviewer/author family independence does NOT hold under the
+  claude runner — the operator's trade-off. `tests/conftest.py` unsets `FACTORY_RUNNER`.
 - **Model choice lives in `agents/tiers.toml`, nowhere else.** Each agent's `.md` frontmatter
   repeats its `model_tier:` and that tier's `model:`; `tests/agent_config/test_tiers.py` and
   `factory evals` fail on drift. Change the toml and the frontmatter together. Default models
@@ -215,6 +241,13 @@ input/output is stored, so any run replays offline for free. Evidence is version
   (the boss refuses `release` without the operator's APPROVAL on the newest gate-release row).
   A test that needs a completed run approves it: `runs.resume_run(run_id, "approve", ...)`.
   `evals capture` of a released run therefore expects `waiting_human` + gate-test passed.
+- **An approval is stamped into the artifact it approved** (`runs.service._stamp_approval`):
+  SPEC.md (CP1), PLAN.md + the ADR (CP2), RELEASE.md (CP3) get `Status: approved by the
+  operator at Checkpoint N (run #id, <UTC>)`, committed. `settled_threshold_terms` trusts an
+  ADR only on that wording ("approved", no "pending") — change `approval_status` and that gate together.
+- **A gate-build reason is multi-line**: the `name:status` summary, then one
+  `VerifyResult.failures` line per failed check (the error text). One-line displays (board
+  cells, queue, timeline) show only the first line.
 - **An agent added after runs were recorded must survive their replay.** `_run_or_replay` raises
   `agent_calls.ReplayGap` when a frozen output is missing; the release-agent catches it and logs
   the stage `skipped`. Any new agent must do the same, or every captured eval case breaks.
@@ -231,9 +264,25 @@ input/output is stored, so any run replays offline for free. Evidence is version
   stage. Usage comes from opencode's `step_finish` events (rows before 2026-10-02 are NULL);
   the ChatGPT/Codex login reports **$0**, so spend is tokens × list price from
   `agents/tiers.toml` [prices] (`domain/budget.py`). A new model needs a price there.
-- **Default verification executes nothing the coder wrote.** No `pytest --collect-only`
-  without `FACTORY_RUN_TESTS=1` (collection imports — runs — test modules); the static
-  import check covers what it caught. A missing toolchain FAILS its files, never skips them.
+- **Default verification executes nothing the coder wrote.** `pytest --collect-only` is never
+  run (collection imports — runs — test modules); the static import check covers what it
+  caught. A missing toolchain FAILS its files, never skips them. The run header says when
+  tests will not execute. Opted-in tests (`FACTORY_RUN_TESTS=1`) run with the PRODUCT's
+  interpreter (`verification.python.product_python`: `<repo>/.venv/bin/python`, else
+  `$FACTORY_PRODUCT_PYTHON`, else `sys.executable`), named in the check's detail; a
+  third-party module (or pytest) missing from it is `pytest_run:warn` — an environment
+  problem, never a pass and never "tests executed" in the trust package.
+- **A failed task attempt's files stay uncommitted until the task passes**, so a retry's
+  scope check subtracts `state["attempt_written"]` (what the factory materialized on the
+  earlier attempts) from the unclaimed set; it is cleared when the task passes.
+- **The coder's task pack carries the current text of its in-scope files**
+  (`prompts.blocks.scope_files_block`, capped by `MAX_SCOPE_FILE_CHARS`, evidence paths
+  skipped, a missing path marked "(new file)"); the block is omitted when the task has no
+  scope, which is why the goldens (scope-less tasks) did not change.
+- **Live progress is an event, not a print.** `runs.service._stream` streams LangGraph with
+  `stream_mode=["tasks", "updates"]`: `NodeStarted` before a node runs, `NodeCompleted`
+  after it with the duration/cost of the agent_logs rows it wrote (None, never 0, when
+  unknown — a replay logs 0.0s).
 - **`docs/work/BRIEF.md` existing IS the approved brief** (`runs.has_brief`); there is no flag
   in the DB. The intake interview (`factory interview`, `runs/interview.py`) runs BEFORE the
   pipeline — it is not a graph node, so the boss and `replay` know nothing about it — and
@@ -252,8 +301,39 @@ input/output is stored, so any run replays offline for free. Evidence is version
   The `/factory-intake` skill (`.claude/skills/factory-intake/SKILL.md`) is a second door to the
   same interview: Claude asks in Claude Code, then calls `factory interview --import` (product) or
   `factory run --project --no-interview` with an Operator clarifications block (story).
+- **An unsure answer is not a decision** (`domain/interview.py`). A short answer that hands
+  the choice back ("what would you do?", "whatever is easier", "up to you") is an ASSUMPTION
+  on the recommended option, like "you decide". One that is merely unsure (`is_undecided`)
+  is flagged `[UNDECIDED]` (numbered) in the story prompt so the agent follows up with
+  `follow_up_of`; what nobody followed up is asked once more by Python, and still unsure
+  becomes an assumption. Story interview only; the product interview keeps the text.
+- **The size limits are told to the agents that must fit them** (a test pins each):
+  `MAX_TASKS_PER_STORY` (6) in `spec-agent.md`, `MAX_MODULES_PER_STORY` (16: every file a
+  design touches, tests and docs included) in `architect-agent.md`, both in `backlog-agent.md`.
+  Change a constant and the three .md files together. An oversized design, like an
+  oversized story, is sent back ONCE (`nodes/architect.py`, slot `resize`) before gate-2.
+- **A story over `MAX_TASKS_PER_STORY` is sent back to the spec-agent once** (`nodes/spec.py`,
+  slot `resize`) before gate-1 judges it; a replay without that second output keeps the
+  recorded story (`ReplayGap`). `agents/spec-agent.md` states the limit (a test pins it).
+- **`factory dismiss` of a failed/blocked run returns its backlog story to `approved`**
+  (`state.backlog.return_to_backlog`), so `factory next` starts it again. `factory retry` only
+  re-drives a run with an answered checkpoint; `factory status` offers it only then
+  (`RunFact.retryable`), else dismiss → next.
 - **One live run per project** (`runs.service._refuse_if_project_busy`): the coder's
   checkpoint stages the whole working tree. Replays are exempt (own scratch clone).
+- **A dirty product tree is refused before a token is spent** (`runs.service._refuse_if_tree_dirty`):
+  uncommitted changes outside `EVIDENCE_PATHS` (tooling noise like `.venv`/`__pycache__` aside)
+  would BLOCK the coder as out-of-band after spec + architect were paid. So no factory flow may
+  leave a non-evidence file behind (that is why `go build` runs with `-o /dev/null`).
+- **Ctrl-C ends a run cleanly**: `runs.service._stream` catches `KeyboardInterrupt` (no node
+  does — it is not an `Exception`), fails the run "interrupted by the operator", discards
+  `attempt_written`, commits PIPELINE.md and raises `RunInterrupted` (a KeyboardInterrupt with
+  `run_id`); the CLI prints one line and exits 130. `runs.run_backlog_story` marks the backlog
+  row started at `RunStarted`, so an interrupted story is not offered again by `factory next`.
+- **A returned story keeps its failed run's `base_commit`** (`backlog_stories.base_commit`, set by
+  dismiss): that run's passed tasks stay committed, so `factory next` passes it to
+  `run_pipeline(base_commit=...)` and the re-run reviews them too (falls back to HEAD if it is
+  not a commit in the repo). A dismissed COMPLETED run stays released (`pipeline_runs.archived_from`).
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins
   `candidate_commit`: `release` refuses if code changed since (evidence commits excluded).
 - Editing anything in `agents/`, `domain/gates.py`, `domain/ambiguity.py`, `agent_config/`, or

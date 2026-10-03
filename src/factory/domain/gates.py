@@ -28,7 +28,10 @@ class GateResult:
 # ── Configurable thresholds ───────────────────────────────────────
 
 MAX_TASKS_PER_STORY = 6
-MAX_MODULES_PER_STORY = 12
+# Counts every file a design touches: code, templates, tests, docs, config. Operator
+# decision (2026-10-03): 12 -> 16 — at 12, a story that adds tests and a README line
+# had about seven code files left, and honest small stories were refused.
+MAX_MODULES_PER_STORY = 16
 
 # ── Remediation budget (EFFECTIVENESS.md §4): fail-fast, then queue ──
 # A task may be re-attempted up to MAX_CODER_ATTEMPTS times, and no model call is
@@ -67,6 +70,11 @@ MAX_STACK_PROPOSALS = 3
 # Questions a story-level interview may ask in total. It fills gaps the brief
 # leaves for ONE story; Checkpoint 1 still catches whatever it misses.
 MAX_STORY_INTERVIEW_QUESTIONS = 8
+
+# Characters of ONE in-scope file shown to the coder (EFFECTIVENESS.md §6: the
+# pack carries "the files in scope"). Past it the file is cut with a visible
+# notice, so a huge file cannot blow the coder's context or its call timeout.
+MAX_SCOPE_FILE_CHARS = 12000
 
 
 # Ambiguity detection (THRESHOLD_TERMS, unbound_criteria, ...) lives in

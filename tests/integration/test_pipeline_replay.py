@@ -242,6 +242,26 @@ class RemediationLoopTests(ReplayHarness):
         # The retry prompt carried the prior failure findings (3.1).
         self.assertIn("Previous attempt failed", coder_logs[1]["input_text"])
 
+    def test_build_failure_reason_carries_the_error_text(self) -> None:
+        # `py_compile:fail` alone gave the retry (and the operator) nothing to act on.
+        orig = self._seed_original(
+            {
+                "spec-agent": _load("clean_pass.spec.json"),
+                "architect-agent": _load("clean_pass.architect.json"),
+                "coder-agent": _load("broken_code.coder.json"),
+            }
+        )
+        final, gates = self._replay(orig)
+
+        build_gates = [g for g in gates if g["gate_name"] == "gate-build"]
+        self.assertTrue(all("SyntaxError" in g["reason"] for g in build_gates), build_gates)
+        self.assertTrue(any("SyntaxError" in f for f in final.get("prior_findings", [])))
+        self.assertIn("SyntaxError", final.get("error", ""))
+        with db.get_db(self.db_path) as conn:
+            logs = db.get_run_logs(conn, self.new_run_id)
+        retry_prompt = [l for l in logs if l["agent"] == "coder-agent"][1]["input_text"]
+        self.assertIn("SyntaxError", retry_prompt)
+
 
 class PerTaskExecutionTests(ReplayHarness):
     def test_tasks_run_individually_in_dependency_order(self) -> None:

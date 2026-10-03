@@ -9,10 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from factory.agent_config.settings import settings
+from factory.domain.gates import MAX_CODER_ATTEMPTS, MAX_SCOPE_FILE_CHARS
 from factory.evidence.adr import load_project_memory
 from factory.evidence.brief import load_brief
-from factory.pipeline.state import PipelineState
-from factory.workspace.repo_map import build_repo_inventory
+from factory.pipeline.state import PipelineState, factory_owned_paths
+from factory.workspace.layout import is_evidence_path
+from factory.verification.scope import strip_repo_prefix
+from factory.workspace.repo_map import build_repo_inventory, iter_code_files
 
 
 def project_context_block(state: PipelineState) -> str:
@@ -49,6 +52,65 @@ def repo_inventory_block(state: PipelineState) -> str:
     return (
         "## Existing codebase (interfaces only — integrate with these, do not rewrite)\n\n"
         f"{inventory}\n\n"
+    )
+
+
+def _file_section(rel: str, text: str, budget: int) -> str:
+    notice = ""
+    if len(text) > budget:
+        notice = (
+            f"\n… (truncated: showing {budget} of {len(text)} characters; "
+            "keep the rest of the file intact)\n"
+        )
+        text = text[:budget]
+    return f"### {rel}\n\n````\n{text}\n````{notice}\n"
+
+
+def scope_files_block(state: PipelineState, scope: list[str]) -> str:
+    """The CURRENT text of each file in `scope`, so a `modify` is an edit of what
+    is there rather than a blind rewrite. '' when nothing applies.
+
+    A directory entry expands to the code files under it, sharing ONE
+    MAX_SCOPE_FILE_CHARS budget for the whole entry. Factory evidence is skipped
+    (the coder may not write it), as is a glob or a path outside the project.
+    """
+    root = Path(state.get("opencode_cwd") or state.get("project_dir") or ".").resolve()
+    owned = factory_owned_paths(state)
+    sections: list[str] = []
+    for rel in scope:
+        rel = strip_repo_prefix(rel.strip()).rstrip("/")
+        if not rel or "*" in rel or (owned and is_evidence_path(rel, owned)):
+            continue
+        path = (root / rel).resolve()
+        if not path.is_relative_to(root):
+            continue
+        if path.is_dir():
+            budget = MAX_SCOPE_FILE_CHARS
+            for file, sub in iter_code_files(path):
+                if budget <= 0:
+                    sections.append(f"… (more files under {rel}/ not shown: size budget spent)\n")
+                    break
+                try:
+                    text = file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                sections.append(_file_section(f"{rel}/{sub.as_posix()}", text, budget))
+                budget -= len(text)
+            continue
+        if not path.exists():
+            sections.append(f"### {rel} (new file)\n")
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        sections.append(_file_section(rel, text, MAX_SCOPE_FILE_CHARS))
+    if not sections:
+        return ""
+    return (
+        "## Current contents of files in scope (modify these; return the whole file)\n\n"
+        + "\n".join(sections)
+        + "\n"
     )
 
 

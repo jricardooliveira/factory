@@ -59,6 +59,33 @@ class ProjectLockTests(unittest.TestCase):
         outcome = self._start()  # gets as far as the (blocked) agent call
         self.assertIsNotNone(outcome.run_id)
 
+    def test_a_dirty_product_tree_is_refused_before_any_token(self) -> None:
+        """Left behind (an interrupted run, a hand edit), these files made the coder
+        BLOCK as out-of-band — after spec + architect had already been paid for."""
+        repo = Path(self.project["repo_path"])
+        (repo / "a.py").write_text("x = 1\n")
+        (repo / "PROJECT_RULES.md").write_text("edited\n")  # factory-owned: not the operator's
+        with self.assertRaises(RunError) as raised:
+            self._start()
+        message = str(raised.exception)
+        self.assertIn("a.py", message)
+        self.assertNotIn("PROJECT_RULES.md", message)
+        self.assertIn(f"git -C {repo} status", message)
+        with db.get_db(self.db_path) as conn:
+            self.assertEqual(db.list_runs(conn), [])  # nothing was started
+            self.assertIsNone(conn.execute("SELECT id FROM stories").fetchone())
+
+    def test_evidence_and_tooling_leftovers_are_not_a_dirty_tree(self) -> None:
+        repo = Path(self.project["repo_path"])
+        (repo / "docs" / "work").mkdir(parents=True)
+        (repo / "docs" / "work" / "BRIEF.md").write_text("# Brief\n")
+        (repo / ".venv" / "bin").mkdir(parents=True)
+        (repo / ".venv" / "bin" / "python").write_text("")
+        (repo / "pkg" / "__pycache__").mkdir(parents=True)
+        (repo / "pkg" / "__pycache__" / "m.cpython-312.pyc").write_bytes(b"")
+        outcome = self._start()  # gets as far as the (blocked) agent call
+        self.assertIsNotNone(outcome.run_id)
+
 
 if __name__ == "__main__":
     unittest.main()

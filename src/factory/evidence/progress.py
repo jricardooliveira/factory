@@ -179,7 +179,7 @@ def run_timeline(db_path: Path, run_id: int) -> list[TimelineEvent]:
             detail = g["human_response"]
         else:
             status = "done" if g["passed"] else "failed"
-            detail = g.get("reason") or ""
+            detail = (g.get("reason") or "").split("\n", 1)[0]  # one line per event
         events.append(TimelineEvent(g["checked_at"], "gate", g["gate_name"], detail, status))
 
     for a in authorizations:
@@ -192,7 +192,8 @@ def run_timeline(db_path: Path, run_id: int) -> list[TimelineEvent]:
     if run["finished_at"]:
         st = run["status"]
         status = "done" if st == "completed" else ("waiting" if st == "waiting_human" else "failed")
-        events.append(TimelineEvent(run["finished_at"], "run", f"run {st}", run.get("error") or "", status))
+        events.append(TimelineEvent(run["finished_at"], "run", f"run {st}",
+                                    (run.get("error") or "").split("\n", 1)[0], status))
 
     events.sort(key=lambda e: e.when)
     return events

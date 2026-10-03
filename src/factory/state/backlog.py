@@ -65,3 +65,23 @@ def mark_started(
         "UPDATE backlog_stories SET status = 'started', story_id = ?, run_id = ? WHERE id = ?",
         (story_id, run_id, row_id),
     )
+
+
+def return_to_backlog(conn: sqlite3.Connection, run_id: int) -> list[str]:
+    """Put the story a dismissed failed/blocked run started back to 'approved'.
+
+    It keeps that run's base_commit: the tasks it passed are committed, never
+    reviewed, so the story's next run must start its review from there.
+    Returns the project ids touched (their BACKLOG.md must be re-rendered).
+    """
+    projects = [r[0] for r in conn.execute(
+        "SELECT DISTINCT project_id FROM backlog_stories WHERE run_id = ? AND status = 'started'",
+        (run_id,),
+    ).fetchall()]
+    conn.execute(
+        "UPDATE backlog_stories SET status = 'approved', story_id = NULL, run_id = NULL, "
+        "base_commit = (SELECT base_commit FROM pipeline_runs WHERE id = ?) "
+        "WHERE run_id = ? AND status = 'started'",
+        (run_id, run_id),
+    )
+    return projects

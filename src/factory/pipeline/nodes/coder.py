@@ -29,13 +29,18 @@ from factory.state.db import (
     update_run_stage,
     update_story_status,
 )
-from factory.verification import verify_changes
+from factory.verification import VerifyResult, verify_changes
 from factory.verification.scope import (
     declared_scope_mismatch,
     paths_outside_scope,
     scope_note,
 )
-from factory.workspace.git import collect_repo_diff, git_changed_paths, git_commit_all
+from factory.workspace.git import (
+    collect_repo_diff,
+    git_changed_paths,
+    git_commit_all,
+    git_discard_paths,
+)
 from factory.workspace.layout import is_evidence_path
 from factory.workspace.materialize import materialize_code_blocks, normalize_block_path
 
@@ -52,6 +57,10 @@ def _changed_files(
     git_changed = git_changed_paths(root, exclude=exclude)
     if git_changed is not None:
         return set(git_changed)
+    return _relative(written, root)
+
+
+def _relative(written: list[Path], root: Path) -> set[str]:
     root_resolved = root.resolve()
     actual: set[str] = set()
     for p in written:
@@ -63,11 +72,19 @@ def _changed_files(
 
 
 def _scope_diff(
-    coder: CoderOutput, written: list[Path], root: Path, *, exclude: tuple[str, ...] = ()
+    coder: CoderOutput, written: list[Path], root: Path, *, exclude: tuple[str, ...] = (),
+    earlier: set[str] = frozenset(),
 ) -> tuple[set[str], set[str]]:
-    """(unclaimed, missing) for this pass — see `verification.scope`."""
+    """(unclaimed, missing) for this pass — see `verification.scope`.
+
+    `earlier` = what the factory materialized on this task's failed attempts: it is
+    only committed once the task passes, so git still lists it as changed, but the
+    factory wrote it — never this agent's out-of-band write.
+    """
     claimed = {c.path for c in coder.code_blocks}
-    return declared_scope_mismatch(_changed_files(written, root, exclude=exclude), claimed)
+    unclaimed, missing = declared_scope_mismatch(
+        _changed_files(written, root, exclude=exclude), claimed)
+    return unclaimed - earlier, missing
 
 
 def _materialize(state: PipelineState, coder: CoderOutput) -> tuple[Path, tuple[str, ...], list[Path]]:
@@ -116,18 +133,42 @@ def _story_scope(spec: SpecOutput) -> list[str]:
     return [s for t in spec.tasks for s in t.scope]
 
 
+def _discard_attempt(state: PipelineState, written: list[Path] | None = None) -> None:
+    """A run that stops mid-coding undoes the factory's own uncommitted writes
+    (this pass's `written` + earlier attempts'), so the next story on the repo
+    doesn't inherit them as 'out-of-band'. Only those paths: the out-of-band
+    file itself, operator files and evidence stay (see `git_discard_paths`)."""
+    if not state.get("opencode_cwd"):
+        return  # never guess a repo: "." would be wherever the factory runs
+    root = Path(state["opencode_cwd"])
+    git_discard_paths(root, set(state.get("attempt_written") or []) | _relative(written or [], root))
+
+
+def _with_failures(headline: str, verify_result: VerifyResult) -> str:
+    """The one-line verdict, then each failed check's error on its own line: the
+    retry's prior_findings and the operator both need the WHY, and one-line
+    displays (board cell, queue) keep only the first line."""
+    return "\n".join([headline, *verify_result.failures])
+
+
 def _block_out_of_band(
-    conn: sqlite3.Connection, state: PipelineState, gate_reason: str
+    conn: sqlite3.Connection, state: PipelineState, gate_reason: str,
+    written: list[Path] | None = None,
 ) -> None:
     """Record an out-of-band write: gate-build fails, the run is BLOCKED (a retry
     won't help, and shipping un-vetted code defeats the gates)."""
+    _discard_attempt(state, written)
     log_gate(conn, state["run_id"], "gate-build", False, gate_reason)
     update_story_status(conn, state["story_id"], "blocked")
     finish_run(conn, state["run_id"], "blocked", error=gate_reason)
     conn.commit()
 
 
-def _fail_story(conn: sqlite3.Connection, state: PipelineState, error: str) -> None:
+def _fail_story(
+    conn: sqlite3.Connection, state: PipelineState, error: str,
+    written: list[Path] | None = None,
+) -> None:
+    _discard_attempt(state, written)
     update_story_status(conn, state["story_id"], "failed")
     finish_run(conn, state["run_id"], "failed", error=error)
     conn.commit()
@@ -183,13 +224,13 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
             f"[remediation] GOVERNANCE: out-of-band file writes not declared in "
             f"code_blocks: {sorted(unclaimed)}."
         )
-        _block_out_of_band(conn, state, gate_reason)
+        _block_out_of_band(conn, state, gate_reason, written)
         return {"coder_raw": result.output, "coder": parsed, "remediation": False,
                 "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,
                                "task": "remediation"},
                 "next_action": "give_up", "status": "blocked", "error": gate_reason}
 
-    gate_reason = f"[remediation] {verify_result.summary}"
+    gate_reason = _with_failures(f"[remediation] {verify_result.summary}", verify_result)
     log_gate(conn, state["run_id"], "gate-build", verify_result.passed, gate_reason)
     gate_build = {"passed": verify_result.passed, "verdict": verify_result.verdict,
                   "reason": gate_reason, "task": "remediation"}
@@ -202,7 +243,7 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
                 "remediation": False, "next_action": "complete"}
 
     error = f"remediation failed gate-build: {gate_reason}"
-    _fail_story(conn, state, error)
+    _fail_story(conn, state, error, written)
     return {"coder_raw": result.output, "coder": parsed, "gate_build": gate_build,
             "remediation": False, "next_action": "give_up", "status": "failed", "error": error}
 
@@ -213,6 +254,7 @@ def _off_script(
 ) -> dict[str, Any]:
     """The coder answered without JSON: the run is BLOCKED, never guessed at."""
     agent_said = parsed.get("agent_response", "unknown")
+    _discard_attempt(state)
     log_agent(
         conn, state["run_id"], "coder-agent", prompt,
         result.output, verdict="blocked", duration_secs=result.duration_secs,
@@ -269,7 +311,7 @@ def _design_feedback(
 def _route_after_build(
     conn: sqlite3.Connection, state: PipelineState, tasks: list[TaskDef], task: TaskDef,
     coder: CoderOutput, base: dict[str, Any], verify_passed: bool, gate_reason: str,
-    root: Path,
+    root: Path, written: list[Path] | None = None,
 ) -> dict[str, Any]:
     """After a clean gate-build log: advance, retry the same task, or give up."""
     task_index = state.get("task_index", 0)
@@ -285,9 +327,11 @@ def _route_after_build(
         conn.commit()
         if task_index + 1 >= len(tasks):
             # Coding done — hand to the tester gate, which finalizes the run.
-            return {**base, "next_action": "complete", "tasks_completed": completed}
+            return {**base, "next_action": "complete", "tasks_completed": completed,
+                    "attempt_written": []}
         return {**base, "next_action": "next_task", "task_index": task_index + 1,
-                "attempt_number": 1, "prior_findings": [], "tasks_completed": completed}
+                "attempt_number": 1, "prior_findings": [], "tasks_completed": completed,
+                "attempt_written": []}
 
     # Task failed: retry the SAME task within budget, else give up + queue.
     conn.commit()  # the spend below is read on its own connection
@@ -301,6 +345,10 @@ def _route_after_build(
             "attempt_number": attempt + 1,
             "triggered_by": "gate-build",
             "prior_findings": [gate_reason],
+            # Uncommitted until the task passes: the retry's scope check must
+            # not read the factory's own earlier writes as the agent's.
+            "attempt_written": sorted(
+                set(state.get("attempt_written") or []) | _relative(written or [], root)),
         }
 
     if not verify_passed:
@@ -312,7 +360,7 @@ def _route_after_build(
         )
     else:
         error = f"coder reported verdict '{coder.verdict}' on {task.id}"
-    _fail_story(conn, state, error)
+    _fail_story(conn, state, error, written)
     return {**base, "next_action": "give_up", "status": "failed", "error": error}
 
 
@@ -363,11 +411,13 @@ def _implement_task(
 
     # ── gate-build: verify the cumulative repo after this task ──
     verify_result = verify_changes(written, root=root)
-    unclaimed, missing = _scope_diff(coder, written, root, exclude=owned)
+    unclaimed, missing = _scope_diff(coder, written, root, exclude=owned,
+                                     earlier=set(state.get("attempt_written") or []))
     note = scope_note(unclaimed, missing)
     gate_reason = f"[{task.id}] {verify_result.summary}"
     if note:
         gate_reason += f"; {note}"
+    gate_reason = _with_failures(gate_reason, verify_result)
 
     # Governance: any file that landed in the repo but was NOT declared in
     # code_blocks is an out-of-band write (agent bypassing materialize).
@@ -377,7 +427,7 @@ def _implement_task(
             f"code_blocks: {sorted(unclaimed)}. Agents must return code via "
             f"code_blocks, not write files directly."
         )
-        _block_out_of_band(conn, state, gate_reason)
+        _block_out_of_band(conn, state, gate_reason, written)
         return {
             "coder_raw": result.output, "coder": parsed,
             "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,
@@ -394,7 +444,7 @@ def _implement_task(
     }
     base = {"coder_raw": result.output, "coder": parsed, "gate_build": gate_build}
     return _route_after_build(
-        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root
+        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root, written
     )
 
 
@@ -424,6 +474,7 @@ def node_coder_agent(state: PipelineState) -> dict[str, Any]:
 
         return _implement_task(conn, state, spec, tasks)
     except Exception as e:
+        _discard_attempt(state)
         log_agent(conn, state["run_id"], "coder-agent", "", str(e), verdict="error")
         finish_run(conn, state["run_id"], "failed", error=str(e))
         conn.commit()

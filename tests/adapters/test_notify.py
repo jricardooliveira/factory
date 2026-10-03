@@ -26,5 +26,36 @@ class NotifySanitizationTests(unittest.TestCase):
         self.assertLessEqual(len(_clean("a" * 500)), 180)
 
 
+class LinuxNotifyTests(unittest.TestCase):
+    """notify-send on Linux: the same opt-in, an argv (no script to inject into)."""
+
+    def _notify(self, *, env: str, which: str | None) -> tuple[bool, list]:
+        from unittest.mock import patch
+
+        from factory.adapters import notify as mod
+
+        with patch.dict("os.environ", {"FACTORY_NOTIFY": env}), \
+                patch.object(mod.sys, "platform", "linux"), \
+                patch.object(mod.shutil, "which", lambda name: which if name == "notify-send" else None), \
+                patch.object(mod.subprocess, "run") as run:
+            sent = mod.notify("Run #3", "parked at Checkpoint 2")
+        return sent, run.call_args_list
+
+    def test_opted_in_with_notify_send_dispatches(self) -> None:
+        sent, calls = self._notify(env="1", which="/usr/bin/notify-send")
+        self.assertTrue(sent)
+        self.assertEqual(calls[0].args[0], ["notify-send", "Run #3", "parked at Checkpoint 2"])
+
+    def test_not_opted_in_stays_silent(self) -> None:
+        sent, calls = self._notify(env="", which="/usr/bin/notify-send")
+        self.assertFalse(sent)
+        self.assertEqual(calls, [])
+
+    def test_without_notify_send_is_a_no_op(self) -> None:
+        sent, calls = self._notify(env="1", which=None)
+        self.assertFalse(sent)
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

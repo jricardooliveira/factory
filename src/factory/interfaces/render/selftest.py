@@ -132,6 +132,10 @@ def print_doctor(report: Any) -> None:
         )
 
 
+def _pct(rate: float | None) -> str:
+    return "n/a" if rate is None else f"{round(rate * 100)}%"
+
+
 def print_metrics(m: Any, db_path: Path) -> None:
     """The playbook's SDLC indicators (`evidence.metrics.FactoryMetrics`), NOT MEASURABLE last."""
     output.console.print()
@@ -145,7 +149,7 @@ def print_metrics(m: Any, db_path: Path) -> None:
         throughput.add_row(status, str(n))
     throughput.add_row("[bold]total[/bold]", f"[bold]{m.total_runs}[/bold]")
     output.console.print(throughput)
-    output.console.print(f"  Completion rate: [bold]{round(m.completion_rate * 100)}%[/bold]\n")
+    output.console.print(f"  Completion rate: [bold]{_pct(m.completion_rate)}[/bold]\n")
 
     quality = Table(title="First-pass quality", border_style="cyan")
     quality.add_column("Gate", style="bold")
@@ -158,21 +162,22 @@ def print_metrics(m: Any, db_path: Path) -> None:
                         f"[{colour}]{round(rate * 100)}%[/{colour}]")
     output.console.print(quality)
     output.console.print(
-        f"  First-pass rate (no coder retry): [bold]{round(m.first_pass_rate * 100)}%[/bold]"
+        f"  First-pass rate (no coder retry): [bold]{_pct(m.first_pass_rate)}[/bold]"
         f"   ·   coder retries: [bold]{m.total_coder_retries}[/bold]\n"
     )
 
     output.console.print(
         f"  [bold]Trust per interruption[/bold]: {m.checkpoints_reached} checkpoint(s) "
         f"({m.checkpoints_answered} answered, {m.checkpoints_pending} pending) "
-        f"— {m.runs_per_checkpoint:.1f} runs per interruption\n"
+        f"— {'n/a' if m.runs_per_checkpoint is None else f'{m.runs_per_checkpoint:.1f}'} "
+        "runs per interruption\n"
     )
 
     if m.cost_measurable:
         output.console.print(
             f"  [bold]Spend[/bold]: ~${m.estimated_cost_usd:.2f} estimated at API list prices "
             f"(provider reported ${m.total_cost_usd:.2f}; {m.total_tokens_in:,} in / "
-            f"{m.total_tokens_out:,} out tokens, {round(m.cost_coverage * 100)}% of calls "
+            f"{m.total_tokens_out:,} out tokens, {_pct(m.cost_coverage)} of calls "
             "instrumented)\n"
         )
 

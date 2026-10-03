@@ -102,6 +102,27 @@ class RunPipelineTests(_ServiceCase):
         self.assertIs(self.events[-1].outcome, outcome)
         self.assertEqual(self._status(outcome.run_id), "waiting_human")
 
+    def test_each_node_is_announced_before_it_completes_with_its_cost(self) -> None:
+        # The CLI showed nothing for the 30-120 s an agent runs, then "(0.0s)".
+        from factory import runs
+
+        source = self._parked_at_gate1()
+        with db.get_db(self.db_path) as conn:
+            conn.execute("UPDATE agent_logs SET cost_usd = 0.16 WHERE run_id = ?", (source,))
+        runs.run_pipeline("make it fast", opencode_cwd=str(self.cwd), db_path=self.db_path,
+                          replay_run_id=source, on_event=self.events.append)
+
+        steps = [(type(e).__name__, e.node) for e in self.events
+                 if isinstance(e, (runs.NodeStarted, runs.NodeCompleted))]
+        self.assertEqual(steps, [
+            ("NodeStarted", "spec-agent"), ("NodeCompleted", "spec-agent"),
+            ("NodeStarted", "gate-1"), ("NodeCompleted", "gate-1"),
+        ])
+        done = {e.node: e for e in self.events if isinstance(e, runs.NodeCompleted)}
+        self.assertAlmostEqual(done["spec-agent"].cost_usd, 0.16)
+        self.assertIsNone(done["gate-1"].cost_usd, "a gate calls no model")
+        self.assertIsNone(done["gate-1"].duration_secs)
+
     def test_no_callback_is_silent_and_still_returns_the_outcome(self) -> None:
         from factory import runs
 
@@ -203,6 +224,58 @@ class RetryRunTests(_ServiceCase):
         self.assertEqual(self._status(rid), "waiting_human")
 
 
+class _InterruptedGraph:
+    """A graph whose coder materializes a failed attempt, then gets Ctrl-C."""
+
+    def __init__(self, repo: Path) -> None:
+        self.repo = repo
+
+    def stream(self, state, stream_mode):
+        (self.repo / "a.py").write_text("x = 1\n")  # the factory's own attempt
+        yield "updates", {"coder-agent": {"next_action": "retry", "attempt_written": ["a.py"]}}
+        (self.repo / "notes.txt").write_text("mine\n")  # the operator's, mid-run
+        raise KeyboardInterrupt
+
+
+class InterruptTests(unittest.TestCase):
+    """Ctrl-C is not an Exception: no node catches it, so the service must."""
+
+    def setUp(self) -> None:
+        from factory.workspace.projects import create_project
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        self.db_path = self.home / "factory.db"
+        db.init_db(self.db_path)
+        self.project = create_project(self.db_path, home=self.home, slug="shop")
+        self.repo = Path(self.project["repo_path"])
+
+    def test_an_interrupted_run_is_failed_cleaned_up_and_recorded(self) -> None:
+        import subprocess
+
+        from factory import runs
+
+        with patch("factory.runs.service.compile_pipeline",
+                   return_value=_InterruptedGraph(self.repo)), \
+                self.assertRaises(KeyboardInterrupt) as raised:
+            runs.run_pipeline("add a cart", opencode_cwd=str(self.repo), db_path=self.db_path,
+                              project_id=self.project["id"])
+        self.assertIsInstance(raised.exception, runs.RunInterrupted)
+        rid = raised.exception.run_id
+        with db.get_db(self.db_path) as conn:
+            run = db.get_run(conn, rid)
+            story = conn.execute("SELECT status FROM stories WHERE id = ?",
+                                 (run["story_id"],)).fetchone()
+        self.assertEqual((run["status"], run["error"]), ("failed", "interrupted by the operator"))
+        self.assertEqual(story["status"], "failed")
+        self.assertFalse((self.repo / "a.py").exists())  # the factory's attempt: discarded
+        self.assertTrue((self.repo / "notes.txt").exists())  # the operator's: never touched
+        log = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=self.repo,
+                             capture_output=True, text=True).stdout
+        self.assertIn(f"PIPELINE (run {rid})", log)
+
+
 class ServiceIsHeadlessTests(unittest.TestCase):
     """`runs` is shared by every interface, so it may not render anything itself."""
 
@@ -225,3 +298,29 @@ class ServiceIsHeadlessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NodeDetailTests(unittest.TestCase):
+    """The live "coder-agent running…" line says WHICH task and attempt."""
+
+    def _state(self, **extra) -> dict:
+        tasks = [{"id": "T-0001", "title": "Model", "purpose": "p"},
+                 {"id": "T-0002", "title": "Routes", "purpose": "p", "depends_on": ["T-0001"]}]
+        return {"spec": {"title": "t", "problem": "p", "why": "w",
+                         "acceptance_criteria": ["a"], "tasks": tasks}, **extra}
+
+    def test_coder_detail_names_task_and_attempt(self) -> None:
+        from factory.runs.service import node_detail
+
+        self.assertEqual(node_detail("coder-agent", self._state(task_index=1, attempt_number=2)),
+                         "task 2/2 T-0002 Routes (attempt 2)")
+        self.assertEqual(node_detail("coder-agent", self._state()),
+                         "task 1/2 T-0001 Model (attempt 1)")
+
+    def test_remediation_and_other_nodes(self) -> None:
+        from factory.runs.service import node_detail
+
+        self.assertEqual(node_detail("coder-agent", self._state(remediation=True)),
+                         "remediation pass")
+        self.assertEqual(node_detail("spec-agent", self._state()), "")
+        self.assertEqual(node_detail("coder-agent", {}), "")

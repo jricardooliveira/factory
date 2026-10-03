@@ -122,6 +122,17 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["opencode"].status, "fail")
         self.assertEqual(checks["model openai/gpt-6-astra"].status, "fail")
 
+    def test_the_claude_runner_needs_claude_not_opencode_and_probes_its_models(self) -> None:
+        with patch.dict(os.environ, {"FACTORY_RUNNER": "claude"}):
+            with patch("factory.preflight.doctor.run_agent", side_effect=_ok) as probe:
+                report = doctor.run_doctor(which=_which({"claude", "go", "node", "tsc"}))
+        self.assertTrue(report.passed)
+        checks = _by_name(report)
+        self.assertEqual(checks["claude"].status, "ok")
+        self.assertNotIn("opencode", checks)
+        probed = {call.kwargs["model"] for call in probe.call_args_list}
+        self.assertEqual(probed, set(mt.config().claude_tiers.values()))
+
     def test_missing_toolchains_warn_but_do_not_fail(self) -> None:
         # A missing go/node/tsc only matters for projects in that stack, so it is
         # reported, not fatal.
@@ -201,6 +212,44 @@ class DoctorWorkspaceTests(unittest.TestCase):
         self.assertIn("old-checkout", check.detail)
         self.assertIn("ln -sfn", check.detail)
         self.assertTrue(report.passed, "one stale product must not block the others")
+
+    def test_python_product_without_a_venv_warns_with_the_fix(self) -> None:
+        # Its tests would run with the FACTORY's interpreter, which lacks the
+        # product's dependencies: a failure for the wrong reason.
+        create_project(db_path(), slug="shop", stack="fastapi")
+        report = self._run()
+        check = _by_name(report)["project shop python"]
+        self.assertEqual(check.status, "warn")
+        self.assertFalse(check.blocking)
+        self.assertIn("factory's interpreter", check.detail)
+        # No manifest yet: nothing to install, so no command that cannot work.
+        self.assertNotIn("requirements.txt", check.detail)
+        self.assertIn("create .venv once a story adds a dependency manifest", check.detail)
+        self.assertTrue(report.passed)
+
+    def test_venv_advice_follows_the_manifest(self) -> None:
+        project = create_project(db_path(), slug="shop", stack="fastapi")
+        repo = Path(project["repo_path"])
+        (repo / "pyproject.toml").write_text("[project]\nname = 'shop'\n")
+        detail = _by_name(self._run())["project shop python"].detail
+        self.assertIn("uv venv && uv pip install -e .", detail)
+        (repo / "requirements.txt").write_text("fastapi\n")
+        detail = _by_name(self._run())["project shop python"].detail
+        self.assertIn("uv venv && uv pip install -r requirements.txt", detail)
+
+    def test_python_product_with_a_venv_has_no_warning(self) -> None:
+        project = create_project(db_path(), slug="shop", stack="fastapi")
+        (Path(project["repo_path"]) / ".venv" / "bin").mkdir(parents=True)
+        (Path(project["repo_path"]) / ".venv" / "bin" / "python").write_text("")
+        self.assertNotIn("project shop python", _by_name(self._run()))
+
+    def test_python_detected_from_requirements_txt(self) -> None:
+        project = create_project(db_path(), slug="shop", stack="fastapi")
+        repo = Path(project["repo_path"])
+        (repo / "project-spec.json").write_text('{"language": "Go"}')
+        self.assertNotIn("project shop python", _by_name(self._run()))
+        (repo / "requirements.txt").write_text("fastapi\n")
+        self.assertEqual(_by_name(self._run())["project shop python"].status, "warn")
 
     def test_missing_project_repo_warns(self) -> None:
         project = create_project(db_path(), slug="shop", stack="fastapi")

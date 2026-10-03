@@ -14,11 +14,12 @@ import re
 from pathlib import Path
 
 _IGNORE_DIRS = {
-    ".git", "__pycache__", ".venv", "venv", ".opencode", ".pytest_cache",
+    ".git", "__pycache__", ".venv", "venv", ".opencode", ".claude", ".pytest_cache",
     "node_modules", ".sandbox", ".mypy_cache", ".ruff_cache", "dist", "build",
-    ".egg-info", "vendor",
+    ".egg-info", "vendor", "htmlcov",
 }
-_CODE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go"}
+# Templates are listed by path only: a view the coder must edit is part of the codebase.
+_CODE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".html", ".j2", ".jinja"}
 _MAX_METHODS = 10
 
 
@@ -102,7 +103,7 @@ def _go_interfaces(text: str) -> list[str]:
     return out
 
 
-def _iter_code_files(root: Path):
+def iter_code_files(root: Path):
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix not in _CODE_SUFFIXES:
             continue
@@ -114,7 +115,7 @@ def _iter_code_files(root: Path):
 
 def build_repo_inventory(root: Path, *, max_files: int = 60, max_chars: int = 6000) -> str:
     """A compact interface map of the repo, or "" if there is no code yet."""
-    files = list(_iter_code_files(root))
+    files = list(iter_code_files(root))
     if not files:
         return ""
 

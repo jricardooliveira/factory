@@ -35,6 +35,7 @@ EVIDENCE_PATHS: tuple[str, ...] = (
     "docs/releases/",
     "PROJECT_RULES.md",
     "project-spec.json",
+    ".claude/skills/",
 )
 
 

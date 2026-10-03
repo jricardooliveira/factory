@@ -139,5 +139,20 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(boss[0].detail, "gate-1-spec passed")
         self.assertIn("T-1 to be implemented first", boss[1].detail)
 
+    def test_multiline_gate_reason_and_error_keep_one_line_on_the_timeline(self) -> None:
+        # gate-build puts the compiler output under its verdict line; one event, one line.
+        why = "[T-1] py_compile:fail\npy_compile: SyntaxError: invalid syntax"
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "US-0001", "S", "req")
+            rid = db.start_run(conn, "US-0001")
+            db.log_gate(conn, rid, "gate-build", False, why)
+            db.finish_run(conn, rid, "failed", error="gate-build failed: " + why)
+
+        events = run_timeline(self.db_path, rid)
+        self.assertTrue(all("\n" not in e.detail for e in events), events)
+        self.assertEqual(next(e for e in events if e.label == "gate-build").detail,
+                         "[T-1] py_compile:fail")
+
+
 if __name__ == "__main__":
     unittest.main()

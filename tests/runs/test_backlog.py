@@ -21,6 +21,7 @@ from factory.evidence.brief import BRIEF_RELPATH
 from factory.runs import RunError
 from factory.state import db
 from factory.state.backlog import list_backlog
+from factory.workspace.git import git_commit_all, git_head
 from factory.workspace.projects import create_project
 
 
@@ -32,6 +33,18 @@ def _proposal(*titles: str, ok: bool = True) -> AgentResult:
         duration_secs=0.1,
         returncode=0 if ok else 1,
     )
+
+
+class BacklogAgentDefinitionTests(unittest.TestCase):
+    def test_it_states_the_size_a_story_must_fit(self) -> None:
+        # Live (habits story 2): a backlog story needed 9 tasks, then 17 files. The limits
+        # were discovered at gate-1 / gate-2, after the spec and the design were paid for.
+        from factory.agent_config.location import agents_dir
+        from factory.domain.gates import MAX_MODULES_PER_STORY, MAX_TASKS_PER_STORY
+
+        text = (agents_dir() / "backlog-agent.md").read_text(encoding="utf-8")
+        self.assertIn(f"at most {MAX_TASKS_PER_STORY} tasks", text)
+        self.assertIn(f"at most {MAX_MODULES_PER_STORY} files", text)
 
 
 class BacklogServiceTests(unittest.TestCase):
@@ -151,6 +164,93 @@ class BacklogServiceTests(unittest.TestCase):
         self.assertEqual([(r["title"], r["status"]) for r in self._rows()],
                          [("a", "started"), ("c", "approved")])
         self.assertEqual(runs.next_story("shop", db_path=self.db_path)["title"], "c")
+
+    def _started_run(self, status: str) -> tuple[dict, int]:
+        self._agent(_proposal("a", "b"))
+        self._propose(True)
+        row = runs.next_story("shop", db_path=self.db_path)
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "STORY-001", "a", "Build a.")
+            rid = db.start_run(conn, "STORY-001")
+            db.finish_run(conn, rid, status)
+        runs.mark_started(row["id"], story_id="STORY-001", run_id=rid, db_path=self.db_path)
+        return row, rid
+
+    def _assert_dismiss_returns_the_story(self, status: str) -> None:
+        row, rid = self._started_run(status)
+        self.assertEqual(runs.next_story("shop", db_path=self.db_path)["title"], "b")
+        self.assertTrue(runs.dismiss_run(rid, db_path=self.db_path))  # said so to the operator
+        again = runs.next_story("shop", db_path=self.db_path)
+        self.assertEqual((again["id"], again["run_id"], again["story_id"]),
+                         (row["id"], None, None))
+        self.assertIn("1. **a** — approved", (self.repo / BACKLOG_RELPATH).read_text())
+
+    def test_dismissing_a_failed_run_returns_its_story_to_the_backlog(self) -> None:
+        """A run that failed at gate-build has no checkpoint to retry from; without
+        this its story stayed 'started' and `factory next` skipped it forever."""
+        self._assert_dismiss_returns_the_story("failed")
+
+    def test_dismissing_a_blocked_run_returns_its_story_to_the_backlog(self) -> None:
+        self._assert_dismiss_returns_the_story("blocked")
+
+    def test_dismissing_a_completed_run_keeps_its_story_done(self) -> None:
+        _row, rid = self._started_run("completed")
+        self.assertFalse(runs.dismiss_run(rid, db_path=self.db_path))
+        self.assertEqual(runs.next_story("shop", db_path=self.db_path)["title"], "b")
+
+    def _run_next(self, on_event=None):
+        row = runs.next_story("shop", db_path=self.db_path)
+        with patch("factory.pipeline.agent_calls.run_agent", side_effect=RuntimeError("no")):
+            outcome = runs.run_backlog_story("shop", row, row["request"], db_path=self.db_path,
+                                             on_event=on_event)
+        with db.get_db(self.db_path) as conn:
+            return row, outcome, db.get_run(conn, outcome.run_id)
+
+    def test_a_backlog_story_is_marked_started_as_soon_as_its_run_exists(self) -> None:
+        """Marked only after the run returned, an interrupted story was offered again."""
+        self._agent(_proposal("a", "b"))
+        self._propose(True)
+        seen: list = []
+
+        def on_event(event):
+            if isinstance(event, runs.RunStarted):
+                seen.append(runs.next_story("shop", db_path=self.db_path)["title"])
+            if isinstance(event, runs.NodeStarted):
+                raise KeyboardInterrupt  # the operator's Ctrl-C, mid-run
+
+        with self.assertRaises(KeyboardInterrupt):
+            self._run_next(on_event)
+        self.assertEqual(seen, ["b"])  # already started when the caller heard of the run
+        first = self._rows()[0]
+        self.assertEqual((first["title"], first["status"]), ("a", "started"))
+        self.assertIsNotNone(first["run_id"])
+
+    def test_a_dismissed_failed_story_reruns_from_its_first_base_commit(self) -> None:
+        """Its passed task is committed but was never reviewed: the re-run's review
+        diff and change set must still contain it."""
+        self._agent(_proposal("a"))
+        self._propose(True)
+        _row, first, first_run = self._run_next()
+        (self.repo / "model.py").write_text("class Habit: ...\n")
+        git_commit_all(self.repo, "factory: T-1 model")  # the failed run's passed task
+        with db.get_db(self.db_path) as conn:
+            db.finish_run(conn, first.run_id, "failed")
+        runs.dismiss_run(first.run_id, db_path=self.db_path)
+        self.assertEqual(runs.next_story("shop", db_path=self.db_path)["base_commit"],
+                         first_run["base_commit"])
+
+        _row, again, again_run = self._run_next()
+        self.assertNotEqual(again.run_id, first.run_id)
+        self.assertEqual(again_run["base_commit"], first_run["base_commit"])
+        self.assertNotEqual(again_run["base_commit"], git_head(self.repo))
+
+    def test_a_base_commit_not_in_the_repo_falls_back_to_head(self) -> None:
+        head = git_head(self.repo)  # the run's PIPELINE.md commit moves HEAD on
+        with patch("factory.pipeline.agent_calls.run_agent", side_effect=RuntimeError("no")):
+            outcome = runs.run_project_pipeline("shop", "Build a.", db_path=self.db_path,
+                                                base_commit="0" * 40)
+        with db.get_db(self.db_path) as conn:
+            self.assertEqual(db.get_run(conn, outcome.run_id)["base_commit"], head)
 
     def test_next_story_is_none_on_an_empty_backlog(self) -> None:
         self.assertIsNone(runs.next_story("shop", db_path=self.db_path))

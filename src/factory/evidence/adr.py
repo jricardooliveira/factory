@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from factory.domain.contracts import ArchitectOutput
+from factory.evidence.artifacts import stamp_status
 
 # How many prior ADRs to feed back into a prompt (cost control).
 _MAX_PRIOR_ADRS = 5
@@ -75,6 +76,12 @@ def write_adr(project_dir: Path, story_id: str, title: str, arch: ArchitectOutpu
     path = target_dir / f"ADR-{story_id}-{_slug(title)}.md"
     path.write_text(render_adr(story_id, title, arch), encoding="utf-8")
     return path
+
+
+def stamp_adr(project_dir: Path, story_id: str, status: str) -> list[Path]:
+    """Rewrite the Status of this story's ADR(s); returns the files stamped."""
+    return [p for p in sorted(adr_dir_for(project_dir).glob(f"ADR-{story_id}-*.md"))
+            if stamp_status(p, status)]
 
 
 def load_project_memory(project_dir: Path, *, exclude_story: str | None = None) -> str:

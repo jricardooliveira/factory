@@ -3,8 +3,9 @@
 - `declared_scope_mismatch` / `scope_note`: what the coder DECLARED in
   code_blocks vs what actually changed. An undeclared change is an out-of-band
   write and BLOCKS gate-build (the coder node supplies the measured change set).
-- `paths_outside_scope`: what changed vs the task's declared ``scope``. Reported
-  as evidence in the trust package; it does not block.
+- `paths_outside_scope`: paths vs the task's declared ``scope``. The coder node
+  REFUSES out-of-scope code_blocks before writing them (`nodes/coder._outside_scope`);
+  the trust package also reports `scope_violations` as evidence.
 
 The measuring (git) lives in `factory.workspace.git`; this module only judges.
 """
@@ -39,7 +40,7 @@ def is_test_path(path: str) -> bool:
     return bool(_TEST_PATH_RE.search(path))
 
 
-def _strip_repo_prefix(path: str) -> str:
+def strip_repo_prefix(path: str) -> str:
     """Drop a leading ``repo/`` (or ``./repo/``), mirroring normalize_block_path.
 
     A factory-wide convention: agents write repo-rooted paths, and the repo root
@@ -73,13 +74,13 @@ def paths_outside_scope(changed: list[str], allowed_scope: list[str]) -> list[st
     # (the working directory IS the repo). Comparing the two spaces directly made
     # every file on every real project run a violation.
     prefixes = [
-        _strip_repo_prefix(s).rstrip("/") for s in allowed_scope if s
+        strip_repo_prefix(s).rstrip("/") for s in allowed_scope if s
     ]
     violations: list[str] = []
     for raw in changed:
         # Both sides in the same space: a path an agent wrote as `repo/cli.py` in a
         # working directory not named `repo` keeps its prefix (found on a REAL run).
-        path = _strip_repo_prefix(raw)
+        path = strip_repo_prefix(raw)
         if _TEST_PATH_RE.search(path):
             continue
         if path.rsplit("/", 1)[-1] in _MANIFEST_NAMES:

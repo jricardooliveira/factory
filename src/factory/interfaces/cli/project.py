@@ -7,7 +7,7 @@ from pathlib import Path
 from factory.interfaces import render
 from factory.interfaces.cli.common import db_path, fail
 from factory.workspace import home
-from factory.workspace.projects import create_project, get_project
+from factory.workspace.projects import create_project, get_project, refresh_project
 from factory.workspace.projects import list_projects as fetch_projects
 from factory.workspace.templates import create_project_spec, write_project_spec
 
@@ -15,19 +15,44 @@ from factory.workspace.templates import create_project_spec, write_project_spec
 def project_command(args: list[str]) -> None:
     """Dispatch project subcommands."""
     if not args:
-        fail("Usage: factory project <create|list|show> ...")
+        fail("Usage: factory project <create|list|show|refresh> ...")
 
     subcommand = args[0]
     if subcommand == "create":
         create_project_command(args[1:])
     elif subcommand == "list":
         render.print_projects(fetch_projects(db_path()))
+    elif subcommand == "refresh":
+        if len(args) != 2:
+            fail("Usage: factory project refresh <project-id-or-slug>")
+        try:
+            changed = refresh_project(db_path(), args[1])
+        except ValueError as exc:
+            fail(str(exc))
+        render.console.print(
+            f"{args[1]}: skills and code-discipline rules "
+            + ("installed and committed." if changed else "already up to date."))
     elif subcommand == "show":
         if len(args) < 2:
             fail("Usage: factory project show <project-id-or-slug>")
         show_project_command(args[1])
     else:
         fail(f"Unknown project command: {subcommand}")
+
+
+def status_command(args: list[str]) -> None:
+    """Where each project (or the one named) stands, and the next command to type."""
+    from factory import runs
+    from factory.interfaces.render.status import print_status
+
+    if len(args) > 1:
+        fail("Usage: factory status [project-id-or-slug]")
+    try:
+        statuses = ([runs.project_status(args[0], db_path=db_path())] if args
+                    else runs.all_project_status(db_path=db_path()))
+    except ValueError as exc:
+        fail(str(exc))
+    print_status(statuses)
 
 
 def create_project_command(args: list[str]) -> None:

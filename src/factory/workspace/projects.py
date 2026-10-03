@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from factory.agent_config.location import checkout_root
+from factory.agent_config.location import checkout_root, product_skills_dir
 from factory.state import projects as project_rows
 from factory.state.db import get_db, init_db
 from factory.workspace import layout
@@ -23,6 +23,34 @@ from factory.workspace.layout import normalize_slug
 from factory.workspace.templates import create_project_spec, write_project_spec
 
 RULES_FILENAME = "PROJECT_RULES.md"
+SKILLS_RELDIR = ".claude/skills"
+# Operator decision (2026-10-03): every product gets these, against AI slop and
+# code nobody asked for. Copies of the MIT-licensed originals live in skills/.
+PRODUCT_SKILLS = (
+    "ponytail", "ponytail-review", "karpathy-guidelines",
+    "test-driven-development", "systematic-debugging", "verification-before-completion",
+)
+CODE_DISCIPLINE_HEADING = "## Code discipline"
+# Prompt text: PROJECT_RULES.md heads every agent's project memory. Short on purpose.
+CODE_DISCIPLINE = f"""{CODE_DISCIPLINE_HEADING}
+
+- Build only what the story's acceptance criteria require: no speculative features,
+  options, or scaffolding "for later".
+- Reuse before writing: this repo's code, then the standard library, then an installed
+  dependency; add a dependency only when a few lines cannot do it.
+- No abstraction with one implementation, no config for a value that never changes.
+- Surgical changes: touch only what the task needs, match the surrounding style, never
+  refactor or reformat unrelated code.
+- Fix a bug at its root, where every caller benefits, and start with a test that
+  reproduces it. Every behaviour change ships with the smallest test that fails if it
+  breaks.
+- Never trade away input validation at trust boundaries, error handling that prevents
+  data loss, or security measures for brevity.
+- Claim only what was verified.
+
+(The full practice: `.claude/skills/` — ponytail, karpathy-guidelines, superpowers TDD,
+systematic debugging, verification before completion.)
+"""
 SPEC_FILENAME = "project-spec.json"
 
 
@@ -111,6 +139,7 @@ def render_project_rules(project_id: str, slug: str, name: str) -> str:
             "- Source root: the repository root (write repo-relative paths, e.g. `app/main.py`)",
             f"- Factory-owned evidence (never write these): {owned}",
             "",
+            CODE_DISCIPLINE,
         ]
     )
 
@@ -120,6 +149,43 @@ def _write_project_rules(project_dir: Path, project_id: str, slug: str, name: st
     if rules_path.exists():
         return
     rules_path.write_text(render_project_rules(project_id, slug, name), encoding="utf-8")
+
+
+def install_product_skills(project_dir: Path) -> list[str]:
+    """Copy PRODUCT_SKILLS (+ their licenses) into <repo>/.claude/skills; the paths written."""
+    source, target = product_skills_dir(), project_dir / SKILLS_RELDIR
+    written: list[str] = []
+    for name in (*PRODUCT_SKILLS, "licenses", "LICENSES.md"):
+        src, dst = source / name, target / name
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        elif src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+        else:
+            continue
+        written.append(f"{SKILLS_RELDIR}/{name}")
+    return written
+
+
+def refresh_project(db_path: Path, project_ref: str) -> bool:
+    """Bring a product's factory-owned scaffold up to date: the skills, the code
+    discipline in its rules, the .opencode link. True if a commit was made."""
+    project = get_project(db_path, project_ref)
+    repo = Path(project["repo_path"])
+    link_opencode_agents(repo)
+    paths = install_product_skills(repo)
+    rules = repo / RULES_FILENAME
+    text = rules.read_text(encoding="utf-8") if rules.is_file() else ""
+    if CODE_DISCIPLINE_HEADING not in text:
+        if not text:
+            text = render_project_rules(project["id"], project["slug"],
+                                        project.get("name") or project["slug"])
+        else:
+            text = text.rstrip("\n") + "\n\n" + CODE_DISCIPLINE
+        rules.write_text(text, encoding="utf-8")
+    return git_commit_paths(repo, [RULES_FILENAME, *paths],
+                            f"factory: refresh scaffold {project['id']}")
 
 
 def create_project(
@@ -160,6 +226,7 @@ def create_project(
         git_init(project_dir)
         _write_project_rules(project_dir, project_id, normalized_slug, project_name)
         link_opencode_agents(project_dir)
+        skills = install_product_skills(project_dir)
 
         resolved_spec_path: Path | None = None
         if spec_path is not None:
@@ -175,7 +242,7 @@ def create_project(
         # later measurement of the factory's CODE change is taken from.
         git_commit_paths(
             project_dir,
-            [RULES_FILENAME, SPEC_FILENAME],
+            [RULES_FILENAME, SPEC_FILENAME, *skills],
             f"factory: scaffold {project_id} {normalized_slug}",
         )
 

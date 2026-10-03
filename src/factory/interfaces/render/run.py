@@ -6,6 +6,7 @@ from typing import Any
 import re
 
 from pydantic import ValidationError
+from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
@@ -23,14 +24,23 @@ def print_header(request: str) -> None:
     output.console.print()
 
 
-def print_agent_start(agent: str) -> None:
-    output.console.print(f"  🤖 [bold cyan]{agent}[/bold cyan] running...", end="")
+def print_agent_start(agent: str, detail: str = "") -> None:
+    # Its own line, not a "\r" overwrite: a piped or logged run keeps both lines.
+    suffix = f" {escape(detail)}" if detail else ""
+    output.console.print(f"  🤖 [bold cyan]{agent}[/bold cyan] running…{suffix}")
 
 
-def print_agent_done(agent: str, verdict: str, duration: float) -> None:
+def print_agent_done(
+    agent: str, verdict: str, duration: float | None = None, cost: float | None = None
+) -> None:
     style = output.verdict_style(verdict)
+    # An unknown figure is left out, never shown as a made-up 0.0s / $0.00.
+    figures = ([f"{duration:.1f}s"] if duration else []) + (
+        [f"${cost:.2f}"] if cost is not None else []
+    )
+    suffix = f" ({' · '.join(figures)})" if figures else ""
     output.console.print(
-        f"\r  🤖 [bold cyan]{agent}[/bold cyan] → [{style}]{verdict.upper()}[/{style}] ({duration:.1f}s)"
+        f"  🤖 [bold cyan]{agent}[/bold cyan] → [{style}]{verdict.upper()}[/{style}]{suffix}"
     )
 
 
@@ -110,18 +120,23 @@ def print_run_started(event: RunStarted) -> None:
     if event.project_spec_text:
         output.console.print(Panel(event.project_spec_text, title="📐 Project Spec", border_style="magenta"))
         output.console.print()
+    if not event.tests_run:
+        output.console.print("  [yellow]⚠ tests will not execute (set FACTORY_RUN_TESTS=1 to run them)[/yellow]")
     output.console.print(f"  📦 Run [bold]#{event.run_id}[/bold] | Story [bold]{event.story_id}[/bold]\n")
 
 
-def print_run_node(node_name: str, node_output: dict[str, Any]) -> None:
+def print_run_node(
+    node_name: str, node_output: dict[str, Any],
+    duration: float | None = None, cost: float | None = None,
+) -> None:
     """One node of a fresh or replayed run, as it completes."""
     if node_name == "spec-agent":
         if node_output.get("status") in ("failed", "blocked"):
-            print_agent_done("spec-agent", node_output.get("status", "error"), 0)
+            print_agent_done("spec-agent", node_output.get("status", "error"), duration, cost)
         else:
             spec = node_output.get("spec", {})
             v = spec.get("verdict", "unknown")
-            print_agent_done("spec-agent", v, 0)
+            print_agent_done("spec-agent", v, duration, cost)
             print_spec_summary(spec)
             for label, key in (("INTENT", "intent_path"), ("SPEC", "spec_path")):
                 if node_output.get(key):
@@ -133,11 +148,11 @@ def print_run_node(node_name: str, node_output: dict[str, Any]) -> None:
 
     elif node_name == "architect-agent":
         if node_output.get("status") == "failed":
-            print_agent_done("architect-agent", "error", 0)
+            print_agent_done("architect-agent", "error", duration, cost)
         else:
             arch = node_output.get("architect", {})
             v = arch.get("verdict", "unknown")
-            print_agent_done("architect-agent", v, 0)
+            print_agent_done("architect-agent", v, duration, cost)
             print_architect_summary(arch)
             if node_output.get("adr_path"):
                 output.console.print(f"    [dim]📝 ADR: {node_output['adr_path']}[/dim]")
@@ -152,16 +167,19 @@ def print_run_node(node_name: str, node_output: dict[str, Any]) -> None:
         coder = node_output.get("coder", {})
         if coder:
             v = coder.get("verdict", "unknown")
-            print_agent_done("coder-agent", v, 0)
+            print_agent_done("coder-agent", v, duration, cost)
             print_coder_summary(coder)
         elif node_output.get("status") == "failed":
-            print_agent_done("coder-agent", "error", 0)
+            print_agent_done("coder-agent", "error", duration, cost)
         gb = node_output.get("gate_build")
         if gb:
             print_gate("Gate Build (Verify)", gb.get("passed", False), gb.get("reason", ""))
 
 
-def print_resume_node(node_name: str, node_output: dict[str, Any]) -> None:
+def print_resume_node(
+    node_name: str, node_output: dict[str, Any],
+    duration: float | None = None, cost: float | None = None,
+) -> None:
     """One node of a resumed run.
 
     Deliberately terser than `print_run_node` (no architect summary, no line for a
@@ -169,7 +187,7 @@ def print_resume_node(node_name: str, node_output: dict[str, Any]) -> None:
     """
     if node_name == "architect-agent":
         arch = node_output.get("architect", {})
-        print_agent_done("architect-agent", arch.get("verdict", "unknown"), 0)
+        print_agent_done("architect-agent", arch.get("verdict", "unknown"), duration, cost)
         if node_output.get("adr_path"):
             output.console.print(f"    [dim]📝 ADR: {node_output['adr_path']}[/dim]")
     elif node_name == "gate-2":
@@ -178,7 +196,7 @@ def print_resume_node(node_name: str, node_output: dict[str, Any]) -> None:
     elif node_name == "coder-agent":
         coder = node_output.get("coder", {})
         if coder:
-            print_agent_done("coder-agent", coder.get("verdict", "unknown"), 0)
+            print_agent_done("coder-agent", coder.get("verdict", "unknown"), duration, cost)
             print_coder_summary(coder)
         gb = node_output.get("gate_build")
         if gb:
@@ -210,14 +228,28 @@ def print_resume_entered(event: ResumeEntered) -> None:
             f"...\n\n{decision}",
             border_style=colour,
         ))
+    elif event.entry == "release":
+        output.console.print(Panel(
+            f"Run #{run_id} [bold green]RELEASED[/bold green] at Checkpoint 3 — "
+            f"recording the release...\n\n{decision}",
+            border_style="green",
+        ))
+    elif event.entry == "remediation":
+        output.console.print(Panel(
+            f"Run #{run_id} [bold yellow]REJECTED at Checkpoint 3[/bold yellow] — "
+            f"the coder fixes what you named, then the tester re-reviews...\n\n{decision}",
+            border_style="yellow",
+        ))
     else:
         output.console.print(Panel(
-            f"Run #{run_id} [bold green]APPROVED[/bold green] — continuing to coder-agent...",
+            f"Run #{run_id} [bold green]APPROVED[/bold green] — building the approved "
+            f"design (coder-agent)...",
             border_style="green",
         ))
 
 
-def print_final_status(status: str, error: str | None = None, human_questions: list[str] | None = None) -> None:
+def print_final_status(status: str, error: str | None = None, human_questions: list[str] | None = None,
+                       run_id: int | None = None) -> None:
     output.console.print()
     if status == "completed":
         output.console.print(Rule("[bold green]✅ Pipeline Completed[/bold green]", style="green"))
@@ -225,10 +257,12 @@ def print_final_status(status: str, error: str | None = None, human_questions: l
         output.console.print(Rule("[bold yellow]⏸️  Pipeline Paused — Human Approval Required[/bold yellow]", style="yellow"))
         if human_questions:
             for q in human_questions:
-                output.console.print(Panel(q, border_style="yellow"))
+                # Text, not markup: gate questions carry tags like "[security]".
+                output.console.print(Panel(Text(q), border_style="yellow"))
+        rid = run_id if run_id is not None else "<run_id>"
         output.console.print("\n  [dim]To continue:[/dim]")
-        output.console.print("    factory [bold cyan]approve <run_id>[/bold cyan]    Accept and continue to coder")
-        output.console.print("    factory [bold cyan]reject <run_id>[/bold cyan]     Reject and stop the pipeline")
+        output.console.print(f"    factory [bold cyan]approve {rid}[/bold cyan]    Accept and continue")
+        output.console.print(f"    factory [bold cyan]reject {rid}[/bold cyan]     Reject and stop the pipeline")
     elif status == "blocked":
         output.console.print(Rule("[bold yellow]⏸️  Pipeline Blocked[/bold yellow]", style="yellow"))
         if error:
@@ -279,5 +313,6 @@ def gate_result_label(gate: dict) -> tuple[str, str]:
 
 
 def print_run_finished(outcome: RunOutcome, logs: list[dict], gates: list[dict]) -> None:
-    print_final_status(outcome.status, outcome.error, human_questions=outcome.human_questions)
+    print_final_status(outcome.status, outcome.error, human_questions=outcome.human_questions,
+                       run_id=outcome.run_id)
     print_review_table(logs, gates)

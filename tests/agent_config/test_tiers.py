@@ -257,3 +257,24 @@ class TiersTomlTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaudeRunnerTests(unittest.TestCase):
+    """`[runner] agents = "claude"`: every tier runs on the local `claude` CLI."""
+
+    def test_every_tier_has_a_claude_model_with_a_price(self) -> None:
+        cfg = mt.config()
+        self.assertEqual(set(cfg.claude_tiers), set(cfg.tier_models))
+        for tier, model in cfg.claude_tiers.items():
+            with self.subTest(tier=tier):
+                self.assertTrue(model.startswith("claude/claude-"), model)
+                self.assertIn(model, cfg.prices)
+
+    def test_the_claude_runner_resolves_the_claude_table(self) -> None:
+        from unittest.mock import patch
+        with patch.dict("os.environ", {"FACTORY_RUNNER": "claude"}):
+            self.assertEqual(mt.model_for_tier("build"), mt.config().claude_tiers["build"])
+            # An explicit per-tier override still wins over the runner's table.
+            with patch.dict("os.environ", {"FACTORY_TIER_BUILD": "claude/claude-x"}):
+                self.assertEqual(mt.model_for_tier("build"), "claude/claude-x")
+        self.assertEqual(mt.model_for_tier("build"), mt.TIER_DEFAULTS["build"])

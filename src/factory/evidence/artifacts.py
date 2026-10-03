@@ -67,6 +67,27 @@ def _git_author() -> str:
     return proc.stdout.strip() or _UNKNOWN_AUTHOR
 
 
+def approval_status(checkpoint: int, run_id: int) -> str:
+    """The Status an artifact carries once the operator approved it. Its wording is
+    load-bearing: `settled_threshold_terms` trusts an ADR whose Status says
+    "approved" and not "pending"."""
+    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return f"approved by the operator at Checkpoint {checkpoint} (run #{run_id}, {when})"
+
+
+def stamp_status(path: Path, status: str) -> bool:
+    """Rewrite an artifact's `- Status:` line in place; False when it has none."""
+    if not path.is_file():
+        return False
+    lines = path.read_text(encoding="utf-8").split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("- Status:"):
+            lines[i] = f"- Status: {status}"
+            path.write_text("\n".join(lines), encoding="utf-8")
+            return True
+    return False
+
+
 def work_dir_for(project_dir: Path, story_id: str) -> Path:
     """Where a story's chain lives. One directory per story keeps the chain legible."""
     return Path(project_dir) / "docs" / "work" / story_id
@@ -352,6 +373,9 @@ def render_release_notes(story_id: str, title: str, notes: ReleaseOutput) -> str
         "> Written by the release-agent from the story, the design, the real diff and the "
         "review. It does not decide readiness: the release gate does, and only the operator "
         "releases (Checkpoint 3).",
+        "",
+        f"- Story: {story_id}",
+        "- Status: proposed (pending Checkpoint 3 sign-off)",
         "",
     ]
     if concern:

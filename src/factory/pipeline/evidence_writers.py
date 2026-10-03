@@ -35,7 +35,9 @@ def commit_evidence(state: PipelineState, path: Path | str | None, what: str) ->
         pass  # evidence is best-effort; a failed commit must not fail the run
 
 
-def write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | None:
+def write_chain_artifact(
+    state: PipelineState, kind: str, *args: Any, **kwargs: Any
+) -> str | None:
     """Write one link of the committed artifact chain (best-effort).
 
     Evidence must never be able to fail a run — but a silent `except: pass` is how
@@ -52,7 +54,7 @@ def write_chain_artifact(state: PipelineState, kind: str, *args: Any) -> str | N
             "plan": artifacts.write_plan,
             "release": artifacts.write_release_notes,
         }[kind]
-        path = writer(Path(project_dir), state["story_id"], *args)
+        path = writer(Path(project_dir), state["story_id"], *args, **kwargs)
     except (OSError, KeyError, ValueError):
         return None
     if not path:

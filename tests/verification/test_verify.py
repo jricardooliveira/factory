@@ -150,6 +150,86 @@ class RunTestsTests(unittest.TestCase):
         self.assertFalse(result.passed)  # gate-build blocks on failing tests
 
 
+class ProductInterpreterTests(unittest.TestCase):
+    """Tests run with the PRODUCT's interpreter (its .venv), not the factory's —
+    the factory's venv lacks the product's dependencies — and the evidence names it."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.log = self.root / "argv.log"
+        self._env = {k: os.environ.get(k) for k in ("FACTORY_RUN_TESTS", "FACTORY_PRODUCT_PYTHON")}
+        os.environ["FACTORY_RUN_TESTS"] = "1"
+        os.environ.pop("FACTORY_PRODUCT_PYTHON", None)
+        (self.root / "test_x.py").write_text("def test_ok():\n    assert True\n")
+
+    def tearDown(self) -> None:
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self._tmp.cleanup()
+
+    def _shim(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'#!/bin/sh\necho "$@" > "{self.log}"\nexit 0\n')
+        path.chmod(0o755)
+        return path
+
+    def test_product_venv_interpreter_runs_the_tests(self) -> None:
+        shim = self._shim(self.root / ".venv" / "bin" / "python")
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "pass")
+        self.assertIn("-m pytest", self.log.read_text())
+        self.assertIn(str(shim), check.detail)
+
+    def test_env_override_when_no_venv(self) -> None:
+        shim = self._shim(self.root / "elsewhere" / "python")
+        os.environ["FACTORY_PRODUCT_PYTHON"] = str(shim)
+        check = run_tests(self.root)
+        self.assertTrue(self.log.is_file())
+        self.assertIn(str(shim), check.detail)
+
+    def _failing_shim(self, output: str) -> Path:
+        shim = self.root / ".venv" / "bin" / "python"
+        shim.parent.mkdir(parents=True)
+        shim.write_text(f"#!/bin/sh\ncat <<'EOF'\n{output}\nEOF\nexit 1\n")
+        shim.chmod(0o755)
+        return shim
+
+    def test_missing_third_party_module_is_an_environment_warn(self) -> None:
+        shim = self._failing_shim(
+            "ImportError while importing test module 'test_x.py'.\n"
+            "E   ModuleNotFoundError: No module named 'flask'")
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "warn")
+        self.assertIn("flask", check.detail)
+        self.assertIn(str(shim), check.detail)
+
+    def test_pytest_missing_from_the_product_interpreter_is_a_warn(self) -> None:
+        self._failing_shim("/x/.venv/bin/python: No module named pytest")
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "warn")
+        self.assertIn("pytest", check.detail)
+
+    def test_assertion_failure_still_fails(self) -> None:
+        self._failing_shim("E   assert 1 == 2\n1 failed in 0.01s")
+        self.assertEqual(run_tests(self.root).status, "fail")
+
+    def test_missing_local_module_still_fails(self) -> None:
+        (self.root / "app").mkdir()
+        self._failing_shim("E   ModuleNotFoundError: No module named 'app.routes'")
+        self.assertEqual(run_tests(self.root).status, "fail")
+
+    def test_falls_back_to_the_factory_interpreter(self) -> None:
+        import sys
+
+        check = run_tests(self.root)
+        self.assertEqual(check.status, "pass")
+        self.assertIn(sys.executable, check.detail)
+
+
 class VerifyChangesTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -172,6 +252,28 @@ class VerifyChangesTests(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertEqual(result.verdict, "fail")
         self.assertTrue(any(c.name == "py_compile" and c.status == "fail" for c in result.checks))
+
+    def test_failures_empty_on_pass(self) -> None:
+        f = self.root / "ok.py"
+        f.write_text("def f():\n    return 1\n")
+        self.assertEqual(verify_changes([f], root=self.root).failures, [])
+
+    def test_failures_carry_the_error_text(self) -> None:
+        # The bare `py_compile:fail` summary told the coder's retry nothing.
+        f = self.root / "bad.py"
+        f.write_text("def f(:\n    return\n")
+        failures = verify_changes([f], root=self.root).failures
+        self.assertTrue(failures)
+        self.assertTrue(failures[0].startswith("py_compile: "), failures)
+        self.assertIn("bad.py", failures[0])
+        self.assertIn("SyntaxError", failures[0])
+
+    def test_each_failure_detail_is_bounded(self) -> None:
+        from factory.verification.base import MAX_FAILURE_DETAIL, VerifyCheck, VerifyResult
+
+        result = VerifyResult([VerifyCheck("x", "fail", "e" * 5000), VerifyCheck("y", "pass")])
+        self.assertEqual(len(result.failures), 1)
+        self.assertLessEqual(len(result.failures[0]), len("x: ") + MAX_FAILURE_DETAIL)
 
     def test_non_code_files_skip_and_pass(self) -> None:
         f = self.root / "README.md"
@@ -315,6 +417,14 @@ class GoVerificationTests(unittest.TestCase):
         self.assertIn("go_build", names, f"Go was not verified at all: {result.summary}")
         self.assertEqual(names["go_build"], "pass", result.summary)
         self.assertTrue(result.passed)
+
+    def test_go_build_leaves_no_binary_in_the_product(self) -> None:
+        """`go build ./...` on a single main package writes its executable into the
+        module: an untracked file the next run's dirty-tree preflight refuses."""
+        p = self._write("main.go", "package main\n\nfunc main() {}\n")
+        result = verify_changes([p], root=self.root)
+        self.assertTrue(result.passed, result.summary)
+        self.assertEqual(sorted(f.name for f in self.root.iterdir()), ["go.mod", "main.go"])
 
     def test_go_that_does_not_compile_FAILS_the_gate(self) -> None:
         """The whole point: a syntax error must block, not skip."""

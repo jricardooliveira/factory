@@ -46,7 +46,10 @@ def git_init(root: Path) -> None:
 # Factory plumbing that lives inside a product repo but is not part of the product.
 # `.opencode` is the symlink `projects.link_opencode_agents` creates so opencode can
 # resolve the agent definitions; it is an absolute path to the operator's machine.
-_INFRA_EXCLUDES = ("/.opencode",)
+# Bytecode and test caches are what verification and test runs leave behind, and a
+# product `.venv` is the operator's test environment: `git add -A` committed them all
+# (the same set `_is_noise` already keeps out of every code measurement).
+_INFRA_EXCLUDES = ("/.opencode", "__pycache__/", "*.pyc", ".pytest_cache/", "/.venv/")
 
 
 def _exclude_factory_infra(root: Path) -> None:
@@ -132,6 +135,56 @@ def git_commit_paths(root: Path, paths: Iterable[str | Path], message: str) -> b
         return proc.returncode == 0
     except (subprocess.SubprocessError, OSError):
         return False
+
+
+def git_discard_paths(root: Path, paths: Iterable[str | Path]) -> list[str]:
+    """Undo the factory's own UNCOMMITTED writes at `paths` (best-effort).
+
+    For a run that stops mid-coding: what it materialized is only committed when a
+    task passes, so a failed attempt's files would otherwise be read as the NEXT
+    story's out-of-band writes. A path tracked at HEAD is restored from HEAD; an
+    untracked one is deleted, with the parent dirs that become empty. Deliberately
+    path-by-path, never `git clean`: the operator's untracked files (a product
+    `.venv`, notes) are not the factory's to delete. Evidence, `.git` and anything
+    outside the repo are never touched. The attempt's code stays in agent_logs.
+    Returns the repo-relative paths discarded.
+    """
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return []
+    root_resolved = root.resolve()
+    discarded: list[str] = []
+    for raw in sorted({str(p) for p in paths if str(p).strip()}):
+        target = (root_resolved / raw).resolve()  # absolute `raw` wins in the join
+        try:
+            rel = target.relative_to(root_resolved).as_posix()
+        except ValueError:
+            continue  # outside this repo (incl. a symlink pointing out): not ours
+        if rel == "." or rel.split("/", 1)[0] == ".git" or is_evidence_path(rel):
+            continue
+        try:
+            if _run(["git", "cat-file", "-e", f"HEAD:{rel}"], root).returncode == 0:
+                if _run(["git", "checkout", "HEAD", "--", rel], root).returncode == 0:
+                    discarded.append(rel)
+                continue
+            if not target.is_file():
+                continue
+            target.unlink()
+            discarded.append(rel)
+            if target.suffix == ".py":  # verification compiled it: that bytecode is ours too
+                cache = target.parent / "__pycache__"
+                for pyc in cache.glob(f"{target.stem}.*.pyc"):
+                    pyc.unlink()
+                if cache.is_dir() and not any(cache.iterdir()):
+                    cache.rmdir()
+            # ponytail: removes every parent left empty up to the root; an empty dir
+            # the operator made before the run would go too (git can't track it anyway).
+            parent = target.parent
+            while parent != root_resolved:
+                parent.rmdir()  # OSError once a parent is not empty: stop there
+                parent = parent.parent
+        except (subprocess.SubprocessError, OSError):
+            continue
+    return discarded
 
 
 def _excluded(path: str, exclude: tuple[str, ...]) -> bool:
@@ -229,6 +282,13 @@ def git_head(root: Path) -> str | None:
     if not is_git_repo(root) or shutil.which("git") is None:
         return None
     return _git_resolve(root, "HEAD")
+
+
+def git_resolve_commit(root: Path, ref: str) -> str | None:
+    """`ref` as a commit sha, or None when this repo has no such commit."""
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return None
+    return _git_resolve(root, f"{ref}^{{commit}}")
 
 
 # git --name-status letters → the schema's change vocabulary.

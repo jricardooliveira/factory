@@ -7,7 +7,14 @@ at a different file. A missing file is fine (a wheel install has no checkout aro
 it), but a malformed one raises :class:`SettingsError` — a typo'd budget key must not
 quietly leave the cap at its default.
 
-Model choice stays in ``agents/tiers.toml``; this file never names a model.
+    [budget]
+    max_story_cost_usd = 10.0   # env FACTORY_MAX_STORY_COST_USD
+
+    [timeouts]
+    probe = 120                 # seconds per `factory doctor` model probe; env FACTORY_PROBE_TIMEOUT
+
+    [runner]
+    agents = "opencode"         # or "claude" (the local Claude Code CLI); env FACTORY_RUNNER
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
+from typing import Any
 
 from factory.agent_config.location import checkout_root
 from factory.domain import gates
@@ -29,6 +37,10 @@ _FALSE = ("0", "false", "no", "off")
 
 class SettingsError(ValueError):
     """factory.toml is unreadable or says something the factory cannot honour."""
+
+# What runs every agent call: `opencode run` with the tier models in agents/tiers.toml
+# [tiers], or `claude -p` with the Claude models in [claude_tiers].
+RUNNERS = ("opencode", "claude")
 
 
 @dataclass(frozen=True)
@@ -59,10 +71,16 @@ class Features:
 
 
 @dataclass(frozen=True)
+class Runner:
+    agents: str
+
+
+@dataclass(frozen=True)
 class Settings:
     budget: Budget = Budget()
     timeouts: Timeouts = Timeouts()
     features: Features = Features()
+    runner: Runner = Runner("opencode")
 
 
 def settings_path(environ: Mapping[str, str] | None = None) -> Path:
@@ -121,7 +139,7 @@ def load_settings(
         except (tomllib.TOMLDecodeError, OSError) as exc:
             raise SettingsError(f"{path}: {exc}") from exc
     sections = {"budget": Budget, "timeouts": Timeouts, "features": Features}
-    unknown = sorted(set(data) - set(sections))
+    unknown = sorted(set(data) - set(sections) - {"runner"})
     if unknown:
         raise SettingsError(f"{path}: unknown section(s): {', '.join(unknown)}")
     built = {
@@ -135,14 +153,50 @@ def load_settings(
         agent = max(1, int(env["FACTORY_AGENT_TIMEOUT"]))
     except (KeyError, ValueError):
         agent = timeouts.agent
+    budget: Budget = built["budget"]  # type: ignore[assignment]
+    # Preserve the established environment overrides while allowing every budget
+    # and timeout field to be set in factory.toml.
+    try:
+        max_story_cost = float(env.get("FACTORY_MAX_STORY_COST_USD", budget.max_story_cost_usd))
+        if max_story_cost <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise SettingsError("FACTORY_MAX_STORY_COST_USD must be a positive number") from None
+    try:
+        probe = int(env.get("FACTORY_PROBE_TIMEOUT", timeouts.probe))
+        if probe <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise SettingsError("FACTORY_PROBE_TIMEOUT must be a positive integer") from None
+    runner_data = data.get("runner", {})
+    if not isinstance(runner_data, dict) or set(runner_data) - {"agents"}:
+        raise SettingsError(f"{path}: [runner] must contain only agents")
+    if "agents" in runner_data and not isinstance(runner_data["agents"], str):
+        raise SettingsError(f"{path}: [runner] agents must be a string")
+    runner = _choice(data, "runner", "agents", "FACTORY_RUNNER", RUNNERS, env, path)
     return Settings(
-        budget=built["budget"],  # type: ignore[arg-type]
-        timeouts=Timeouts(**{**timeouts.__dict__, "agent": agent}),
+        budget=Budget(**{**budget.__dict__, "max_story_cost_usd": max_story_cost}),
+        timeouts=Timeouts(**{**timeouts.__dict__, "agent": agent, "probe": probe}),
         features=Features(
             run_tests=_env_flag(env, "FACTORY_RUN_TESTS", features.run_tests),
             notify=_env_flag(env, "FACTORY_NOTIFY", features.notify),
         ),
+        runner=Runner(agents=runner),
     )
+
+
+def _choice(
+    data: dict[str, Any], table: str, key: str, env_name: str,
+    choices: tuple[str, ...], environ: Mapping[str, str], path: Path,
+) -> str:
+    raw, source = choices[0], "default"
+    if key in (data.get(table) or {}):
+        raw, source = data[table][key], f"{table}.{key}"
+    if environ.get(env_name, "").strip():
+        raw, source = environ[env_name].strip(), env_name
+    if raw not in choices:
+        raise SettingsError(f"{path}: {source} must be one of {', '.join(choices)}, got {raw!r}")
+    return raw
 
 
 def settings() -> Settings:

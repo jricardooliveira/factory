@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from factory.domain.contracts import SpecOutput
-from factory.pipeline.agent_calls import db_conn, run_agent_json, usage_kwargs
+from factory.domain.gates import MAX_TASKS_PER_STORY
+from factory.pipeline.agent_calls import ReplayGap, db_conn, run_agent_json, usage_kwargs
 from factory.pipeline.evidence_writers import write_chain_artifact
 from factory.pipeline.prompts.spec import build_spec_prompt
 from factory.pipeline.state import PipelineState
@@ -21,7 +22,8 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
         # Link 1 of the chain: the operator's raw ask, on disk with an author and a
         # date, BEFORE any agent interprets it — so a run that dies at the spec
         # still leaves a record of what was asked.
-        intent_path = write_chain_artifact(state, "intent", state.get("request", ""))
+        intent_path = write_chain_artifact(state, "intent", state.get("request", ""),
+                                           project_id=state.get("project_id", ""))
 
         prompt = build_spec_prompt(state)
         result, parsed = run_agent_json(state, "spec-agent", prompt)
@@ -54,6 +56,29 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
             result.output, verdict=spec.verdict, duration_secs=result.duration_secs,
             **usage_kwargs(result),
         )
+        # Over the task limit gate-1 would simply fail the run. The agent gets ONE
+        # chance to fit the story first; whatever comes back, gate-1 still decides.
+        if len(spec.tasks) > MAX_TASKS_PER_STORY:
+            resize_prompt = prompt + (
+                f"\n\n## Your story is too large\n\nIt had {len(spec.tasks)} tasks; a story "
+                f"may have at most {MAX_TASKS_PER_STORY} tasks. Return the SAME story as JSON "
+                "with the tasks merged to fit (group closely related work into one task). "
+                "Keep every acceptance criterion; if it truly cannot fit, keep the smallest "
+                "slice that delivers the core and name what is left out in `non_goals`."
+            )
+            try:
+                again, reparsed = run_agent_json(state, "spec-agent", resize_prompt, slot="resize")
+            except ReplayGap:
+                reparsed = {}  # a run recorded before this rule: replay what it had
+            if reparsed and reparsed.get("error") != "Agent did not return valid JSON":
+                resized = SpecOutput.model_validate(reparsed)
+                log_agent(
+                    conn, state["run_id"], "spec-agent", resize_prompt, again.output,
+                    verdict=resized.verdict, duration_secs=again.duration_secs,
+                    stage_type="resize", **usage_kwargs(again),
+                )
+                result, parsed, spec = again, reparsed, resized
+
         # Give the story its real title. Do NOT overwrite the canonical story_id
         # (state["story_id"] is the DB row); the agent's spec.story_id is its own
         # numbering and clobbering it would orphan later story-row updates.

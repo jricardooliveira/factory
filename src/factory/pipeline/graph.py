@@ -66,6 +66,11 @@ def should_continue_after_gate_2(state: PipelineState) -> str:
 def route_after_coder(state: PipelineState) -> str:
     """Loop back for the next task / retry, re-architect on infeasible-design
     feedback, hand a completed story to the tester, else end."""
+    # An ended run never loops. Exits that set only `status` (off-script, a crash, the
+    # boss refusing) leave the PREVIOUS task's `next_action` in state: trusting it sent
+    # a blocked run back into the coder until the recursion limit (live, 2026-10-03).
+    if state.get("status") in ("failed", "blocked", "waiting_human"):
+        return END
     action = state.get("next_action")
     if action in ("retry", "next_task"):
         return "coder-agent"

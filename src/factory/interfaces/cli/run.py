@@ -18,6 +18,7 @@ from factory.interfaces.cli.common import db_path, fail, run_id_arg
 from factory.interfaces.cli.interview import interview, story_interview
 from factory.runs import (
     NodeCompleted,
+    NodeStarted,
     ResumeEntered,
     RetryStarted,
     RunError,
@@ -47,9 +48,12 @@ class RunPrinter:
             render.print_retry_started(event)
         elif isinstance(event, ResumeEntered):
             render.print_resume_entered(event)
+        elif isinstance(event, NodeStarted):
+            if event.node.endswith("-agent"):  # gates are instant; agents take minutes
+                render.print_agent_start(event.node, event.detail)
         elif isinstance(event, NodeCompleted):
             node_printer = render.print_resume_node if self.resumed else render.print_run_node
-            node_printer(event.node, event.output)
+            node_printer(event.node, event.output, event.duration_secs, event.cost_usd)
         elif isinstance(event, RunFinished):
             outcome = event.outcome
             logs, gates = queries.run_record(outcome.run_id, db_path=outcome.db_path)

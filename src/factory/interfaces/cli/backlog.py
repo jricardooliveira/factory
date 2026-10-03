@@ -46,16 +46,18 @@ def backlog_command(args: list[str]) -> None:
     except (RunError, ValueError) as exc:
         fail(str(exc))
     if outcome.approved:
-        print_backlog_approved(outcome.stories)
+        print_backlog_approved(outcome.stories, args[0])
     else:
         print_backlog_not_approved(args[0])
 
 
-def start_story(project_ref: str, request: str, *, ask_first: bool = True) -> RunOutcome:
+def start_story(project_ref: str, row: dict, *, ask_first: bool = True) -> RunOutcome:
     """The one place `factory next` starts a run, after the story-level interview."""
+    request = row["request"]
     if ask_first and sys.stdin.isatty() and runs.has_brief(project_ref, db_path=db_path()):
         request = story_interview(project_ref, request)
-    return runs.run_project_pipeline(project_ref, request, db_path=db_path(), on_event=RunPrinter())
+    return runs.run_backlog_story(project_ref, row, request, db_path=db_path(),
+                                  on_event=RunPrinter())
 
 
 def next_command(args: list[str]) -> None:
@@ -69,8 +71,6 @@ def next_command(args: list[str]) -> None:
             print_backlog_empty(args[0])
             return
         print_next_story(row)
-        outcome = start_story(args[0], row["request"], ask_first=ask_first)
-        runs.mark_started(row["id"], story_id=outcome.story_id, run_id=outcome.run_id,
-                          db_path=db_path())
+        start_story(args[0], row, ask_first=ask_first)
     except (RunError, ValueError) as exc:
         fail(str(exc))

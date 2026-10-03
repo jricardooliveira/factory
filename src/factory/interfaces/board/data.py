@@ -39,6 +39,8 @@ class BoardRun:
     questions: list[str] = field(default_factory=list)
     architecture: str = ""  # summary of the design under review
     modules: list[str] = field(default_factory=list)
+    release_summary: str = ""  # Checkpoint 3: what ships, instead of the design
+    how_to_verify: list[str] = field(default_factory=list)
     error: str | None = None
 
     @property
@@ -90,6 +92,7 @@ def load_board_runs(db_path: Path, include_done: bool = False) -> list[BoardRun]
         arch_notes, modules = "", []
         if entry.architect_output:  # a parked run: show the design being decided
             arch_notes, modules = _summarize_architecture(entry.architect_output)
+        release = _parse(entry.release_output) if entry.release_output else {}
         out.append(
             BoardRun(
                 id=run["id"],
@@ -104,19 +107,27 @@ def load_board_runs(db_path: Path, include_done: bool = False) -> list[BoardRun]
                 questions=_split_questions(gate.get("human_questions") if gate else None),
                 architecture=arch_notes,
                 modules=modules,
+                release_summary=str(release.get("summary", "")),
+                how_to_verify=list(release.get("how_to_verify", [])),
                 error=run.get("error"),
             )
         )
     return out
 
 
-def _summarize_architecture(output_text: str) -> tuple[str, list[str]]:
-    """Pull architecture notes + affected modules from a stored architect output."""
+def _parse(output_text: str) -> dict:
+    """The JSON object in a stored agent output, or {} when there is none."""
     try:
         start, end = output_text.find("{"), output_text.rfind("}")
         data = json.loads(output_text[start : end + 1]) if start != -1 else {}
     except (ValueError, TypeError):
-        return "", []
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _summarize_architecture(output_text: str) -> tuple[str, list[str]]:
+    """Pull architecture notes + affected modules from a stored architect output."""
+    data = _parse(output_text)
     return str(data.get("architecture_notes", "")), list(data.get("modules_affected", []))
 
 

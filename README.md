@@ -30,7 +30,9 @@ you only when you are the only one who can decide.
 
 ## How it works
 
-Six opencode agents, driven by a LangGraph pipeline, separated by **deterministic
+Eight agents (six in the pipeline below, plus the interview-agent and backlog-agent
+that define the product before it), run through opencode or Claude Code and driven by a
+LangGraph pipeline, separated by **deterministic
 gates written in Python** — never by an LLM deciding whether an LLM did well. Before
 every agent starts, the **boss** (code, not an LLM) checks that what it needs exists
 and was approved; if not, the run stops and says what is missing.
@@ -55,7 +57,7 @@ A run never marks itself done: even a fully green release waits for you, with th
 trust package and the release notes in front of you.
 
 **Agents cannot write files.** `write`, `edit`, `bash` and `patch` are disabled on
-all six. Code reaches disk only through the coder's declared `code_blocks`, and any
+all eight. Code reaches disk only through the coder's declared `code_blocks`, and any
 file that appears in the repo undeclared *blocks* the build gate. That single
 chokepoint also refuses credential-shaped paths (`.env`, `.git/`, key material).
 
@@ -90,6 +92,14 @@ opencode auth login
 factory doctor
 ```
 
+Or run every agent through Claude Code instead of opencode, using its own login.
+The Claude models per tier are in `agents/tiers.toml` `[claude_tiers]`:
+
+```bash
+FACTORY_RUNNER=claude factory doctor        # one run
+printf '[runner]\nagents = "claude"\n' >> factory.toml   # every run
+```
+
 `factory doctor` sends one small probe to each configured model. Those probes may
 cost money. The later `factory run` command also makes model calls. `factory --help`
 lists every command. If you do not want to make model calls yet, stop after
@@ -97,31 +107,49 @@ lists every command. If you do not want to make model calls yet, stop after
 
 ---
 
-## Your first project
+## Your first project: define → plan → build
 
 ```bash
-# Create a product project in ~/.factory/projects/bookmarks/
+# 1. Create a product project in ~/.factory/projects/bookmarks/ (its own git repo)
 factory project create bookmarks --stack fastapi
 
-# Ask for one thing.
-factory run --project bookmarks \
-  "let me search my bookmarks by title, paginated 20 per page"
+# 2. Define: the factory interviews you about the product, then commits
+#    docs/work/BRIEF.md once you approve it (re-running resumes a paused interview)
+factory interview bookmarks
+
+# 3. Plan: propose the ordered story list from the brief; approve it or type feedback
+factory backlog bookmarks
+
+# 4. Build: start the next approved story (a few story questions first, on a terminal)
+factory next bookmarks
 ```
 
-The run streams its progress. It may finish, or **park** at a checkpoint and wait for
-your decision. Running a request uses model calls. The CLI rejects likely command
-typos such as `factory lsit` before making a model call.
+Each story runs the pipeline above. It streams its progress and **parks** at a
+checkpoint for your decision — at the very least at Checkpoint 3, the release.
+Steps 2–4 use model calls. Lost? `factory status bookmarks` names the phase you are
+in and the exact next command to type.
 
 ```bash
+factory status         # every project: define / plan / build / release, and what to type next
+factory board          # interactive board — approve/reject in place; `m` menu of every verb, `s` status
 factory queue          # what is waiting for you, and why
-factory board          # interactive board — approve/reject in place
-factory review 17      # the full package for one run
+factory review 17      # the decision screen: what each agent did, the evidence and its gaps,
+                       # the question being asked, and the approve/reject commands
 ```
+
+A one-off request without the interview also works:
+`factory run --project bookmarks --no-interview "let me search my bookmarks by title"`.
+The CLI rejects likely command typos such as `factory lsit` before making a model call.
 
 ```bash
 factory approve 17
 factory reject 17 "use polling, not websockets; drop the admin screen"
 ```
+
+**Approval is on record in the repo.** Approving stamps the artifact you signed off
+— `SPEC.md` (Checkpoint 1), the ADR and `PLAN.md` (Checkpoint 2), `RELEASE.md`
+(Checkpoint 3) — with `Status: approved by the operator at Checkpoint N (run #id, time)`
+and commits it.
 
 **Rejection is not a dead end.** Your feedback re-enters the pipeline as a new
 attempt: reject at Checkpoint 1 and the story is re-specified with your answers;
@@ -221,13 +249,13 @@ Everything here is offline, deterministic and free — no model calls:
 
 | Command | What it does |
 |---|---|
-| `factory simulate` | drives 9 representative stories through the real pipeline |
-| `factory evals` | 44 regression checks on the **agent configuration** |
+| `factory simulate` | drives 12 representative stories through the real pipeline |
+| `factory evals` | 68 regression checks on the **agent configuration** |
 | `factory replay <run_id>` | re-runs a past run's orchestration on its frozen outputs, in a scratch clone (`$FACTORY_HOME/replays/`) |
 | `factory metrics` | how the factory has actually been performing |
 | `factory tiers` | which model each agent runs at |
 | `factory workspace` | where the state lives: `$FACTORY_HOME`, its `factory.db`, every product repo |
-| `factory doctor --offline` | preflight: opencode + go/node/tsc on PATH, `$FACTORY_HOME` and its DB, each product's `.opencode` link, any un-imported legacy `factory.db` (drop `--offline` to also probe each tier model — one tiny paid call per model) |
+| `factory doctor --offline` | preflight: opencode + go/node/tsc on PATH, `$FACTORY_HOME` and its DB, each product's `.opencode` link, a Python product with no `.venv`, any un-imported legacy `factory.db` (drop `--offline` to also probe each tier model — one tiny paid call per model) |
 
 **Which model runs where is data, not code:** `agents/tiers.toml` maps each agent to a
 tier, each tier to an opencode `provider/model`, and names the agents that escalate a
@@ -279,8 +307,9 @@ review behaviour without touching an agent definition — then run `make evals`.
 
 1. **Generated code is not executed by default.** `gate-build` compiles, typechecks and
    checks imports statically — it does not even collect tests, since that imports them.
-   Opt in with `FACTORY_RUN_TESTS=1`, but understand what that means: AI-generated
-   code runs on your machine in a subprocess, with no hardened sandbox. Without it,
+   Opt in with `FACTORY_RUN_TESTS=1` (tests then run with the product's own
+   `.venv/bin/python`, else `$FACTORY_PRODUCT_PYTHON`, else the factory's
+   interpreter), but understand what that means: AI-generated code runs on your machine in a subprocess, with no hardened sandbox. Without it,
    the trust package reports `tests.executed: false` and withholds sign-off.
 2. **The $10-per-story cap is an estimate on a subscription login.** A ChatGPT/Codex
    login reports $0, so spend is tokens × the model's public list price

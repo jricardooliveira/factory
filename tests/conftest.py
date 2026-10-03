@@ -23,10 +23,10 @@ def _isolated_factory_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch
     """
     home = tmp_path_factory.mktemp("factory-home")
     monkeypatch.setenv("FACTORY_HOME", str(home))
-    # The operator's factory.toml (budget cap, timeouts) must not change test
+    # The operator's factory.toml (budget cap, timeouts, runner) must not change test
     # outcomes either: point settings at a file that does not exist -> defaults.
     monkeypatch.setenv("FACTORY_SETTINGS", str(home / "factory.toml"))
-    for var in ("FACTORY_MAX_STORY_COST_USD", "FACTORY_PROBE_TIMEOUT"):
+    for var in ("FACTORY_MAX_STORY_COST_USD", "FACTORY_PROBE_TIMEOUT", "FACTORY_RUNNER"):
         monkeypatch.delenv(var, raising=False)
     return home
 

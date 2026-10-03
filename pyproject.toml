@@ -32,6 +32,7 @@ packages = ["src/factory"]
 # A wheel has no checkout around it, so ship a copy; agent_config.location falls
 # back to it when there is no checkout agents/ directory.
 "agents" = "factory/_agents"
+"skills" = "factory/_skills"
 
 [tool.ruff]
 line-length = 100

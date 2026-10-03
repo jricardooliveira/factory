@@ -27,3 +27,7 @@ stale_run = 3600   # a 'running' row older than this is reconciled as dead
 [features]
 run_tests = false  # execute the coder's tests — runs agent-written code  (env: FACTORY_RUN_TESTS)
 notify = false     # macOS desktop notifications                          (env: FACTORY_NOTIFY)
+
+# Select the CLI used for every agent call. Claude Code must be installed and logged in.
+[runner]
+agents = "opencode" # or "claude" (env: FACTORY_RUNNER)

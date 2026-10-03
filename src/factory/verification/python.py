@@ -1,17 +1,33 @@
-"""Python checks: py_compile and a static import check by default; pytest collection
-and the test suite only on opt-in (FACTORY_RUN_TESTS), because both import — and so
-execute — agent-written code."""
+"""Python checks: py_compile and a static import check by default; the test suite only
+on opt-in (FACTORY_RUN_TESTS), because running it executes agent-written code."""
 
 from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 from factory.verification.base import suite_timeout, VerifyCheck, run_command, tests_enabled
+
+
+def product_python(root: Path) -> str:
+    """The interpreter that runs the PRODUCT's tests: its own venv, else
+    $FACTORY_PRODUCT_PYTHON, else the factory's. The factory's venv lacks the
+    product's dependencies, so running tests with it fails for the wrong reason."""
+    for venv_python in (root / ".venv" / "bin" / "python", root / ".venv" / "Scripts" / "python.exe"):
+        if venv_python.is_file():
+            return str(venv_python.absolute())  # never resolve(): the venv python is a symlink
+    return os.environ.get("FACTORY_PRODUCT_PYTHON", "").strip() or sys.executable
+
+
+def _has_pytest(python: str) -> bool:
+    # Only the factory's own interpreter can be asked cheaply; a product venv
+    # without pytest fails loudly when run, which is the honest verdict.
+    return python != sys.executable or importlib.util.find_spec("pytest") is not None
 
 
 def py_compile_check(py_files: list[Path], root: Path) -> VerifyCheck:
@@ -138,6 +154,10 @@ def static_import_check(py_files: list[Path], root: Path) -> VerifyCheck:
     return VerifyCheck("py_imports", "pass", f"{len(py_files)} file(s)")
 
 
+# Quoted for an import inside a test, bare for `python -m pytest` without pytest.
+_MISSING_MODULE = re.compile(r"No module named ['\"]?([\w.]+)")
+
+
 def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
     """Decide whether a pytest collection failure is a real bug (fail) or an
     environmental missing-dependency (warn).
@@ -153,7 +173,7 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
     if "cannot import name" in output:
         return VerifyCheck("pytest_collect", "fail", tail)
 
-    m = re.search(r"No module named ['\"]([^'\"]+)['\"]", output)
+    m = _MISSING_MODULE.search(output)
     if m:
         top = m.group(1).split(".")[0]
         if _is_local_module(top, root):
@@ -166,20 +186,6 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
     return VerifyCheck("pytest_collect", "warn", tail)
 
 
-def pytest_collect(root: Path) -> VerifyCheck | None:
-    if importlib.util.find_spec("pytest") is None:
-        return VerifyCheck("pytest_collect", "skip", "pytest not installed")
-    try:
-        proc = run_command([sys.executable, "-m", "pytest", "--collect-only", "-q"], root)
-    except subprocess.TimeoutExpired:
-        return VerifyCheck("pytest_collect", "warn", "timed out")
-    if proc.returncode != 0:
-        # A real bug in the coder's own code must FAIL; a merely-absent third-party
-        # dep stays a WARN. Distinguishing the two closes a silent-failure crack.
-        return _classify_collect_failure((proc.stdout or "") + "\n" + (proc.stderr or ""), root)
-    return VerifyCheck("pytest_collect", "pass", "collected")
-
-
 def run_tests(root: Path) -> VerifyCheck:
     """Actually run the materialized tests (opt-in). A failure HARD-fails the gate.
 
@@ -188,19 +194,27 @@ def run_tests(root: Path) -> VerifyCheck:
     """
     if not tests_enabled():
         return VerifyCheck("pytest_run", "skip", "disabled (set FACTORY_RUN_TESTS=1 to run)")
-    if importlib.util.find_spec("pytest") is None:
+    python = product_python(root)
+    if not _has_pytest(python):
         return VerifyCheck("pytest_run", "skip", "pytest not installed")
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", str(root)],
+            [python, "-m", "pytest", "-q", str(root)],
             cwd=str(root), capture_output=True, text=True, timeout=suite_timeout(),
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
-        return VerifyCheck("pytest_run", "fail", f"tests timed out after {suite_timeout()}s")
+        return VerifyCheck("pytest_run", "fail", f"tests timed out after {suite_timeout()}s ({python})")
     if proc.returncode != 0:
-        return VerifyCheck("pytest_run", "fail", (proc.stdout or proc.stderr).strip()[-600:])
-    return VerifyCheck("pytest_run", "pass", "tests passed")
+        output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        tail = output.strip()[-600:]
+        verdict = _classify_collect_failure(output, root)
+        if verdict.status == "warn" and _MISSING_MODULE.search(output):
+            # The product's interpreter lacks a dependency (or pytest): an environment
+            # problem, not the coder's bug — and the tests never ran, so never a pass.
+            return VerifyCheck("pytest_run", "warn", f"tests did not run: {python} {verdict.detail}")
+        return VerifyCheck("pytest_run", "fail", f"with {python}: {tail}")
+    return VerifyCheck("pytest_run", "pass", f"tests passed (with {python})")
 
 
 def is_py_test(path: Path) -> bool:

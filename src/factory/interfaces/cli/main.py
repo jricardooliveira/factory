@@ -28,9 +28,11 @@ from factory.interfaces.cli import (
     workspace,
 )
 from factory.interfaces.cli.common import fail
+from factory.runs import RunInterrupted
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "project": project.project_command,
+    "status": project.status_command,
     "spec": project.spec_command,
     "interview": interview.interview_command,
     "backlog": backlog.backlog_command,
@@ -62,6 +64,7 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
 USAGE: tuple[tuple[str, str], ...] = (
     ('"Your request here"', "Run pipeline"),
     ('run --project <id> [--no-interview] "..."', "Run pipeline for project"),
+    ("status [project]", "Where each project stands, and the next command to type"),
     ("interview <project>", "Define the product with the operator: writes the approved brief"),
     ('interview <project> --amend "..."', "Reopen the approved brief for one change"),
     ("interview <project> --import <file>", "Record answers from the /factory-intake skill"),
@@ -71,6 +74,7 @@ USAGE: tuple[tuple[str, str], ...] = (
     ("project create <slug>", "Create/register project"),
     ("project list", "List projects"),
     ("project show <id>", "Show project"),
+    ("project refresh <id>", "Install the anti-slop skills + code-discipline rules into a project"),
     ("list", "List all runs"),
     ("queue", "Show runs awaiting review / needing attention"),
     ("board [--once | --plain] [--interval S]", "Interactive board: approve/reject in place"),
@@ -168,12 +172,21 @@ def main() -> None:
         # (`factory reject 20 --help` rejected run 20 with the reason "--help").
         if any(a in _HELP_FLAGS for a in args):
             print_usage(exit_code=0, verb=cmd)
-        command(args)
+        _interruptible(command, args)
         return
     refusal = request_refusal(_request_words(sys.argv[1:]))
     if refusal:
         fail(refusal)
-    run.request_command(sys.argv[1:])
+    _interruptible(run.request_command, sys.argv[1:])
+
+
+def _interruptible(command: Callable[[list[str]], None], args: list[str]) -> None:
+    """Ctrl-C mid-run: the service already failed and cleaned the run; say so, no traceback."""
+    try:
+        command(args)
+    except RunInterrupted as exc:
+        render.print_error(f"interrupted; run #{exc.run_id} marked failed")
+        sys.exit(130)
 
 
 if __name__ == "__main__":

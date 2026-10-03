@@ -197,6 +197,11 @@ def init_db(path: Path) -> None:
         # The commit gate-release judged and the operator reviewed at Checkpoint 3:
         # releasing it later must release exactly that code.
         _ensure_column(conn, "pipeline_runs", "candidate_commit", "TEXT")
+        # The status a dismissed run was archived from: a dismissed release stays released.
+        _ensure_column(conn, "pipeline_runs", "archived_from", "TEXT")
+        # A returned story's first base_commit: its failed run's passed tasks stay
+        # committed, so the re-run must measure (and review) from before them.
+        _ensure_column(conn, "backlog_stories", "base_commit", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -424,6 +429,20 @@ def update_story_title(conn: sqlite3.Connection, story_id: str, title: str) -> N
     )
 
 
+def project_runs(conn: sqlite3.Connection, project_id: str) -> list[dict[str, Any]]:
+    """A project's live runs (replays excluded), newest first, with the story title."""
+    rows = conn.execute(
+        """
+        SELECT pr.id, pr.status, pr.current_stage, pr.archived_from, s.title AS story_title
+        FROM pipeline_runs pr JOIN stories s ON pr.story_id = s.id
+        WHERE pr.project_id = ? AND pr.replay_of IS NULL
+        ORDER BY pr.id DESC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_runs_by_status(
     conn: sqlite3.Connection, statuses: list[str]
 ) -> list[dict[str, Any]]:
@@ -448,7 +467,9 @@ def archive_run(conn: sqlite3.Connection, run_id: int) -> None:
     """Dismiss a run from the board (terminal, hidden state). Non-destructive."""
     now = _now()
     conn.execute(
-        "UPDATE pipeline_runs SET status = 'archived', finished_at = COALESCE(finished_at, ?) "
+        # SET reads the pre-update row, so a second dismiss keeps the first origin.
+        "UPDATE pipeline_runs SET status = 'archived', finished_at = COALESCE(finished_at, ?), "
+        "archived_from = CASE WHEN status = 'archived' THEN archived_from ELSE status END "
         "WHERE id = ?",
         (now, run_id),
     )
@@ -482,13 +503,21 @@ def reconcile_stale_runs(conn: sqlite3.Connection, older_than_secs: float = 3600
 
 
 def usage_rows(
-    conn: sqlite3.Connection, *, run_id: int | None = None, story_id: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    run_id: int | None = None,
+    story_id: str | None = None,
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Per-call usage (tokens_in, tokens_out, cost_usd, model_name) for one run, or for
-    every LIVE run of a story — what `domain.budget.story_spend` prices. Replays are
-    excluded: they re-log frozen usage and spend nothing."""
+    every LIVE run of a story or a project — what `domain.budget.story_spend` prices.
+    Replays are excluded: they re-log frozen usage and spend nothing."""
     if run_id is not None:
         where, params = "run_id = ?", (run_id,)
+    elif project_id is not None:
+        where = ("run_id IN (SELECT id FROM pipeline_runs WHERE project_id = ? "
+                 "AND replay_of IS NULL)")
+        params = (project_id,)
     else:
         where = ("run_id IN (SELECT id FROM pipeline_runs WHERE story_id = ? "
                  "AND replay_of IS NULL)")
@@ -496,6 +525,21 @@ def usage_rows(
     rows = conn.execute(
         f"SELECT tokens_in, tokens_out, cost_usd, model_name FROM agent_logs WHERE {where}",
         params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def last_agent_log_id(conn: sqlite3.Connection) -> int:
+    """The newest agent_logs id (0 if none): a mark to find the calls made after it."""
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM agent_logs").fetchone()[0]
+
+
+def agent_logs_after(conn: sqlite3.Connection, run_id: int, after_id: int) -> list[dict[str, Any]]:
+    """Usage + duration of one run's agent calls logged after `after_id` (one node's calls)."""
+    rows = conn.execute(
+        "SELECT duration_secs, tokens_in, tokens_out, cost_usd, model_name FROM agent_logs "
+        "WHERE run_id = ? AND id > ? ORDER BY id",
+        (run_id, after_id),
     ).fetchall()
     return [dict(r) for r in rows]
 

@@ -23,14 +23,29 @@ class RunStarted:
     request: str
     project_spec_text: str | None = None
     replay_of: int | None = None  # source run whose frozen outputs are replayed
+    tests_run: bool = False  # FACTORY_RUN_TESTS is on: gate-build executes the suite
+
+
+@dataclass(frozen=True)
+class NodeStarted:
+    """One LangGraph node is about to run (an agent node may take minutes)."""
+
+    node: str
+    detail: str = ""  # e.g. "task 2/5 T-0002 Routes (attempt 1)"; "" when none applies
 
 
 @dataclass(frozen=True)
 class NodeCompleted:
-    """One LangGraph node finished: its name and the state update it returned."""
+    """One LangGraph node finished: its name and the state update it returned.
+
+    `duration_secs` / `cost_usd` total the agent calls the node logged; None when
+    it made none (a gate) or the figure is unknown — never a made-up zero.
+    """
 
     node: str
     output: dict[str, Any]
+    duration_secs: float | None = None
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +89,7 @@ class RunFinished:
     outcome: RunOutcome
 
 
-RunEvent = RunStarted | NodeCompleted | RetryStarted | ResumeEntered | RunFinished
+RunEvent = RunStarted | NodeStarted | NodeCompleted | RetryStarted | ResumeEntered | RunFinished
 OnEvent = Callable[[RunEvent], None]
 
 
@@ -84,6 +99,17 @@ class RunError(Exception):
     The message is operator-facing and complete ("No run found with id #7"); the
     interface decides how loudly to show it and whether that is a non-zero exit.
     """
+
+
+class RunInterrupted(KeyboardInterrupt):
+    """The operator interrupted run #run_id (Ctrl-C); it is already marked failed.
+
+    Still a KeyboardInterrupt, so anything that does not know it exits as before.
+    """
+
+    def __init__(self, run_id: int) -> None:
+        super().__init__(run_id)
+        self.run_id = run_id
 
 
 def ignore_events(_event: RunEvent) -> None:

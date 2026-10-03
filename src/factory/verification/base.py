@@ -27,6 +27,9 @@ def suite_timeout() -> int:
 
 def build_timeout() -> int:
     return settings().timeouts.build
+# How much of one failed check's output reaches the gate reason (and so the coder's
+# retry, the run error and `factory review`): enough for a traceback's last frame.
+MAX_FAILURE_DETAIL = 500
 
 
 def tests_enabled() -> bool:
@@ -68,6 +71,12 @@ class VerifyResult:
             return "no verifiable files"
         parts = [f"{c.name}:{c.status}" for c in self.checks]
         return ", ".join(parts)
+
+    @property
+    def failures(self) -> list[str]:
+        """One `name: detail` per failed check — the WHY the summary leaves out."""
+        return [f"{c.name}: {c.detail.strip()[:MAX_FAILURE_DETAIL]}"
+                for c in self.checks if c.status == "fail"]
 
 
 def run_command(
