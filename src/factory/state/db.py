@@ -632,3 +632,9 @@ def get_run_gates(conn: sqlite3.Connection, run_id: int) -> list[dict[str, Any]]
         "SELECT * FROM gate_results WHERE run_id = ? ORDER BY id", (run_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def last_agent_activity(conn: sqlite3.Connection, run_id: int) -> str | None:
+    """When a run's newest agent output was recorded (its last progress), or None."""
+    return conn.execute("SELECT MAX(created_at) FROM agent_logs WHERE run_id = ?",
+                        (run_id,)).fetchone()[0]

@@ -157,3 +157,27 @@ def simulate(agents: ScriptedAgents) -> ExitStack:
                    "factory.interfaces.board.workflow_screen.start_worker"):
         stack.enter_context(patch(target, side_effect=worker))
     return stack
+
+
+def park_run(db_path: Path, project: dict, *, title: str, stage: str, questions: str = "",
+             logs: dict[str, dict] | None = None, backlog_id: int | None = None) -> int:
+    """A run parked at a checkpoint (`stage`: gate-1-spec, gate-2-architect,
+    gate-release-human), linked to a backlog row when given — the record a real run
+    leaves, so the board shows it as the operator would find it."""
+    from factory.state import db as dbm
+
+    gate = "gate-release" if "release" in stage else stage
+    with get_db(db_path) as conn:
+        story_id = f"US-{9000 + conn.execute('SELECT COUNT(*) FROM stories').fetchone()[0]}"
+        dbm.create_story(conn, story_id, title, f"Build {title.lower()}.", project_id=project["id"])
+        run_id = dbm.start_run(conn, story_id, project_id=project["id"])
+        for agent, output in (logs or {}).items():
+            dbm.log_agent(conn, run_id, agent, "p", json.dumps(output), verdict="pass")
+        dbm.update_run_stage(conn, run_id, stage)
+        dbm.log_gate(conn, run_id, gate, True, "needs human", needs_human=True,
+                     human_questions=questions or "Approve?")
+        dbm.finish_run(conn, run_id, "waiting_human")
+        if backlog_id is not None:
+            conn.execute("UPDATE backlog_stories SET status='started', run_id=?, story_id=? "
+                         "WHERE id=?", (run_id, story_id, backlog_id))
+    return run_id
