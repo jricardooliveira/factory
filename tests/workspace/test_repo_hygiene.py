@@ -73,6 +73,74 @@ class InfraExclusionTests(unittest.TestCase):
         exclude = (self.repo / ".git" / "info" / "exclude").read_text()
         self.assertEqual(exclude.count("/.opencode"), 1)
 
+    def test_bytecode_test_caches_and_the_product_venv_are_never_committed(self) -> None:
+        """Verification compiles the coder's Python, leaving __pycache__; a test run
+        leaves .pytest_cache; the operator may create a product .venv for test runs."""
+        git.git_init(self.repo)
+        for rel in ("app.py", "__pycache__/x.cpython-312.pyc", "pkg/__pycache__/y.pyc",
+                    "stray.pyc", ".pytest_cache/v/cache/nodeids", ".venv/bin/python"):
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_text("x\n")
+        self.assertTrue(git.git_commit_all(self.repo, "factory: T-0001"))
+        self.assertEqual(_tracked(self.repo), ["app.py"])
+
+
+def _status(repo: Path) -> list[str]:
+    out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],
+                         cwd=repo, capture_output=True, text=True)
+    return sorted(line[3:] for line in out.stdout.splitlines())
+
+
+class DiscardPathsTests(unittest.TestCase):
+    """`git_discard_paths` undoes the factory's own uncommitted writes — and only those."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "repo"
+        self.repo.mkdir()
+        git.git_init(self.repo)
+        (self.repo / "kept.py").write_text("orig\n")
+        git.git_commit_all(self.repo, "factory: seed")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write(self, rel: str, text: str = "x\n") -> None:
+        (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.repo / rel).write_text(text)
+
+    def test_restores_tracked_deletes_untracked_and_its_empty_dirs(self) -> None:
+        self._write("kept.py", "changed\n")
+        self._write("pkg/sub/new.py")
+        self._write("pkg/sub/__pycache__/new.cpython-312.pyc")  # verification's bytecode
+        (self.repo / "pkg" / "other").mkdir()
+        self._write("notes.txt", "operator\n")
+        git.git_discard_paths(self.repo, ["kept.py", str(self.repo / "pkg/sub/new.py")])
+        self.assertEqual((self.repo / "kept.py").read_text(), "orig\n")
+        self.assertFalse((self.repo / "pkg" / "sub").exists())
+        self.assertTrue((self.repo / "pkg" / "other").is_dir(), "not its dir to remove")
+        self.assertEqual(_status(self.repo), ["notes.txt"])
+
+    def test_never_touches_evidence_git_or_paths_outside_the_repo(self) -> None:
+        outside = Path(self._tmp.name) / "outside.py"
+        outside.write_text("x\n")
+        self._write("docs/work/US-0001/SPEC.md")
+        self._write("PROJECT_RULES.md")
+        git.git_discard_paths(self.repo, [
+            "docs/work/US-0001/SPEC.md", "PROJECT_RULES.md", "../outside.py", str(outside),
+            ".git/HEAD", ".", ""])
+        self.assertTrue(outside.is_file())
+        self.assertTrue((self.repo / "docs/work/US-0001/SPEC.md").is_file())
+        self.assertTrue((self.repo / "PROJECT_RULES.md").is_file())
+        self.assertTrue((self.repo / ".git" / "HEAD").is_file())
+
+    def test_off_git_is_a_noop(self) -> None:
+        plain = Path(self._tmp.name) / "plain"
+        plain.mkdir()
+        (plain / "a.py").write_text("x\n")
+        git.git_discard_paths(plain, ["a.py"])
+        self.assertTrue((plain / "a.py").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

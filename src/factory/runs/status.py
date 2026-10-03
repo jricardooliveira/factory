@@ -22,7 +22,13 @@ from factory.domain.lifecycle import (
 )
 from factory.evidence.brief import brief_path
 from factory.state.backlog import list_backlog
-from factory.state.db import get_db, init_db, project_runs, usage_rows
+from factory.state.db import (
+    get_answered_human_gate,
+    get_db,
+    init_db,
+    project_runs,
+    usage_rows,
+)
 from factory.state.interviews import list_answers, turn_usage_rows
 from factory.workspace.projects import get_project, list_projects
 
@@ -45,8 +51,10 @@ def _status(project: dict, db_path: Path) -> ProjectStatus:
         run_rows = project_runs(conn, project["id"])
         intake = story_spend(turn_usage_rows(conn, project["id"]), prices).estimated_usd
         stories = story_spend(usage_rows(conn, project_id=project["id"]), prices).estimated_usd
-    runs = tuple(RunFact(r["id"], r["status"], r["current_stage"], r["story_title"])
-                 for r in run_rows)
+        # The same test `retry_run` applies, so status never suggests a retry it refuses.
+        runs = tuple(RunFact(r["id"], r["status"], r["current_stage"], r["story_title"],
+                             retryable=get_answered_human_gate(conn, r["id"]) is not None)
+                     for r in run_rows)
     by_id = {r.id: r for r in runs}
     facts = ProjectFacts(
         slug=project["slug"],

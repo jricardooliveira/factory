@@ -36,7 +36,12 @@ from factory.verification.scope import (
     paths_outside_scope,
     scope_note,
 )
-from factory.workspace.git import collect_repo_diff, git_changed_paths, git_commit_all
+from factory.workspace.git import (
+    collect_repo_diff,
+    git_changed_paths,
+    git_commit_all,
+    git_discard_paths,
+)
 from factory.workspace.layout import is_evidence_path
 from factory.workspace.materialize import materialize_code_blocks, normalize_block_path
 
@@ -129,18 +134,35 @@ def _story_scope(spec: SpecOutput) -> list[str]:
     return [s for t in spec.tasks for s in t.scope]
 
 
+def _discard_attempt(state: PipelineState, written: list[Path] | None = None) -> None:
+    """A run that stops mid-coding undoes the factory's own uncommitted writes
+    (this pass's `written` + earlier attempts'), so the next story on the repo
+    doesn't inherit them as 'out-of-band'. Only those paths: the out-of-band
+    file itself, operator files and evidence stay (see `git_discard_paths`)."""
+    if not state.get("opencode_cwd"):
+        return  # never guess a repo: "." would be wherever the factory runs
+    root = Path(state["opencode_cwd"])
+    git_discard_paths(root, set(state.get("attempt_written") or []) | _relative(written or [], root))
+
+
 def _block_out_of_band(
-    conn: sqlite3.Connection, state: PipelineState, gate_reason: str
+    conn: sqlite3.Connection, state: PipelineState, gate_reason: str,
+    written: list[Path] | None = None,
 ) -> None:
     """Record an out-of-band write: gate-build fails, the run is BLOCKED (a retry
     won't help, and shipping un-vetted code defeats the gates)."""
+    _discard_attempt(state, written)
     log_gate(conn, state["run_id"], "gate-build", False, gate_reason)
     update_story_status(conn, state["story_id"], "blocked")
     finish_run(conn, state["run_id"], "blocked", error=gate_reason)
     conn.commit()
 
 
-def _fail_story(conn: sqlite3.Connection, state: PipelineState, error: str) -> None:
+def _fail_story(
+    conn: sqlite3.Connection, state: PipelineState, error: str,
+    written: list[Path] | None = None,
+) -> None:
+    _discard_attempt(state, written)
     update_story_status(conn, state["story_id"], "failed")
     finish_run(conn, state["run_id"], "failed", error=error)
     conn.commit()
@@ -196,7 +218,7 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
             f"[remediation] GOVERNANCE: out-of-band file writes not declared in "
             f"code_blocks: {sorted(unclaimed)}."
         )
-        _block_out_of_band(conn, state, gate_reason)
+        _block_out_of_band(conn, state, gate_reason, written)
         return {"coder_raw": result.output, "coder": parsed, "remediation": False,
                 "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,
                                "task": "remediation"},
@@ -215,7 +237,7 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
                 "remediation": False, "next_action": "complete"}
 
     error = f"remediation failed gate-build: {gate_reason}"
-    _fail_story(conn, state, error)
+    _fail_story(conn, state, error, written)
     return {"coder_raw": result.output, "coder": parsed, "gate_build": gate_build,
             "remediation": False, "next_action": "give_up", "status": "failed", "error": error}
 
@@ -226,6 +248,7 @@ def _off_script(
 ) -> dict[str, Any]:
     """The coder answered without JSON: the run is BLOCKED, never guessed at."""
     agent_said = parsed.get("agent_response", "unknown")
+    _discard_attempt(state)
     log_agent(
         conn, state["run_id"], "coder-agent", prompt,
         result.output, verdict="blocked", duration_secs=result.duration_secs,
@@ -330,7 +353,7 @@ def _route_after_build(
         )
     else:
         error = f"coder reported verdict '{coder.verdict}' on {task.id}"
-    _fail_story(conn, state, error)
+    _fail_story(conn, state, error, written)
     return {**base, "next_action": "give_up", "status": "failed", "error": error}
 
 
@@ -396,7 +419,7 @@ def _implement_task(
             f"code_blocks: {sorted(unclaimed)}. Agents must return code via "
             f"code_blocks, not write files directly."
         )
-        _block_out_of_band(conn, state, gate_reason)
+        _block_out_of_band(conn, state, gate_reason, written)
         return {
             "coder_raw": result.output, "coder": parsed,
             "gate_build": {"passed": False, "verdict": "fail", "reason": gate_reason,
@@ -443,6 +466,7 @@ def node_coder_agent(state: PipelineState) -> dict[str, Any]:
 
         return _implement_task(conn, state, spec, tasks)
     except Exception as e:
+        _discard_attempt(state)
         log_agent(conn, state["run_id"], "coder-agent", "", str(e), verdict="error")
         finish_run(conn, state["run_id"], "failed", error=str(e))
         conn.commit()

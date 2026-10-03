@@ -94,6 +94,16 @@ def _write_and_commit(project: dict[str, Any], *, db_path: Path) -> None:
     git_commit_paths(repo, [written], f"factory: backlog {project['id']}")
 
 
+def return_story_to_backlog(run_id: int, *, db_path: Path) -> bool:
+    """A dismissed failed/blocked run gives its story back: `factory next` starts it
+    again (a gate-build failure has no answered checkpoint for `retry` to re-drive)."""
+    with get_db(db_path) as conn:
+        touched = rows.return_to_backlog(conn, run_id)
+    for project_id in touched:
+        _write_and_commit(get_project(db_path, project_id), db_path=db_path)
+    return bool(touched)
+
+
 def propose_backlog(project_ref: str, *, db_path: Path, review: Review) -> BacklogOutcome:
     project = get_project(db_path, project_ref)
     brief = load_brief(Path(project["repo_path"]))

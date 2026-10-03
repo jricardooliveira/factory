@@ -51,10 +51,12 @@ def dismiss_command(args: list[str]) -> None:
     """
     run_id = run_id_arg(args, "Usage: factory dismiss <run_id>")
     try:
-        runs.dismiss_run(run_id, db_path=db_path())
+        returned = runs.dismiss_run(run_id, db_path=db_path())
     except runs.RunError as exc:
         fail(str(exc))
-    render.console.print(f"[green]Run #{run_id} dismissed (archived).[/green]")
+    render.console.print(f"[green]Run #{run_id} dismissed (archived).[/green]"
+                         + (" Its story is back in the backlog: factory next <project>."
+                            if returned else ""))
 
 
 def reconcile_command(args: list[str]) -> None:

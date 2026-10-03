@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from factory.runs.backlog import return_story_to_backlog
 from factory.runs.events import RunError
 from factory.state.db import archive_run, get_db, get_run, init_db, reconcile_stale_runs
 
@@ -21,8 +22,12 @@ _NOT_DISMISSIBLE = {
 DEFAULT_STALE_SECS = 3600.0
 
 
-def dismiss_run(run_id: int, *, db_path: Path) -> None:
-    """Archive a finished run off the board (non-destructive). Raises RunError."""
+def dismiss_run(run_id: int, *, db_path: Path) -> bool:
+    """Archive a finished run off the board (non-destructive). Raises RunError.
+
+    A failed/blocked run's backlog story goes back to 'approved' for `factory next`;
+    True when that happened.
+    """
     init_db(db_path)
     with get_db(db_path) as conn:
         run = get_run(conn, run_id)
@@ -32,6 +37,9 @@ def dismiss_run(run_id: int, *, db_path: Path) -> None:
         if why:
             raise RunError(f"Run #{run_id} {why}.")
         archive_run(conn, run_id)
+    if run["status"] in ("failed", "blocked"):
+        return return_story_to_backlog(run_id, db_path=db_path)
+    return False
 
 
 def reconcile_stale(older_than_secs: float = DEFAULT_STALE_SECS, *, db_path: Path) -> list[int]:

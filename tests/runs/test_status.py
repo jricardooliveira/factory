@@ -64,6 +64,21 @@ class ProjectStatusTests(unittest.TestCase):
         self.assertEqual(facts.stories_usd, 0.25)
         self.assertEqual(status.next.command, f"factory approve {rid}")
 
+    def test_a_run_is_retryable_only_with_an_answered_checkpoint(self) -> None:
+        """The same rule `retry_run` applies: status never suggests a refused retry."""
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "US-0001", "S", "r", project_id=self.pid)
+            built = db.start_run(conn, "US-0001", project_id=self.pid)
+            db.log_gate(conn, built, "gate-build", False, "py_compile failed")
+            db.finish_run(conn, built, "failed")
+            answered = db.start_run(conn, "US-0001", project_id=self.pid)
+            gate = db.log_gate(conn, answered, "gate-2-architect", True, "ok", needs_human=True)
+            db.respond_to_gate(conn, gate, "REJECTED: simpler")
+            db.finish_run(conn, answered, "failed")
+        retryable = {r.id: r.retryable
+                     for r in runs.project_status("habits", db_path=self.db_path).facts.runs}
+        self.assertEqual(retryable, {built: False, answered: True})
+
     def test_every_project_when_none_is_named(self) -> None:
         create_project(self.db_path, home=self.home, slug="shop")
         self.assertEqual([s.facts.slug for s in runs.all_project_status(db_path=self.db_path)],

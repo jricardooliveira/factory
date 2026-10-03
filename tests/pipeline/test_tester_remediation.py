@@ -180,7 +180,8 @@ class CoderRemediationPassTests(unittest.TestCase):
             {
                 "verdict": "complete",
                 "code_blocks": [
-                    {"path": "test_app.py", "content": "def test(:\n  pass\n", "action": "create"}
+                    {"path": "test_app.py", "content": "def test(:\n  pass\n", "action": "create"},
+                    {"path": "app.py", "content": "def add(:\n", "action": "modify"},
                 ],
             }
         )
@@ -189,6 +190,9 @@ class CoderRemediationPassTests(unittest.TestCase):
         self.assertEqual(out.get("status"), "failed")
         self.assertEqual(out.get("next_action"), "give_up")
         self.assertFalse(out["gate_build"]["passed"])
+        # The failed pass is discarded: the next story must not inherit it.
+        self.assertFalse((self.cwd / "test_app.py").exists())
+        self.assertEqual((self.cwd / "app.py").read_text(), "def add(a, b):\n    return a + b\n")
 
 
 if __name__ == "__main__":

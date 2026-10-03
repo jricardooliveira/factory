@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `955 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `955 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `967 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `967 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -196,6 +196,13 @@ input/output is stored, so any run replays offline for free. Evidence is version
 - **Agents cannot write files.** Code reaches disk only via `code_blocks` → `materialize_code_blocks`.
   Any file that appears in the repo undeclared is an out-of-band write and *blocks* gate-build.
   Don't "fix" that by enabling agent write tools.
+- **A run that stops mid-coding discards its own uncommitted writes** (`coder._discard_attempt`
+  → `workspace.git.git_discard_paths`): only the paths the factory materialized on this task's
+  attempts (or the remediation pass) — restored from HEAD if tracked, else deleted. Never
+  `git clean`: operator files, the out-of-band file itself and evidence stay. Otherwise the
+  NEXT story is blocked as out-of-band on its first task. The code survives in `agent_logs`.
+  `git_commit_all` (`git add -A`) never commits `__pycache__/`, `*.pyc`, `.pytest_cache/` or a
+  product `/.venv/` (`_INFRA_EXCLUDES` in `.git/info/exclude`).
 - **The runner is a choice, the tiers are not.** `settings().runner.agents` (`factory.toml`
   `[runner] agents`, env `FACTORY_RUNNER`) = `opencode` (default) or `claude`; under `claude`,
   `tiers.model_for_tier` reads `[claude_tiers]` (every tier, all `claude/<model>`, each priced)
@@ -287,6 +294,10 @@ input/output is stored, so any run replays offline for free. Evidence is version
   The `/factory-intake` skill (`.claude/skills/factory-intake/SKILL.md`) is a second door to the
   same interview: Claude asks in Claude Code, then calls `factory interview --import` (product) or
   `factory run --project --no-interview` with an Operator clarifications block (story).
+- **`factory dismiss` of a failed/blocked run returns its backlog story to `approved`**
+  (`state.backlog.return_to_backlog`), so `factory next` starts it again. `factory retry` only
+  re-drives a run with an answered checkpoint; `factory status` offers it only then
+  (`RunFact.retryable`), else dismiss → next.
 - **One live run per project** (`runs.service._refuse_if_project_busy`): the coder's
   checkpoint stages the whole working tree. Replays are exempt (own scratch clone).
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins

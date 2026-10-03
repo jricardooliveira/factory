@@ -152,5 +152,38 @@ class BacklogServiceTests(unittest.TestCase):
                          [("a", "started"), ("c", "approved")])
         self.assertEqual(runs.next_story("shop", db_path=self.db_path)["title"], "c")
 
+    def _started_run(self, status: str) -> tuple[dict, int]:
+        self._agent(_proposal("a", "b"))
+        self._propose(True)
+        row = runs.next_story("shop", db_path=self.db_path)
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "STORY-001", "a", "Build a.")
+            rid = db.start_run(conn, "STORY-001")
+            db.finish_run(conn, rid, status)
+        runs.mark_started(row["id"], story_id="STORY-001", run_id=rid, db_path=self.db_path)
+        return row, rid
+
+    def _assert_dismiss_returns_the_story(self, status: str) -> None:
+        row, rid = self._started_run(status)
+        self.assertEqual(runs.next_story("shop", db_path=self.db_path)["title"], "b")
+        self.assertTrue(runs.dismiss_run(rid, db_path=self.db_path))  # said so to the operator
+        again = runs.next_story("shop", db_path=self.db_path)
+        self.assertEqual((again["id"], again["run_id"], again["story_id"]),
+                         (row["id"], None, None))
+        self.assertIn("1. **a** — approved", (self.repo / BACKLOG_RELPATH).read_text())
+
+    def test_dismissing_a_failed_run_returns_its_story_to_the_backlog(self) -> None:
+        """A run that failed at gate-build has no checkpoint to retry from; without
+        this its story stayed 'started' and `factory next` skipped it forever."""
+        self._assert_dismiss_returns_the_story("failed")
+
+    def test_dismissing_a_blocked_run_returns_its_story_to_the_backlog(self) -> None:
+        self._assert_dismiss_returns_the_story("blocked")
+
+    def test_dismissing_a_completed_run_keeps_its_story_done(self) -> None:
+        _row, rid = self._started_run("completed")
+        self.assertFalse(runs.dismiss_run(rid, db_path=self.db_path))
+        self.assertEqual(runs.next_story("shop", db_path=self.db_path)["title"], "b")
+
     def test_next_story_is_none_on_an_empty_backlog(self) -> None:
         self.assertIsNone(runs.next_story("shop", db_path=self.db_path))
