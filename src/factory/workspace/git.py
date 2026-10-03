@@ -284,6 +284,13 @@ def git_head(root: Path) -> str | None:
     return _git_resolve(root, "HEAD")
 
 
+def git_resolve_commit(root: Path, ref: str) -> str | None:
+    """`ref` as a commit sha, or None when this repo has no such commit."""
+    if not is_git_repo(root) or shutil.which("git") is None:
+        return None
+    return _git_resolve(root, f"{ref}^{{commit}}")
+
+
 # git --name-status letters → the schema's change vocabulary.
 _STATUS_MAP = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "added"}
 

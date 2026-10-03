@@ -79,6 +79,23 @@ class ProjectStatusTests(unittest.TestCase):
                      for r in runs.project_status("habits", db_path=self.db_path).facts.runs}
         self.assertEqual(retryable, {built: False, answered: True})
 
+    def test_dismissing_a_released_run_keeps_the_story_released(self) -> None:
+        with db.get_db(self.db_path) as conn:
+            replace_unstarted(conn, self.pid, [BacklogStory(title="Skeleton", request="r"),
+                                               BacklogStory(title="Habits", request="r")])
+            db.create_story(conn, "US-0001", "Skeleton", "r", project_id=self.pid)
+            rid = db.start_run(conn, "US-0001", project_id=self.pid)
+            db.update_run_stage(conn, rid, "release")
+            db.finish_run(conn, rid, "completed")
+            mark_started(conn, list_backlog(conn, self.pid)[0]["id"], story_id="US-0001",
+                         run_id=rid)
+        runs.dismiss_run(rid, db_path=self.db_path)
+        runs.dismiss_run(rid, db_path=self.db_path)  # dismissing twice keeps the origin
+        status = runs.project_status("habits", db_path=self.db_path)
+        run = status.facts.backlog[0].run
+        self.assertEqual((run.status, run.archived_from), ("archived", "completed"))
+        self.assertIn("1 of 2 released", status.phases[3].detail)
+
     def test_every_project_when_none_is_named(self) -> None:
         create_project(self.db_path, home=self.home, slug="shop")
         self.assertEqual([s.facts.slug for s in runs.all_project_status(db_path=self.db_path)],

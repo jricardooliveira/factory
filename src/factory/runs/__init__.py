@@ -6,7 +6,13 @@ Interfaces reach the database only through here. Nothing here renders; progress
 is reported through an `on_event` callback.
 """
 
-from factory.runs.backlog import BacklogOutcome, mark_started, next_story, propose_backlog
+from factory.runs.backlog import (
+    BacklogOutcome,
+    mark_started,
+    next_story,
+    propose_backlog,
+    run_backlog_story,
+)
 from factory.runs.context import (
     build_resume_context,
     decision_from_response,
@@ -22,6 +28,7 @@ from factory.runs.events import (
     RunError,
     RunEvent,
     RunFinished,
+    RunInterrupted,
     RunOutcome,
     RunStarted,
 )
@@ -56,6 +63,7 @@ __all__ = [
     "RunError",
     "RunEvent",
     "RunFinished",
+    "RunInterrupted",
     "RunOutcome",
     "RunStarted",
     "build_resume_context",
@@ -72,6 +80,7 @@ __all__ = [
     "resume_run",
     "retry_run",
     "import_answers",
+    "run_backlog_story",
     "run_interview",
     "run_story_interview",
     "run_pipeline",

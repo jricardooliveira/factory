@@ -105,20 +105,20 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
                 await self._settle(app, pilot)
         run.assert_called_once_with("habits", "add a habit", db_path=self.db_path)
 
-    async def test_next_story_starts_and_marks_the_backlog_row(self) -> None:
+    async def test_next_story_starts_the_backlog_row_through_the_backlog_service(self) -> None:
+        """`run_backlog_story` marks the row started when the run exists (not after
+        it returns) and starts from the row's base_commit."""
         app = FactoryBoard(self.db_path)
         app._project_filter = "habits"
         outcome = SimpleNamespace(run_id=7, status="waiting_human", story_id="US-0001")
-        with patch(f"{TUI}.next_story", return_value={"id": 3, "request": "log a habit",
-                                                      "title": "Log"}), \
+        row = {"id": 3, "request": "log a habit", "title": "Log"}
+        with patch(f"{TUI}.next_story", return_value=row), \
                 patch(f"{TUI}.has_brief", return_value=False), \
-                patch(f"{TUI}.run_project_pipeline", return_value=outcome) as run, \
-                patch(f"{TUI}.mark_started") as mark:
+                patch(f"{TUI}.run_backlog_story", return_value=outcome) as run:
             async with app.run_test() as pilot:
                 self._command(app, "Story: run next from backlog")()
                 await self._settle(app, pilot)
-        run.assert_called_once_with("habits", "log a habit", db_path=self.db_path)
-        mark.assert_called_once_with(3, story_id="US-0001", run_id=7, db_path=self.db_path)
+        run.assert_called_once_with("habits", row, "log a habit", db_path=self.db_path)
 
     async def test_a_failing_command_is_shown_not_a_crash(self) -> None:
         app = FactoryBoard(self.db_path)

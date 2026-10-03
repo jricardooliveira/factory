@@ -28,6 +28,7 @@ from factory.interfaces.cli import (
     workspace,
 )
 from factory.interfaces.cli.common import fail
+from factory.runs import RunInterrupted
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "project": project.project_command,
@@ -171,12 +172,21 @@ def main() -> None:
         # (`factory reject 20 --help` rejected run 20 with the reason "--help").
         if any(a in _HELP_FLAGS for a in args):
             print_usage(exit_code=0, verb=cmd)
-        command(args)
+        _interruptible(command, args)
         return
     refusal = request_refusal(_request_words(sys.argv[1:]))
     if refusal:
         fail(refusal)
-    run.request_command(sys.argv[1:])
+    _interruptible(run.request_command, sys.argv[1:])
+
+
+def _interruptible(command: Callable[[list[str]], None], args: list[str]) -> None:
+    """Ctrl-C mid-run: the service already failed and cleaned the run; say so, no traceback."""
+    try:
+        command(args)
+    except RunInterrupted as exc:
+        render.print_error(f"interrupted; run #{exc.run_id} marked failed")
+        sys.exit(130)
 
 
 if __name__ == "__main__":

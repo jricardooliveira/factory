@@ -21,6 +21,7 @@ from factory.evidence.brief import BRIEF_RELPATH
 from factory.runs import RunError
 from factory.state import db
 from factory.state.backlog import list_backlog
+from factory.workspace.git import git_commit_all, git_head
 from factory.workspace.projects import create_project
 
 
@@ -184,6 +185,60 @@ class BacklogServiceTests(unittest.TestCase):
         _row, rid = self._started_run("completed")
         self.assertFalse(runs.dismiss_run(rid, db_path=self.db_path))
         self.assertEqual(runs.next_story("shop", db_path=self.db_path)["title"], "b")
+
+    def _run_next(self, on_event=None):
+        row = runs.next_story("shop", db_path=self.db_path)
+        with patch("factory.pipeline.agent_calls.run_agent", side_effect=RuntimeError("no")):
+            outcome = runs.run_backlog_story("shop", row, row["request"], db_path=self.db_path,
+                                             on_event=on_event)
+        with db.get_db(self.db_path) as conn:
+            return row, outcome, db.get_run(conn, outcome.run_id)
+
+    def test_a_backlog_story_is_marked_started_as_soon_as_its_run_exists(self) -> None:
+        """Marked only after the run returned, an interrupted story was offered again."""
+        self._agent(_proposal("a", "b"))
+        self._propose(True)
+        seen: list = []
+
+        def on_event(event):
+            if isinstance(event, runs.RunStarted):
+                seen.append(runs.next_story("shop", db_path=self.db_path)["title"])
+            if isinstance(event, runs.NodeStarted):
+                raise KeyboardInterrupt  # the operator's Ctrl-C, mid-run
+
+        with self.assertRaises(KeyboardInterrupt):
+            self._run_next(on_event)
+        self.assertEqual(seen, ["b"])  # already started when the caller heard of the run
+        first = self._rows()[0]
+        self.assertEqual((first["title"], first["status"]), ("a", "started"))
+        self.assertIsNotNone(first["run_id"])
+
+    def test_a_dismissed_failed_story_reruns_from_its_first_base_commit(self) -> None:
+        """Its passed task is committed but was never reviewed: the re-run's review
+        diff and change set must still contain it."""
+        self._agent(_proposal("a"))
+        self._propose(True)
+        _row, first, first_run = self._run_next()
+        (self.repo / "model.py").write_text("class Habit: ...\n")
+        git_commit_all(self.repo, "factory: T-1 model")  # the failed run's passed task
+        with db.get_db(self.db_path) as conn:
+            db.finish_run(conn, first.run_id, "failed")
+        runs.dismiss_run(first.run_id, db_path=self.db_path)
+        self.assertEqual(runs.next_story("shop", db_path=self.db_path)["base_commit"],
+                         first_run["base_commit"])
+
+        _row, again, again_run = self._run_next()
+        self.assertNotEqual(again.run_id, first.run_id)
+        self.assertEqual(again_run["base_commit"], first_run["base_commit"])
+        self.assertNotEqual(again_run["base_commit"], git_head(self.repo))
+
+    def test_a_base_commit_not_in_the_repo_falls_back_to_head(self) -> None:
+        head = git_head(self.repo)  # the run's PIPELINE.md commit moves HEAD on
+        with patch("factory.pipeline.agent_calls.run_agent", side_effect=RuntimeError("no")):
+            outcome = runs.run_project_pipeline("shop", "Build a.", db_path=self.db_path,
+                                                base_commit="0" * 40)
+        with db.get_db(self.db_path) as conn:
+            self.assertEqual(db.get_run(conn, outcome.run_id)["base_commit"], head)
 
     def test_next_story_is_none_on_an_empty_backlog(self) -> None:
         self.assertIsNone(runs.next_story("shop", db_path=self.db_path))

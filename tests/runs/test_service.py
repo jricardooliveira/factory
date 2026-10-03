@@ -224,6 +224,58 @@ class RetryRunTests(_ServiceCase):
         self.assertEqual(self._status(rid), "waiting_human")
 
 
+class _InterruptedGraph:
+    """A graph whose coder materializes a failed attempt, then gets Ctrl-C."""
+
+    def __init__(self, repo: Path) -> None:
+        self.repo = repo
+
+    def stream(self, state, stream_mode):
+        (self.repo / "a.py").write_text("x = 1\n")  # the factory's own attempt
+        yield "updates", {"coder-agent": {"next_action": "retry", "attempt_written": ["a.py"]}}
+        (self.repo / "notes.txt").write_text("mine\n")  # the operator's, mid-run
+        raise KeyboardInterrupt
+
+
+class InterruptTests(unittest.TestCase):
+    """Ctrl-C is not an Exception: no node catches it, so the service must."""
+
+    def setUp(self) -> None:
+        from factory.workspace.projects import create_project
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        self.db_path = self.home / "factory.db"
+        db.init_db(self.db_path)
+        self.project = create_project(self.db_path, home=self.home, slug="shop")
+        self.repo = Path(self.project["repo_path"])
+
+    def test_an_interrupted_run_is_failed_cleaned_up_and_recorded(self) -> None:
+        import subprocess
+
+        from factory import runs
+
+        with patch("factory.runs.service.compile_pipeline",
+                   return_value=_InterruptedGraph(self.repo)), \
+                self.assertRaises(KeyboardInterrupt) as raised:
+            runs.run_pipeline("add a cart", opencode_cwd=str(self.repo), db_path=self.db_path,
+                              project_id=self.project["id"])
+        self.assertIsInstance(raised.exception, runs.RunInterrupted)
+        rid = raised.exception.run_id
+        with db.get_db(self.db_path) as conn:
+            run = db.get_run(conn, rid)
+            story = conn.execute("SELECT status FROM stories WHERE id = ?",
+                                 (run["story_id"],)).fetchone()
+        self.assertEqual((run["status"], run["error"]), ("failed", "interrupted by the operator"))
+        self.assertEqual(story["status"], "failed")
+        self.assertFalse((self.repo / "a.py").exists())  # the factory's attempt: discarded
+        self.assertTrue((self.repo / "notes.txt").exists())  # the operator's: never touched
+        log = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=self.repo,
+                             capture_output=True, text=True).stdout
+        self.assertIn(f"PIPELINE (run {rid})", log)
+
+
 class ServiceIsHeadlessTests(unittest.TestCase):
     """`runs` is shared by every interface, so it may not render anything itself."""
 

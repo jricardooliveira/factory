@@ -197,6 +197,11 @@ def init_db(path: Path) -> None:
         # The commit gate-release judged and the operator reviewed at Checkpoint 3:
         # releasing it later must release exactly that code.
         _ensure_column(conn, "pipeline_runs", "candidate_commit", "TEXT")
+        # The status a dismissed run was archived from: a dismissed release stays released.
+        _ensure_column(conn, "pipeline_runs", "archived_from", "TEXT")
+        # A returned story's first base_commit: its failed run's passed tasks stay
+        # committed, so the re-run must measure (and review) from before them.
+        _ensure_column(conn, "backlog_stories", "base_commit", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -428,7 +433,7 @@ def project_runs(conn: sqlite3.Connection, project_id: str) -> list[dict[str, An
     """A project's live runs (replays excluded), newest first, with the story title."""
     rows = conn.execute(
         """
-        SELECT pr.id, pr.status, pr.current_stage, s.title AS story_title
+        SELECT pr.id, pr.status, pr.current_stage, pr.archived_from, s.title AS story_title
         FROM pipeline_runs pr JOIN stories s ON pr.story_id = s.id
         WHERE pr.project_id = ? AND pr.replay_of IS NULL
         ORDER BY pr.id DESC
@@ -462,7 +467,9 @@ def archive_run(conn: sqlite3.Connection, run_id: int) -> None:
     """Dismiss a run from the board (terminal, hidden state). Non-destructive."""
     now = _now()
     conn.execute(
-        "UPDATE pipeline_runs SET status = 'archived', finished_at = COALESCE(finished_at, ?) "
+        # SET reads the pre-update row, so a second dismiss keeps the first origin.
+        "UPDATE pipeline_runs SET status = 'archived', finished_at = COALESCE(finished_at, ?), "
+        "archived_from = CASE WHEN status = 'archived' THEN archived_from ELSE status END "
         "WHERE id = ?",
         (now, run_id),
     )

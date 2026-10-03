@@ -64,3 +64,17 @@ class BacklogStateTests(unittest.TestCase):
             backlog.mark_started(conn, row["id"], story_id="S", run_id=1)
             self.assertIsNone(backlog.next_approved(conn, "PROJ-001"))
             self.assertEqual(backlog.get_backlog_row(conn, row["id"])["project_id"], "PROJ-001")
+
+    def test_a_returned_story_remembers_the_base_commit_of_the_run_that_failed(self) -> None:
+        """Its passed tasks stay committed; the re-run must review from before them."""
+        with db.get_db(self.db_path) as conn:
+            backlog.replace_unstarted(conn, "PROJ-001", _stories("a"))
+            row = backlog.next_approved(conn, "PROJ-001")
+            self.assertIsNone(row["base_commit"])
+            db.create_story(conn, "S", "a", "Do a.", project_id="PROJ-001")
+            rid = db.start_run(conn, "S", project_id="PROJ-001", base_commit="abc123")
+            backlog.mark_started(conn, row["id"], story_id="S", run_id=rid)
+            self.assertEqual(backlog.return_to_backlog(conn, rid), ["PROJ-001"])
+            again = backlog.next_approved(conn, "PROJ-001")
+        self.assertEqual((again["id"], again["base_commit"]), (row["id"], "abc123"))
+        self.assertEqual(self._rows()[0]["base_commit"], "abc123")

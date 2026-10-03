@@ -8,6 +8,7 @@ complete without anything ever establishing that the code compiles.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -99,7 +100,10 @@ def go_build(module_dirs: list[Path]) -> VerifyCheck:
     for module_dir in module_dirs:
         module_path = _go_module_path(module_dir)
         try:
-            proc = run_command(["go", "build", "./..."], module_dir, timeout=BUILD_TIMEOUT)
+            # -o devnull: on a single main package `go build` writes its executable into
+            # the product tree — an untracked file the next run would be refused for.
+            proc = run_command(["go", "build", "-o", os.devnull, "./..."], module_dir,
+                               timeout=BUILD_TIMEOUT)
         except subprocess.TimeoutExpired:
             warnings.append(f"{module_dir.name}: timed out")
             continue

@@ -54,7 +54,6 @@ from factory.runs import (
     all_project_status,
     dismiss_run,
     has_brief,
-    mark_started,
     next_story,
     project_status,
     propose_backlog,
@@ -62,6 +61,7 @@ from factory.runs import (
     replay_run,
     resume_run,
     retry_run,
+    run_backlog_story,
     run_interview,
     run_project_pipeline,
     run_story_interview,
@@ -581,9 +581,9 @@ class FactoryBoard(App):
         row = next_story(ref, db_path=self.db_path)
         if row is None:
             return f"No approved story left in the {ref} backlog."
-        outcome = self._start_story(ref, row["request"])
-        mark_started(row["id"], story_id=outcome.story_id, run_id=outcome.run_id,
-                     db_path=self.db_path)
+        # Marked started the moment its run exists, and run from its base_commit.
+        outcome = run_backlog_story(ref, row, self._clarified(ref, row["request"]),
+                                    db_path=self.db_path)
         return f"Story {row['title']!r}: run #{outcome.run_id} {outcome.status}."
 
     def _menu_story(self) -> None:
@@ -596,10 +596,13 @@ class FactoryBoard(App):
         return f"Run #{outcome.run_id} {outcome.status}."
 
     def _start_story(self, ref: str, request: str):
+        return run_project_pipeline(ref, self._clarified(ref, request), db_path=self.db_path)
+
+    def _clarified(self, ref: str, request: str) -> str:
         # Same order as `factory next`: the story-level interview first, when a brief exists.
         if has_brief(ref, db_path=self.db_path):
             request = run_story_interview(ref, request, db_path=self.db_path, ask=self._ask)
-        return run_project_pipeline(ref, request, db_path=self.db_path)
+        return request
 
     def _menu_run(self, verb: str) -> None:
         if not self.selected_id:

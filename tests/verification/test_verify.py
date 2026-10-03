@@ -396,6 +396,14 @@ class GoVerificationTests(unittest.TestCase):
         self.assertEqual(names["go_build"], "pass", result.summary)
         self.assertTrue(result.passed)
 
+    def test_go_build_leaves_no_binary_in_the_product(self) -> None:
+        """`go build ./...` on a single main package writes its executable into the
+        module: an untracked file the next run's dirty-tree preflight refuses."""
+        p = self._write("main.go", "package main\n\nfunc main() {}\n")
+        result = verify_changes([p], root=self.root)
+        self.assertTrue(result.passed, result.summary)
+        self.assertEqual(sorted(f.name for f in self.root.iterdir()), ["go.mod", "main.go"])
+
     def test_go_that_does_not_compile_FAILS_the_gate(self) -> None:
         """The whole point: a syntax error must block, not skip."""
         p = self._write("internal/domain/broken.go", (

@@ -48,12 +48,14 @@ from factory.runs.events import (
     RetryStarted,
     RunError,
     RunFinished,
+    RunInterrupted,
     RunOutcome,
     RunStarted,
     ignore_events,
 )
 from factory.state.db import (
     agent_logs_after,
+    finish_run,
     last_agent_log_id,
     live_runs_in_project,
     create_story,
@@ -67,9 +69,17 @@ from factory.state.db import (
     requeue_answered_gate,
     respond_to_gate,
     start_run,
+    update_story_status,
 )
 from factory.verification import tests_enabled
-from factory.workspace.git import git_commit_paths, git_head
+from factory.workspace.git import (
+    git_changed_paths,
+    git_commit_paths,
+    git_discard_paths,
+    git_head,
+    git_resolve_commit,
+)
+from factory.workspace.layout import EVIDENCE_PATHS
 from factory.workspace.projects import agents_link_problem, get_project
 from factory.workspace.sandbox import prepare_replay_sandbox
 
@@ -85,8 +95,13 @@ def run_pipeline(
     on_event: OnEvent | None = None,
     notify_operator: bool = True,
     prepare_workdir: Callable[[Path], None] | None = None,
+    base_commit: str | None = None,
 ) -> RunOutcome:
     """Start a run (or replay one on frozen outputs) and stream it to the end.
+
+    `base_commit` (a fresh run only) is where the run's review starts instead of
+    HEAD: a story returned to the backlog passes its failed run's, whose passed
+    tasks are committed but were never reviewed. Ignored unless it is a commit here.
 
     A replay never works in `opencode_cwd` itself: it gets a scratch clone of it
     (see `workspace.sandbox`), so re-driving a past run cannot touch the product.
@@ -113,12 +128,14 @@ def run_pipeline(
         else:
             if project_id:
                 _refuse_if_project_busy(conn, project_id)
+                if opencode_cwd:
+                    _refuse_if_tree_dirty(cwd)
             story_id = next_story_id(conn)
             create_story(conn, story_id, "Pending", request, project_id=project_id)
             # Pin the target repo's HEAD as THIS run's baseline, so the trust package
             # can measure this run's change set from git rather than lumping in every
             # factory commit ever made to the repo.
-            base_commit = git_head(cwd)
+            base_commit = (base_commit and git_resolve_commit(cwd, base_commit)) or git_head(cwd)
         run_id = start_run(
             conn, story_id, project_id=project_id, base_commit=base_commit,
             replay_of=replay_run_id,
@@ -166,19 +183,45 @@ def _stream(
     (with the duration + cost of the agent calls it logged) after. Returns the final state."""
     final_state = dict(state)
     mark = 0
-    # "tasks" announces a node before it runs (and again with its result, ignored);
-    # "updates" carries the state update it returned.
-    for mode, chunk in pipeline.stream(state, stream_mode=["tasks", "updates"]):
-        if mode == "tasks":
-            if "input" in chunk:
-                with get_db(db_path) as conn:
-                    mark = last_agent_log_id(conn)
-                emit(NodeStarted(chunk["name"], node_detail(chunk["name"], chunk["input"])))
-            continue
-        for node_name, node_output in chunk.items():
-            final_state.update(node_output)
-            emit(NodeCompleted(node_name, node_output, *_node_usage(db_path, run_id, mark)))
+    try:
+        # "tasks" announces a node before it runs (and again with its result, ignored);
+        # "updates" carries the state update it returned.
+        for mode, chunk in pipeline.stream(state, stream_mode=["tasks", "updates"]):
+            if mode == "tasks":
+                if "input" in chunk:
+                    with get_db(db_path) as conn:
+                        mark = last_agent_log_id(conn)
+                    emit(NodeStarted(chunk["name"], node_detail(chunk["name"], chunk["input"])))
+                continue
+            for node_name, node_output in chunk.items():
+                final_state.update(node_output)
+                emit(NodeCompleted(node_name, node_output, *_node_usage(db_path, run_id, mark)))
+    except KeyboardInterrupt as exc:
+        # Not an Exception, so no node catches it: without this the run stayed
+        # 'running' and its attempt files were the next story's "out-of-band" writes.
+        _interrupted(run_id, final_state, db_path)
+        raise RunInterrupted(run_id) from exc
     return final_state
+
+
+INTERRUPTED = "interrupted by the operator"
+
+
+def _interrupted(run_id: int, state: dict[str, Any], db_path: Path) -> None:
+    """End an interrupted run as `failed` and undo the factory's uncommitted writes.
+
+    Only the earlier attempts' files (`attempt_written`) are known here; a pass cut
+    off mid-materialize leaves its files, which the next run's dirty-tree check names.
+    """
+    with get_db(db_path) as conn:
+        run = get_run(conn, run_id)
+        if not run or run["status"] != "running":
+            return  # a node already ended it (or a cleanup is re-entered)
+        update_story_status(conn, run["story_id"], "failed")
+        finish_run(conn, run_id, "failed", error=INTERRUPTED)
+    if state.get("opencode_cwd"):
+        git_discard_paths(Path(state["opencode_cwd"]), state.get("attempt_written") or [])
+    _commit_pipeline_record(run_id, run["story_id"], state, db_path)
 
 
 def node_detail(node: str, state: dict[str, Any]) -> str:
@@ -215,6 +258,7 @@ def run_project_pipeline(
     *,
     db_path: Path,
     on_event: OnEvent | None = None,
+    base_commit: str | None = None,
 ) -> RunOutcome:
     """Run the pipeline for a registered project (ValueError if it is unknown)."""
     project = get_project(db_path, project_ref)
@@ -226,6 +270,7 @@ def run_project_pipeline(
         db_path=db_path,
         project_id=project["id"],
         on_event=on_event,
+        base_commit=base_commit,
     )
 
 
@@ -437,6 +482,20 @@ def _refuse_if_project_busy(conn: Any, project_id: str, *, except_run: int | Non
             f"Run #{busy[0]} is already working in project {project_id}; two stories in one "
             "repository would commit each other's changes. Wait for it to stop, or run "
             "`factory reconcile` if its process died."
+        )
+
+
+def _refuse_if_tree_dirty(repo: Path) -> None:
+    """Refuse a project run on uncommitted changes the factory did not make, before a
+    token is spent: the coder would BLOCK on them as out-of-band writes, after spec
+    and architect were paid for. Evidence and tooling noise (.venv, bytecode) don't count."""
+    dirty = git_changed_paths(repo, exclude=EVIDENCE_PATHS)
+    if dirty:
+        shown = ", ".join(dirty[:10]) + (f" (+{len(dirty) - 10} more)" if len(dirty) > 10 else "")
+        raise RunError(
+            f"The project repository has uncommitted changes the factory did not make: "
+            f"{shown}. The coder would block on them as out-of-band writes. Commit or "
+            f"discard them first (`git -C {repo} status`)."
         )
 
 

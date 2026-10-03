@@ -97,6 +97,17 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(lifecycle(facts)[3].state, "done")
         self.assertIn("1 of 1 released", lifecycle(facts)[3].detail)
 
+    def test_a_dismissed_released_run_still_counts_as_released(self) -> None:
+        """`factory dismiss` archives a completed run; the story stays released."""
+        archived = RunFact(id=1, status="archived", stage="release", title="run 1",
+                           archived_from="completed")
+        failed = RunFact(id=2, status="archived", stage="coder", title="run 2",
+                         archived_from="failed")
+        facts = _facts(backlog=(_story(1, "started", archived), _story(2, "started", failed)))
+        phases = lifecycle(facts)
+        self.assertIn("1 released", phases[1].detail)
+        self.assertIn("1 of 2 released", phases[3].detail)
+
 
 if __name__ == "__main__":
     unittest.main()

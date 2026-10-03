@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `967 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `967 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `978 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `978 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -300,6 +300,19 @@ input/output is stored, so any run replays offline for free. Evidence is version
   (`RunFact.retryable`), else dismiss → next.
 - **One live run per project** (`runs.service._refuse_if_project_busy`): the coder's
   checkpoint stages the whole working tree. Replays are exempt (own scratch clone).
+- **A dirty product tree is refused before a token is spent** (`runs.service._refuse_if_tree_dirty`):
+  uncommitted changes outside `EVIDENCE_PATHS` (tooling noise like `.venv`/`__pycache__` aside)
+  would BLOCK the coder as out-of-band after spec + architect were paid. So no factory flow may
+  leave a non-evidence file behind (that is why `go build` runs with `-o /dev/null`).
+- **Ctrl-C ends a run cleanly**: `runs.service._stream` catches `KeyboardInterrupt` (no node
+  does — it is not an `Exception`), fails the run "interrupted by the operator", discards
+  `attempt_written`, commits PIPELINE.md and raises `RunInterrupted` (a KeyboardInterrupt with
+  `run_id`); the CLI prints one line and exits 130. `runs.run_backlog_story` marks the backlog
+  row started at `RunStarted`, so an interrupted story is not offered again by `factory next`.
+- **A returned story keeps its failed run's `base_commit`** (`backlog_stories.base_commit`, set by
+  dismiss): that run's passed tasks stay committed, so `factory next` passes it to
+  `run_pipeline(base_commit=...)` and the re-run reviews them too (falls back to HEAD if it is
+  not a commit in the repo). A dismissed COMPLETED run stays released (`pipeline_runs.archived_from`).
 - **Every review diff starts at the run's `base_commit`** (state key), and Checkpoint 3 pins
   `candidate_commit`: `release` refuses if code changed since (evidence commits excluded).
 - Editing anything in `agents/`, `domain/gates.py`, `domain/ambiguity.py`, `agent_config/`, or

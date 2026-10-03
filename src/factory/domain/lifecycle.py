@@ -20,6 +20,7 @@ class RunFact:
     stage: str
     title: str
     retryable: bool = False  # has an answered checkpoint `factory retry` can re-drive
+    archived_from: str = ""  # the status `factory dismiss` archived it from ("" = never)
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,9 @@ class NextStep:
 
 
 def _released(facts: ProjectFacts) -> int:
-    return sum(1 for s in facts.backlog if s.run and s.run.status == "completed")
+    # A dismissed release is still a release: dismiss only tidies the board.
+    return sum(1 for s in facts.backlog
+               if s.run and "completed" in (s.run.status, s.run.archived_from))
 
 
 def _to_do(facts: ProjectFacts) -> list[StoryFact]:

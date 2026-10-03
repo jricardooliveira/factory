@@ -53,7 +53,8 @@ def _status(project: dict, db_path: Path) -> ProjectStatus:
         stories = story_spend(usage_rows(conn, project_id=project["id"]), prices).estimated_usd
         # The same test `retry_run` applies, so status never suggests a retry it refuses.
         runs = tuple(RunFact(r["id"], r["status"], r["current_stage"], r["story_title"],
-                             retryable=get_answered_human_gate(conn, r["id"]) is not None)
+                             retryable=get_answered_human_gate(conn, r["id"]) is not None,
+                             archived_from=r["archived_from"] or "")
                      for r in run_rows)
     by_id = {r.id: r for r in runs}
     facts = ProjectFacts(

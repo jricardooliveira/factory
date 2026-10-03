@@ -23,7 +23,8 @@ from factory.domain.backlog import BacklogOutput, BacklogStory
 from factory.domain.gates import MAX_BACKLOG_REVISIONS
 from factory.evidence.backlog import render_backlog, write_backlog
 from factory.evidence.brief import load_brief
-from factory.runs.events import RunError
+from factory.runs.events import OnEvent, RunError, RunEvent, RunOutcome, RunStarted, ignore_events
+from factory.runs.service import run_project_pipeline
 from factory.state import backlog as rows
 from factory.state.db import get_db
 from factory.state.interviews import log_turn
@@ -144,3 +145,24 @@ def mark_started(row_id: int, *, story_id: str | None, run_id: int | None, db_pa
     if row is None:
         raise RunError(f"No backlog story #{row_id}")
     _write_and_commit(get_project(db_path, row["project_id"]), db_path=db_path)
+
+
+def run_backlog_story(
+    project_ref: str, row: dict[str, Any], request: str, *, db_path: Path,
+    on_event: OnEvent | None = None,
+) -> RunOutcome:
+    """Run a backlog story (`factory next`), from the base_commit it was returned with.
+
+    The row is marked started the moment its run row exists, not when the run
+    returns: an interrupted or crashed story was otherwise offered again by `next`.
+    """
+    emit = on_event or ignore_events
+
+    def mark_then_emit(event: RunEvent) -> None:
+        if isinstance(event, RunStarted):
+            mark_started(row["id"], story_id=event.story_id, run_id=event.run_id,
+                         db_path=db_path)
+        emit(event)
+
+    return run_project_pipeline(project_ref, request, db_path=db_path, on_event=mark_then_emit,
+                                base_commit=row.get("base_commit"))
