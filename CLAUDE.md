@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `897 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `897 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `920 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `920 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -115,6 +115,11 @@ src/factory/
                         interview.py, backlog.py, selftest.py, board.py, workspace.py = one module per command
                         group),
                         board/ (tui.py, data.py, html_report.py). Nothing imports interfaces.
+skills/                 Anti-slop skills (ponytail, ponytail-review, karpathy-guidelines, superpowers
+                        TDD / systematic-debugging / verification-before-completion; MIT, LICENSES.md)
+                        copied into every product's .claude/skills/ (`create_project`, `factory
+                        project refresh`); their gist is the "Code discipline" section of
+                        PROJECT_RULES.md, which reaches every agent prompt (golden-pinned).
 evals/cases/*.json      Behavioural eval corpus (frozen agent outputs + expected outcome).
 examples/specs/         Sample project specs.
 docs/ARCHITECTURE.md    One page: layer diagram, package ownership, the one-way rule, where to add things.

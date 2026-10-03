@@ -73,6 +73,7 @@ USAGE: tuple[tuple[str, str], ...] = (
     ("project create <slug>", "Create/register project"),
     ("project list", "List projects"),
     ("project show <id>", "Show project"),
+    ("project refresh <id>", "Install the anti-slop skills + code-discipline rules into a project"),
     ("list", "List all runs"),
     ("queue", "Show runs awaiting review / needing attention"),
     ("board [--once | --plain] [--interval S]", "Interactive board: approve/reject in place"),

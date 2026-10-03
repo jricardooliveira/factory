@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 _IGNORE_DIRS = {
-    ".git", "__pycache__", ".venv", "venv", ".opencode", ".pytest_cache",
+    ".git", "__pycache__", ".venv", "venv", ".opencode", ".claude", ".pytest_cache",
     "node_modules", ".sandbox", ".mypy_cache", ".ruff_cache", "dist", "build",
     ".egg-info", "vendor",
 }

@@ -21,6 +21,7 @@ TIERS_FILENAME = "tiers.toml"
 _CHECKOUT_ROOT = Path(__file__).resolve().parents[3]
 # factory/_agents inside an installed wheel (see [tool.hatch...force-include]).
 _PACKAGED_AGENTS = Path(__file__).resolve().parents[1] / "_agents"
+_PACKAGED_SKILLS = Path(__file__).resolve().parents[1] / "_skills"
 
 
 def checkout_root() -> Path:
@@ -39,3 +40,10 @@ def agents_dir() -> Path:
     if (checkout / TIERS_FILENAME).is_file() or not _PACKAGED_AGENTS.is_dir():
         return checkout
     return _PACKAGED_AGENTS
+
+
+def product_skills_dir() -> Path:
+    """The skills every product gets in ``.claude/skills/``: the checkout's ``skills/``,
+    else the packaged copy (force-included like ``agents/``)."""
+    checkout = _CHECKOUT_ROOT / "skills"
+    return checkout if checkout.is_dir() or not _PACKAGED_SKILLS.is_dir() else _PACKAGED_SKILLS
