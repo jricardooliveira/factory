@@ -99,6 +99,16 @@ def lifecycle(facts: ProjectFacts) -> list[Phase]:
     return phases
 
 
+def failed_run_moves(run_id: int, slug: str | None, *, retryable: bool) -> str:
+    """What to do with a failed/blocked run after reviewing it (status AND queue).
+    Dismissing returns its story to the backlog for `next`; retry only re-drives
+    an answered checkpoint, so it is offered only when there is one."""
+    again = f"factory dismiss {run_id}" + (f" then factory next {slug}" if slug else "")
+    if retryable:
+        return f"factory retry {run_id}  (or {again})"
+    return f"{again}  (the story goes back to the backlog)" if slug else again
+
+
 def next_step(facts: ProjectFacts) -> NextStep:
     slug = facts.slug
     if not facts.has_brief:
@@ -115,12 +125,9 @@ def next_step(facts: ProjectFacts) -> NextStep:
         if run.status == "running":
             return NextStep("factory board", f"run #{run.id} is working: {run.stage}")
         if run.status in ("failed", "blocked"):
-            # Dismissing a failed run returns its story to the backlog for `next`.
-            again = f"factory dismiss {run.id} then factory next {slug}"
             return NextStep(f"factory review {run.id}",
                             f"run #{run.id} {run.status} at {run.stage}",
-                            f"factory retry {run.id}  (or {again})" if run.retryable
-                            else f"{again}  (the story goes back to the backlog)")
+                            failed_run_moves(run.id, slug, retryable=run.retryable))
     if not facts.backlog:
         return NextStep(f"factory backlog {slug}", "the brief is approved; plan the stories")
     if todo := _to_do(facts):

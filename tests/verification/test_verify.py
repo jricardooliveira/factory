@@ -253,6 +253,28 @@ class VerifyChangesTests(unittest.TestCase):
         self.assertEqual(result.verdict, "fail")
         self.assertTrue(any(c.name == "py_compile" and c.status == "fail" for c in result.checks))
 
+    def test_failures_empty_on_pass(self) -> None:
+        f = self.root / "ok.py"
+        f.write_text("def f():\n    return 1\n")
+        self.assertEqual(verify_changes([f], root=self.root).failures, [])
+
+    def test_failures_carry_the_error_text(self) -> None:
+        # The bare `py_compile:fail` summary told the coder's retry nothing.
+        f = self.root / "bad.py"
+        f.write_text("def f(:\n    return\n")
+        failures = verify_changes([f], root=self.root).failures
+        self.assertTrue(failures)
+        self.assertTrue(failures[0].startswith("py_compile: "), failures)
+        self.assertIn("bad.py", failures[0])
+        self.assertIn("SyntaxError", failures[0])
+
+    def test_each_failure_detail_is_bounded(self) -> None:
+        from factory.verification.base import MAX_FAILURE_DETAIL, VerifyCheck, VerifyResult
+
+        result = VerifyResult([VerifyCheck("x", "fail", "e" * 5000), VerifyCheck("y", "pass")])
+        self.assertEqual(len(result.failures), 1)
+        self.assertLessEqual(len(result.failures[0]), len("x: ") + MAX_FAILURE_DETAIL)
+
     def test_non_code_files_skip_and_pass(self) -> None:
         f = self.root / "README.md"
         f.write_text("# hi")

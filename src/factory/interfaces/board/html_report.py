@@ -14,8 +14,14 @@ PIPELINE_STAGES = (
     ("spec-agent", "Story definition"),
     ("gate-1", "Spec gate"),
     ("architect-agent", "Technical approach"),
+    ("boundary-agent", "Boundary review (sensitive designs only)"),
     ("gate-2", "Architecture gate"),
     ("coder-agent", "Implementation"),
+    ("gate-build", "Build verification"),
+    ("tester-agent", "QA / security / performance review"),
+    ("gate-test", "Review gate"),
+    ("release-agent", "Release notes"),
+    ("gate-release", "Release sign-off (Checkpoint 3)"),
 )
 
 

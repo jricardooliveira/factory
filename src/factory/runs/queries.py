@@ -13,6 +13,7 @@ from typing import Any
 
 from factory.agent_config import tiers
 from factory.domain.budget import story_spend
+from factory.domain.lifecycle import failed_run_moves
 from factory.evidence import metrics, trust_package
 from factory.evidence.progress import (
     StageStatus,
@@ -25,6 +26,7 @@ from factory.state import reports
 from factory.state.db import (
     usage_rows,
     get_agent_log,
+    get_answered_human_gate,
     get_db,
     get_pending_human_gate,
     get_run,
@@ -68,7 +70,10 @@ def queue(
             for run in get_runs_by_status(conn, ["waiting_human"])
         ]
         attention = [
-            (run, _spent(conn, run["id"]))
+            ({**run, "next_move": failed_run_moves(
+                run["id"], run.get("project_slug"),
+                retryable=get_answered_human_gate(conn, run["id"]) is not None)},
+             _spent(conn, run["id"]))
             for run in get_runs_by_status(conn, ["failed", "blocked"])
         ]
     return parked, attention
@@ -102,6 +107,7 @@ class BoardEntry:
     cost: float
     gate: Gate = None
     architect_output: str = ""  # the design under review, for a parked run
+    release_output: str = ""  # the release notes, for a run parked at Checkpoint 3
 
 
 def board_entries(status_groups: list[list[str]], *, db_path: Path) -> list[BoardEntry]:
@@ -115,8 +121,12 @@ def board_entries(status_groups: list[list[str]], *, db_path: Path) -> list[Boar
                 entry = BoardEntry(run=run, cost=_spent(conn, run["id"]))
                 if parked:
                     entry.gate = get_pending_human_gate(conn, run["id"])
-                    alog = get_agent_log(conn, run["id"], "architect-agent")
-                    entry.architect_output = (alog or {}).get("output_text") or ""
+                    if "release" in (run.get("current_stage") or ""):
+                        rlog = get_agent_log(conn, run["id"], "release-agent")
+                        entry.release_output = (rlog or {}).get("output_text") or ""
+                    else:
+                        alog = get_agent_log(conn, run["id"], "architect-agent")
+                        entry.architect_output = (alog or {}).get("output_text") or ""
                 out.append(entry)
     return out
 

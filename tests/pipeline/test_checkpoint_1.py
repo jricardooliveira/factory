@@ -286,6 +286,22 @@ class OnlyOperatorAuthoredContextSettlesTests(unittest.TestCase):
                                            "story_id": "US-0019"})
         self.assertIn("overdue", settled)
 
+    def test_the_operators_checkpoint_2_stamp_is_what_settles_an_adr(self) -> None:
+        """The real ADR renderer + the real approval stamp, end to end: proposed
+        settles nothing, approved at Checkpoint 2 settles its terms."""
+        from factory.domain.contracts import ArchitectOutput
+        from factory.evidence import adr, artifacts
+        from factory.pipeline import settled_threshold_terms
+
+        adr.write_adr(self.project, "US-0018", "Overdue", ArchitectOutput(
+            architecture_notes="A ticket is OVERDUE after 24 hours."))
+        state = {"project_dir": str(self.project), "story_id": "US-0019"}
+        self.assertNotIn("overdue", settled_threshold_terms(state))
+
+        stamped = adr.stamp_adr(self.project, "US-0018", artifacts.approval_status(2, 7))
+        self.assertEqual(len(stamped), 1)
+        self.assertIn("overdue", settled_threshold_terms(state))
+
     def test_no_project_context_settles_nothing(self) -> None:
         from factory.pipeline import settled_threshold_terms
 

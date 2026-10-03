@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `978 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `978 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1004 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1004 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -241,6 +241,13 @@ input/output is stored, so any run replays offline for free. Evidence is version
   (the boss refuses `release` without the operator's APPROVAL on the newest gate-release row).
   A test that needs a completed run approves it: `runs.resume_run(run_id, "approve", ...)`.
   `evals capture` of a released run therefore expects `waiting_human` + gate-test passed.
+- **An approval is stamped into the artifact it approved** (`runs.service._stamp_approval`):
+  SPEC.md (CP1), PLAN.md + the ADR (CP2), RELEASE.md (CP3) get `Status: approved by the
+  operator at Checkpoint N (run #id, <UTC>)`, committed. `settled_threshold_terms` trusts an
+  ADR only on that wording ("approved", no "pending") — change `approval_status` and that gate together.
+- **A gate-build reason is multi-line**: the `name:status` summary, then one
+  `VerifyResult.failures` line per failed check (the error text). One-line displays (board
+  cells, queue, timeline) show only the first line.
 - **An agent added after runs were recorded must survive their replay.** `_run_or_replay` raises
   `agent_calls.ReplayGap` when a frozen output is missing; the release-agent catches it and logs
   the stage `skipped`. Any new agent must do the same, or every captured eval case breaks.

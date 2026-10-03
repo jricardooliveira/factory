@@ -23,6 +23,8 @@ from factory.agent_config import tiers
 from factory.domain.budget import story_spend
 from factory.domain.contracts import SpecOutput
 from factory.domain.task_order import order_tasks
+from factory.evidence.adr import stamp_adr
+from factory.evidence.artifacts import approval_status, stamp_status, work_dir_for
 from factory.evidence.pipeline_record import write_pipeline_record
 from factory.pipeline import (
     PipelineState,
@@ -169,6 +171,7 @@ def run_pipeline(
     # directory IS the repository (evidence under its docs/), so it is the cwd.
     if project_id and (opencode_cwd or replay_run_id):
         initial_state["project_dir"] = str(cwd)
+        initial_state["project_id"] = project_id
     if replay_run_id:
         initial_state["replay_run_id"] = replay_run_id
 
@@ -350,6 +353,8 @@ def resume_run(
         _unresumable(run_id, "missing spec log", db_path)
 
     state = _resume_state(run, spec_parsed, db_path)
+    if action == "approve":
+        _stamp_approval(state, pending.get("gate_name"))
 
     # Which stage to re-enter depends on WHICH checkpoint parked the run — a
     # Checkpoint-1 park has no architecture yet, so the old always-resume-at-
@@ -399,6 +404,28 @@ def resume_run(
     return _finish(run_id, run["story_id"], final_state, db_path, emit)
 
 
+_CHECKPOINT_OF_GATE = {"gate-1-spec": 1, "gate-2-architect": 2, "gate-release": 3}
+# What each checkpoint decided, in docs/work/<story>/ (Checkpoint 2 also its ADR).
+_APPROVED_ARTIFACTS = {1: ["SPEC.md"], 2: ["PLAN.md"], 3: ["RELEASE.md"]}
+
+
+def _stamp_approval(state: dict[str, Any], gate_name: str | None) -> None:
+    """Record the operator's approval in the committed artifact it approved, so the
+    repo — not only the DB — says who signed off what, and when."""
+    checkpoint = _CHECKPOINT_OF_GATE.get(gate_name or "")
+    if not checkpoint or not state.get("project_dir"):
+        return
+    root, story = Path(state["project_dir"]), state["story_id"]
+    status = approval_status(checkpoint, state["run_id"])
+    work = work_dir_for(root, story)
+    stamped = [work / n for n in _APPROVED_ARTIFACTS[checkpoint] if stamp_status(work / n, status)]
+    if checkpoint == 2:
+        stamped += stamp_adr(root, story, status)
+    if stamped:
+        git_commit_paths(root, stamped, f"factory: {state['story_id']} approved at "
+                                        f"Checkpoint {checkpoint} (run {state['run_id']})")
+
+
 def _resume_state(run: dict[str, Any], spec: dict, db_path: Path) -> dict[str, Any]:
     """The graph state a resume starts from: where it works, what it knows."""
     run_id = run["id"]
@@ -434,6 +461,7 @@ def _resume_state(run: dict[str, Any], spec: dict, db_path: Path) -> dict[str, A
         state["project_spec"] = project_spec_text
     if project_dir:
         state["project_dir"] = project_dir
+        state["project_id"] = run["project_id"]
     if run.get("replay_of"):
         state["replay_run_id"] = run["replay_of"]
     return state

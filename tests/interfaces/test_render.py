@@ -102,6 +102,32 @@ class PausedRunTests(unittest.TestCase):
         self.assertIn("factory reject 12", text)
 
 
+class ResumeBannerTests(unittest.TestCase):
+    """The banner after a decision names what actually happens next."""
+
+    def _banner(self, entry: str, action: str) -> str:
+        from factory.interfaces.render import output
+        from factory.interfaces.render.run import print_resume_entered
+        from factory.runs.events import ResumeEntered
+
+        with output.console.capture() as captured:
+            print_resume_entered(ResumeEntered(7, entry, action, "note"))
+        return " ".join(captured.get().split())
+
+    def test_checkpoint_3_approve_says_released(self) -> None:
+        text = self._banner("release", "approve")
+        self.assertIn("RELEASED", text)
+        self.assertNotIn("coder-agent", text)
+
+    def test_checkpoint_3_reject_says_remediation(self) -> None:
+        text = self._banner("remediation", "reject")
+        self.assertIn("REJECTED", text)
+        self.assertNotIn("APPROVED", text)
+
+    def test_checkpoint_2_approve_continues_to_the_coder(self) -> None:
+        self.assertIn("coder-agent", self._banner("coder", "approve"))
+
+
 class AgentTimingTests(unittest.TestCase):
     """Every agent line used to say "(0.0s)": the renderer was passed a literal 0."""
 

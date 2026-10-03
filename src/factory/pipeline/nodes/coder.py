@@ -30,7 +30,7 @@ from factory.state.db import (
     update_run_stage,
     update_story_status,
 )
-from factory.verification import verify_changes
+from factory.verification import VerifyResult, verify_changes
 from factory.verification.scope import (
     declared_scope_mismatch,
     paths_outside_scope,
@@ -145,6 +145,13 @@ def _discard_attempt(state: PipelineState, written: list[Path] | None = None) ->
     git_discard_paths(root, set(state.get("attempt_written") or []) | _relative(written or [], root))
 
 
+def _with_failures(headline: str, verify_result: VerifyResult) -> str:
+    """The one-line verdict, then each failed check's error on its own line: the
+    retry's prior_findings and the operator both need the WHY, and one-line
+    displays (board cell, queue) keep only the first line."""
+    return "\n".join([headline, *verify_result.failures])
+
+
 def _block_out_of_band(
     conn: sqlite3.Connection, state: PipelineState, gate_reason: str,
     written: list[Path] | None = None,
@@ -224,7 +231,7 @@ def _coder_remediation(state: PipelineState, conn: sqlite3.Connection) -> dict[s
                                "task": "remediation"},
                 "next_action": "give_up", "status": "blocked", "error": gate_reason}
 
-    gate_reason = f"[remediation] {verify_result.summary}"
+    gate_reason = _with_failures(f"[remediation] {verify_result.summary}", verify_result)
     log_gate(conn, state["run_id"], "gate-build", verify_result.passed, gate_reason)
     gate_build = {"passed": verify_result.passed, "verdict": verify_result.verdict,
                   "reason": gate_reason, "task": "remediation"}
@@ -410,6 +417,7 @@ def _implement_task(
     gate_reason = f"[{task.id}] {verify_result.summary}"
     if note:
         gate_reason += f"; {note}"
+    gate_reason = _with_failures(gate_reason, verify_result)
 
     # Governance: any file that landed in the repo but was NOT declared in
     # code_blocks is an out-of-band write (agent bypassing materialize).

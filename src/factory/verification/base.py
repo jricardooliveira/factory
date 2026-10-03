@@ -17,6 +17,9 @@ TEST_TIMEOUT = 180
 # A build (`go build` resolving modules on a cold cache, `tsc -p` over a whole
 # project) gets more room than the 60s a py_compile needs.
 BUILD_TIMEOUT = 180
+# How much of one failed check's output reaches the gate reason (and so the coder's
+# retry, the run error and `factory review`): enough for a traceback's last frame.
+MAX_FAILURE_DETAIL = 500
 
 
 def tests_enabled() -> bool:
@@ -57,6 +60,12 @@ class VerifyResult:
             return "no verifiable files"
         parts = [f"{c.name}:{c.status}" for c in self.checks]
         return ", ".join(parts)
+
+    @property
+    def failures(self) -> list[str]:
+        """One `name: detail` per failed check — the WHY the summary leaves out."""
+        return [f"{c.name}: {c.detail.strip()[:MAX_FAILURE_DETAIL]}"
+                for c in self.checks if c.status == "fail"]
 
 
 def run_command(

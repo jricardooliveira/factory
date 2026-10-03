@@ -138,8 +138,22 @@ class MetricsTests(unittest.TestCase):
     def test_empty_database_does_not_divide_by_zero(self) -> None:
         m = metrics.compute(self.db_path)
         self.assertEqual(m.total_runs, 0)
-        self.assertEqual(m.completion_rate, 0.0)
-        self.assertEqual(m.first_pass_rate, 0.0)
+        # Nothing to divide by is "not applicable", not 0% (or 100%) of nothing.
+        self.assertIsNone(m.completion_rate)
+        self.assertIsNone(m.first_pass_rate)
+        self.assertIsNone(m.runs_per_checkpoint)
+        self.assertIn("n/a completed", metrics.render_markdown(m))
+
+    def test_the_terminal_view_says_n_a_for_an_empty_rate(self) -> None:
+        from factory.interfaces.render import output
+        from factory.interfaces.render.selftest import print_metrics
+
+        with output.console.capture() as captured:
+            print_metrics(metrics.compute(self.db_path), self.db_path)
+        text = " ".join(captured.get().split())
+        self.assertIn("Completion rate: n/a", text)
+        self.assertIn("First-pass rate (no coder retry): n/a", text)
+        self.assertNotIn("0%", text)
 
     def test_render_names_the_unmeasurable_indicators_explicitly(self) -> None:
         self._run("US-1", "completed", cost=None)

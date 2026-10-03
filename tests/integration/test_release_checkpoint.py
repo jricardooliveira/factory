@@ -72,13 +72,14 @@ class ReleaseCheckpointTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _run(self, *, release: dict | None = RELEASE) -> runs.RunOutcome:
+    def _run(self, *, release: dict | None = RELEASE, spec: dict = SPEC,
+             arch: dict = ARCH) -> runs.RunOutcome:
         with db.get_db(self.db_path) as conn:
             db.create_story(conn, "US-0001", "Pending", "search my bookmarks",
                             project_id=self.project["id"])
             orig = db.start_run(conn, "US-0001", project_id=self.project["id"])
-            db.log_agent(conn, orig, "spec-agent", "in", json.dumps(SPEC), verdict="pass")
-            db.log_agent(conn, orig, "architect-agent", "in", json.dumps(ARCH), verdict="pass")
+            db.log_agent(conn, orig, "spec-agent", "in", json.dumps(spec), verdict="pass")
+            db.log_agent(conn, orig, "architect-agent", "in", json.dumps(arch), verdict="pass")
             db.log_agent(conn, orig, "coder-agent", "in", CODER, verdict="complete",
                          stage_type="T-1")
             db.log_agent(conn, orig, "coder-agent", "in", FIX, verdict="complete",
@@ -128,6 +129,11 @@ class ReleaseCheckpointTests(unittest.TestCase):
             (self.work / "docs" / "releases" / f"run-{outcome.run_id}-trust-package.json").is_file()
         )
 
+    def test_intent_names_the_project(self) -> None:
+        self._run()
+        intent = (artifacts.work_dir_for(self.work, "US-0001") / "INTENT.md").read_text()
+        self.assertIn(f"- Project: {self.project['id']}", intent)
+
     def test_a_run_recorded_before_the_release_agent_still_replays(self) -> None:
         outcome = self._run(release=None)
         self.assertEqual(outcome.status, "waiting_human", outcome.error)
@@ -154,6 +160,52 @@ class ReleaseCheckpointTests(unittest.TestCase):
         self.assertEqual(run["status"], "completed")
         record = (artifacts.work_dir_for(self.work, "US-0001") / "PIPELINE.md").read_text()
         self.assertIn("the story is complete", record)
+
+    # ── the approval is stamped into what it approved ────────────────────
+
+    def _status_line(self, path: Path) -> str:
+        return next(ln for ln in path.read_text(encoding="utf-8").splitlines()
+                    if ln.startswith("- Status:"))
+
+    def test_release_approval_is_stamped_into_the_release_notes(self) -> None:
+        parked = self._run()
+        notes = artifacts.work_dir_for(self.work, "US-0001") / "RELEASE.md"
+        self.assertIn("pending Checkpoint 3", self._status_line(notes))
+        runs.resume_run(parked.run_id, "approve", "ship it", db_path=self.db_path)
+        line = self._status_line(notes)
+        self.assertIn(f"approved by the operator at Checkpoint 3 (run #{parked.run_id}, ", line)
+        self.assertIn("UTC", line)
+        self.assertTrue(any(s.startswith("factory: US-0001 approved at Checkpoint 3")
+                            for s in _git_log(self.work)), _git_log(self.work))
+        dirty = subprocess.run(["git", "status", "--porcelain", "docs/"], cwd=self.work,
+                               capture_output=True, text=True).stdout
+        self.assertEqual(dirty.strip(), "", "the stamp must be committed")
+
+    def test_design_approval_is_stamped_into_the_adr_and_plan(self) -> None:
+        breaking = {**ARCH, "breaking_changes": ["search() now returns a list"]}
+        parked = self._run(arch=breaking)
+        self.assertEqual(parked.status, "waiting_human", parked.error)
+        self.assertTrue(any(g["gate_name"] == "gate-2-architect" and g["needs_human"]
+                            for g in self._gates(parked.run_id)))
+        runs.resume_run(parked.run_id, "approve", "fine", db_path=self.db_path)
+        plan = artifacts.work_dir_for(self.work, "US-0001") / "PLAN.md"
+        [adr_file] = (self.work / "docs" / "architecture" / "adr").glob("ADR-US-0001-*.md")
+        for path in (plan, adr_file):
+            self.assertIn("approved by the operator at Checkpoint 2", self._status_line(path))
+        self.assertTrue(any("approved at Checkpoint 2" in s for s in _git_log(self.work)))
+
+    def test_story_approval_is_stamped_into_the_spec(self) -> None:
+        parked = self._run(spec={**SPEC, "questions": ["Search by tag too?"]})
+        self.assertEqual(parked.status, "waiting_human", parked.error)
+        runs.resume_run(parked.run_id, "approve", "title only", db_path=self.db_path)
+        spec = artifacts.work_dir_for(self.work, "US-0001") / "SPEC.md"
+        self.assertIn("approved by the operator at Checkpoint 1", self._status_line(spec))
+
+    def test_a_rejection_stamps_nothing(self) -> None:
+        parked = self._run()
+        notes = artifacts.work_dir_for(self.work, "US-0001") / "RELEASE.md"
+        runs.resume_run(parked.run_id, "reject", "add pagination", db_path=self.db_path)
+        self.assertNotIn("approved", self._status_line(notes))
 
     def test_approval_refuses_code_that_changed_after_the_review(self) -> None:
         parked = self._run()

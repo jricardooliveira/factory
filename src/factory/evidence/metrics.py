@@ -38,10 +38,10 @@ class FactoryMetrics:
     total_runs: int = 0
     replay_runs: int = 0  # excluded from every outcome metric
     by_status: dict[str, int] = field(default_factory=dict)
-    completion_rate: float = 0.0
+    completion_rate: float | None = None  # None = nothing to divide by ("n/a")
 
     # ── First-pass quality (Stage 3 leading, Stage 4 leading) ─────
-    first_pass_rate: float = 0.0
+    first_pass_rate: float | None = None
     total_coder_retries: int = 0
     gate_pass_rate: dict[str, float] = field(default_factory=dict)
     gate_counts: dict[str, int] = field(default_factory=dict)
@@ -50,11 +50,11 @@ class FactoryMetrics:
     checkpoints_reached: int = 0
     checkpoints_answered: int = 0
     checkpoints_pending: int = 0
-    runs_per_checkpoint: float = 0.0
+    runs_per_checkpoint: float | None = None
 
     # ── Cost (Stage 3-5, and the gates.py budget) ─────────────────
     cost_measurable: bool = False
-    cost_coverage: float = 0.0
+    cost_coverage: float | None = None
     estimated_cost_usd: float = 0.0  # tokens x list price (agents/tiers.toml [prices])
     unknown_cost_calls: int = 0
     total_cost_usd: float = 0.0
@@ -65,8 +65,9 @@ class FactoryMetrics:
     not_measurable: list[str] = field(default_factory=list)
 
 
-def _rate(numerator: float, denominator: float) -> float:
-    return (numerator / denominator) if denominator else 0.0
+def _rate(numerator: float, denominator: float) -> float | None:
+    """None when there is nothing to divide by: 0% (or 100%) of nothing misleads."""
+    return (numerator / denominator) if denominator else None
 
 
 def compute(db_path: Path) -> FactoryMetrics:
@@ -136,8 +137,12 @@ def compute(db_path: Path) -> FactoryMetrics:
     return m
 
 
-def _pct(value: float) -> str:
-    return f"{round(value * 100)}%"
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{round(value * 100)}%"
+
+
+def _ratio(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1f}"
 
 
 def render_markdown(m: FactoryMetrics) -> str:
@@ -177,7 +182,7 @@ def render_markdown(m: FactoryMetrics) -> str:
         "",
         f"- Checkpoints reached: **{m.checkpoints_reached}** "
         f"({m.checkpoints_answered} answered, {m.checkpoints_pending} pending)",
-        f"- Runs per interruption: **{m.runs_per_checkpoint:.1f}**",
+        f"- Runs per interruption: **{_ratio(m.runs_per_checkpoint)}**",
         "",
         "## Cost",
         "",

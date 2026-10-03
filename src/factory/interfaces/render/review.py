@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
 
@@ -15,6 +16,7 @@ from factory.evidence.progress import (
     stage_text,
 )
 from factory.interfaces.render import output
+from factory.interfaces.render.board import print_decision_commands, print_gate_questions
 
 
 def _review_spec_output(parsed: dict) -> None:
@@ -101,10 +103,55 @@ def _review_coder_output(parsed: dict) -> None:
             output.console.print(f"      📄 {b.get('path', '?')} ({b.get('action', '?')}, {lines} lines)")
 
 
+def _print_list(label: str, items: list, mark: str = "•") -> None:
+    if items:
+        output.console.print(f"    [dim]{label}:[/dim]")
+        for item in items:
+            output.console.print(f"      {mark} {item}")
+
+
+def _review_tester_output(parsed: dict) -> None:
+    """Pretty-print tester-agent output: the three sub-verdicts, then why."""
+    output.console.print(
+        f"    [dim]QA:[/dim] {parsed.get('qa_verdict', '—')}  |  "
+        f"[dim]Security:[/dim] {parsed.get('security_verdict', '—')} "
+        f"(highest: {parsed.get('highest_severity', '—')})  |  "
+        f"[dim]Performance:[/dim] {parsed.get('performance_verdict', '—')}"
+    )
+    output.console.print(f"    [dim]Summary:[/dim]  {parsed.get('summary') or '—'}")
+    _print_list("Missing coverage", parsed.get("missing_coverage", []), "⚠")
+    _print_list("Security findings", parsed.get("security_findings", []), "⚠")
+    _print_list("Performance findings", parsed.get("performance_findings", []), "⚠")
+
+
+def _review_release_output(parsed: dict) -> None:
+    """Pretty-print release-agent output: what ships, how to check it, how to undo it."""
+    output.console.print(f"    [dim]Summary:[/dim]  {parsed.get('summary') or '—'}")
+    _print_list("How to verify", parsed.get("how_to_verify", []))
+    if parsed.get("migration_notes") not in (None, "", "none"):
+        output.console.print(f"    [dim]Migration:[/dim] {parsed['migration_notes']}")
+    output.console.print(f"    [dim]Rollback:[/dim] {parsed.get('rollback_notes') or '—'}")
+    _print_list("Known limitations", parsed.get("known_limitations", []), "⚠")
+    _print_list("Concerns", parsed.get("concerns", []), "⚠")
+
+
+def _review_boundary_output(parsed: dict) -> None:
+    """Pretty-print boundary-agent output: its four sub-verdicts with their findings."""
+    for key in ("tenant", "authorization", "api_contract", "security"):
+        sub = parsed.get(key) or {}
+        output.console.print(f"    [dim]{key}:[/dim] {sub.get('verdict', '—')}")
+        for f in sub.get("findings", []) + sub.get("breaking_changes", []):
+            output.console.print(f"      ⚠ {f}")
+    _print_list("Required changes", parsed.get("required_changes", []), "→")
+
+
 _REVIEWERS: dict[str, Callable[[dict], None]] = {
     "spec-agent": _review_spec_output,
     "architect-agent": _review_architect_output,
+    "boundary-agent": _review_boundary_output,
     "coder-agent": _review_coder_output,
+    "tester-agent": _review_tester_output,
+    "release-agent": _review_release_output,
 }
 
 
@@ -113,6 +160,8 @@ def _print_review_header(run: dict) -> None:
     status = run["status"]
     style = "green" if status == "completed" else "red"
     output.console.print(Rule(f"[bold]📊 Review: Run #{run['id']}[/bold]"))
+    if status == "waiting_human":
+        style = "yellow"
     output.console.print(f"  [dim]Story:[/dim]   {run['story_id']}")
     output.console.print(f"  [dim]Status:[/dim]  [{style}]{status.upper()}[/{style}]")
     output.console.print(f"  [dim]Started:[/dim] {run['started_at']}")
@@ -149,6 +198,7 @@ def _print_trust_package(pkg: dict, trust_issues: list[str]) -> None:
         + (f" — {sb['findings']}" if sb['findings'] else ""),
         f"Cost: ${pkg['cost']['usd']:.4f}  ·  {pkg['cost']['tokens_in']}→{pkg['cost']['tokens_out']} tok",
     ]
+    lines += [f"[yellow]⚠ {escape(b)}[/yellow]" for b in pkg.get("blockers", [])]
     if trust_issues:
         lines.append(f"[red]schema issues: {trust_issues}[/red]")
     border = "green" if pkg["next_authorization"] == "release" else "yellow"
@@ -180,7 +230,7 @@ def _print_agent_output(
 ) -> None:
     """What was SENT to the agent, then its structured (or raw) output."""
     agent = log["agent"]
-    if log.get("input_text"):
+    if show_raw and log.get("input_text"):
         inp = log["input_text"]
         if len(inp) > 300:
             inp = inp[:300] + "..."
@@ -197,6 +247,18 @@ def _print_agent_output(
             if len(text) > 2000:
                 text = text[:2000] + "\n... (truncated, use --full for complete output)"
             output.console.print(Panel(text, title=f"{agent} raw output", border_style="dim"))
+
+
+def _print_gate(gate: dict) -> None:
+    passed = bool(gate["passed"])
+    parked = gate.get("needs_human") and not gate.get("human_response")
+    icon = "⏸" if parked else output.gate_icon(passed)
+    gstyle = "yellow" if parked else ("green" if passed else "red")
+    output.console.print(
+        f"\n  {icon} [bold]{gate['gate_name']}[/bold]: [{gstyle}]{escape(gate['reason'])}[/{gstyle}]"
+    )
+    if parked:
+        print_gate_questions(gate)
 
 
 def print_run_review(
@@ -222,7 +284,9 @@ def print_run_review(
         output.console.print(Panel(timeline, title="🕒 Timeline", border_style="dim"))
         output.console.print()
 
-    if trust_package:
+    # Before any code exists the package can only list what is missing, which at
+    # Checkpoint 1/2 reads as a failure of work nobody has done yet.
+    if trust_package and any(log["agent"] == "coder-agent" for log in logs):
         _print_trust_package(trust_package, trust_issues)
 
     # Walk through each agent + gate in order
@@ -246,14 +310,14 @@ def print_run_review(
 
         # Show gate that follows this agent
         if gate_idx < len(gates):
-            gate = gates[gate_idx]
-            passed = bool(gate["passed"])
-            icon = output.gate_icon(passed)
-            gstyle = "green" if passed else "red"
-            output.console.print(f"\n  {icon} [bold]{gate['gate_name']}[/bold]: [{gstyle}]{gate['reason']}[/{gstyle}]")
+            _print_gate(gates[gate_idx])
             gate_idx += 1
 
         output.console.print()
+    # ponytail: gates pair with agents by position; any left over (e.g. a retry's
+    # extra gate-build) still print, so a parked gate's question is never hidden.
+    for gate in gates[gate_idx:]:
+        _print_gate(gate)
 
     if total_cost or total_tokens_in or total_tokens_out:
         output.console.print(
@@ -264,6 +328,9 @@ def print_run_review(
 
     if run.get("error"):
         output.console.print(Panel(run["error"], title="❌ Error", border_style="red"))
+    if run["status"] == "waiting_human":
+        output.console.print(Rule("[bold]⏸  Your decision[/bold]"))
+        print_decision_commands(run["id"])
 
 
 # ── flow + timeline markup (from evidence.progress data) ─────────

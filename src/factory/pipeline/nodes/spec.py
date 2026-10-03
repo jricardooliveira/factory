@@ -21,7 +21,8 @@ def node_spec_agent(state: PipelineState) -> dict[str, Any]:
         # Link 1 of the chain: the operator's raw ask, on disk with an author and a
         # date, BEFORE any agent interprets it — so a run that dies at the spec
         # still leaves a record of what was asked.
-        intent_path = write_chain_artifact(state, "intent", state.get("request", ""))
+        intent_path = write_chain_artifact(state, "intent", state.get("request", ""),
+                                           project_id=state.get("project_id", ""))
 
         prompt = build_spec_prompt(state)
         result, parsed = run_agent_json(state, "spec-agent", prompt)

@@ -107,31 +107,49 @@ lists every command. If you do not want to make model calls yet, stop after
 
 ---
 
-## Your first project
+## Your first project: define → plan → build
 
 ```bash
-# Create a product project in ~/.factory/projects/bookmarks/
+# 1. Create a product project in ~/.factory/projects/bookmarks/ (its own git repo)
 factory project create bookmarks --stack fastapi
 
-# Ask for one thing.
-factory run --project bookmarks \
-  "let me search my bookmarks by title, paginated 20 per page"
+# 2. Define: the factory interviews you about the product, then commits
+#    docs/work/BRIEF.md once you approve it (re-running resumes a paused interview)
+factory interview bookmarks
+
+# 3. Plan: propose the ordered story list from the brief; approve it or type feedback
+factory backlog bookmarks
+
+# 4. Build: start the next approved story (a few story questions first, on a terminal)
+factory next bookmarks
 ```
 
-The run streams its progress. It may finish, or **park** at a checkpoint and wait for
-your decision. Running a request uses model calls. The CLI rejects likely command
-typos such as `factory lsit` before making a model call.
+Each story runs the pipeline above. It streams its progress and **parks** at a
+checkpoint for your decision — at the very least at Checkpoint 3, the release.
+Steps 2–4 use model calls. Lost? `factory status bookmarks` names the phase you are
+in and the exact next command to type.
 
 ```bash
+factory status         # every project: define / plan / build / release, and what to type next
+factory board          # interactive board — approve/reject in place; `m` menu of every verb, `s` status
 factory queue          # what is waiting for you, and why
-factory board          # interactive board — approve/reject in place; `m` opens the menu of every verb
-factory review 17      # the full package for one run
+factory review 17      # the decision screen: what each agent did, the evidence and its gaps,
+                       # the question being asked, and the approve/reject commands
 ```
+
+A one-off request without the interview also works:
+`factory run --project bookmarks --no-interview "let me search my bookmarks by title"`.
+The CLI rejects likely command typos such as `factory lsit` before making a model call.
 
 ```bash
 factory approve 17
 factory reject 17 "use polling, not websockets; drop the admin screen"
 ```
+
+**Approval is on record in the repo.** Approving stamps the artifact you signed off
+— `SPEC.md` (Checkpoint 1), the ADR and `PLAN.md` (Checkpoint 2), `RELEASE.md`
+(Checkpoint 3) — with `Status: approved by the operator at Checkpoint N (run #id, time)`
+and commits it.
 
 **Rejection is not a dead end.** Your feedback re-enters the pipeline as a new
 attempt: reject at Checkpoint 1 and the story is re-specified with your answers;

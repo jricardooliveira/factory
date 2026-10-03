@@ -228,9 +228,22 @@ def print_resume_entered(event: ResumeEntered) -> None:
             f"...\n\n{decision}",
             border_style=colour,
         ))
+    elif event.entry == "release":
+        output.console.print(Panel(
+            f"Run #{run_id} [bold green]RELEASED[/bold green] at Checkpoint 3 — "
+            f"recording the release...\n\n{decision}",
+            border_style="green",
+        ))
+    elif event.entry == "remediation":
+        output.console.print(Panel(
+            f"Run #{run_id} [bold yellow]REJECTED at Checkpoint 3[/bold yellow] — "
+            f"the coder fixes what you named, then the tester re-reviews...\n\n{decision}",
+            border_style="yellow",
+        ))
     else:
         output.console.print(Panel(
-            f"Run #{run_id} [bold green]APPROVED[/bold green] — continuing to coder-agent...",
+            f"Run #{run_id} [bold green]APPROVED[/bold green] — building the approved "
+            f"design (coder-agent)...",
             border_style="green",
         ))
 

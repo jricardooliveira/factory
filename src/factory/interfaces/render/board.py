@@ -13,6 +13,20 @@ from rich.text import Text
 from factory.interfaces.render import output
 
 
+def print_gate_questions(gate: dict | None) -> None:
+    """What a parked gate asks the operator (shared by `queue` and `review`)."""
+    for q in ((gate or {}).get("human_questions") or "").split("\n\n"):
+        if q.strip():
+            output.console.print(f"    [yellow]?[/yellow] {escape(q.strip())}")
+
+
+def print_decision_commands(run_id: int) -> None:
+    output.console.print(
+        f"    [green]factory approve {run_id}[/green] · "
+        f"[red]factory reject {run_id} \"<feedback>\"[/red]"
+    )
+
+
 def print_queue(
     parked: list[tuple[dict, dict | None, float]], attention: list[tuple[dict, float]]
 ) -> None:
@@ -32,21 +46,16 @@ def print_queue(
             )
             if gate and gate.get("reason"):
                 output.console.print(f"    [dim]why:[/dim] {gate['reason']}")
-            if gate and gate.get("human_questions"):
-                for q in gate["human_questions"].split("\n\n"):
-                    if q.strip():
-                        output.console.print(f"    [yellow]?[/yellow] {escape(q.strip())}")
-            output.console.print(
-                f"    [green]factory approve {run['id']}[/green] · "
-                f"[red]factory reject {run['id']} \"<feedback>\"[/red]"
-            )
+            print_gate_questions(gate)
+            print_decision_commands(run["id"])
         output.console.print()
 
     if attention:
         output.console.print(Rule("[bold]⚠  Needs attention[/bold]"))
         for run, cost in attention:
             title = run.get("story_title") or run["story_id"]
-            err = (run.get("error") or "").strip()
+            # First line only: a gate-build error carries the compiler output below it.
+            err = (run.get("error") or "").strip().split("\n", 1)[0]
             if len(err) > 100:
                 err = err[:100] + "…"
             output.console.print(
@@ -56,7 +65,8 @@ def print_queue(
             )
             if err:
                 output.console.print(f"    [dim]{err}[/dim]")
-            output.console.print(f"    [dim]factory review {run['id']} · factory replay {run['id']}[/dim]")
+            output.console.print(f"    [dim]factory review {run['id']}, then "
+                                 f"{run.get('next_move') or 'factory replay ' + str(run['id'])}[/dim]")
         output.console.print()
 
 
@@ -96,7 +106,8 @@ def board_renderable(
     for run, gate, cost in active:
         parked = run["status"] == "waiting_human"
         state = "[yellow]⏸ NEEDS YOU[/yellow]" if parked else "[cyan]running[/cyan]"
-        detail = (gate.get("reason", "")[:48] if gate else run.get("current_stage", "?"))
+        detail = (gate.get("reason", "").split("\n", 1)[0][:48] if gate
+                  else run.get("current_stage", "?"))
         move = (
             f"approve {run['id']}  ·  reject {run['id']} \"…\"" if parked else "[dim]wait[/dim]"
         )
@@ -123,7 +134,7 @@ def board_renderable(
         att.add_column("Why")
         att.add_column("Your move", style="dim")
         for run, cost in attention_rows[:10]:
-            err = (run.get("error") or "").strip().replace("\n", " ")
+            err = (run.get("error") or "").strip().split("\n", 1)[0]
             if len(err) > 60:
                 err = err[:60] + "…"
             att.add_row(

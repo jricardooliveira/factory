@@ -302,5 +302,42 @@ class CursorStabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(table.cursor_coordinate.row, 2)
 
 
+class ReleaseCheckpointPaneTests(unittest.IsolatedAsyncioTestCase):
+    """At Checkpoint 3 the operator signs off a release, not a design."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmp.name) / "f.db"
+        db.init_db(self.db_path)
+        with db.get_db(self.db_path) as conn:
+            db.create_story(conn, "US-0001", "Bookmark search", "search my bookmarks")
+            rid = db.start_run(conn, "US-0001")
+            db.log_agent(conn, rid, "architect-agent", "p",
+                         json.dumps({"architecture_notes": "Layered FastAPI app"}), verdict="pass")
+            db.log_agent(conn, rid, "release-agent", "p",
+                         json.dumps({"summary": "Bookmarks can be searched by title.",
+                                     "how_to_verify": ["call s()"]}), verdict="pass")
+            db.update_run_stage(conn, rid, "gate-release-human")
+            db.log_gate(conn, rid, "gate-release", False, "NOT READY", needs_human=True,
+                        human_questions="NOT READY: 1 gap(s):\n  • Tests were never executed")
+            db.finish_run(conn, rid, "waiting_human")
+        self.rid = rid
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    async def test_release_pane_shows_release_and_blocker_not_design(self) -> None:
+        app = FactoryBoard(self.db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._show_detail(app._runs[self.rid])
+            text = app._detail_text
+        self.assertIn("Tests were never executed", text)
+        self.assertIn("Bookmarks can be searched by title.", text)
+        self.assertIn("call s()", text)
+        self.assertNotIn("Proposed design", text)
+        self.assertNotIn("Layered FastAPI app", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -192,7 +192,8 @@ class FactoryBoard(App):
             prev_id = None
         table.clear()
         for r in runs:
-            detail = r.questions[0][:40] if r.questions else (r.error or r.stage or "")[:40]
+            detail = (r.questions[0] if r.questions
+                      else (r.error or r.stage or "").split("\n", 1)[0])[:40]
             table.add_row(
                 str(r.id), r.project[:14], r.title[:24],
                 Text(r.state_label, style=_STATE_STYLE.get(r.state_label, "")),
@@ -252,6 +253,11 @@ class FactoryBoard(App):
             if run.questions:
                 lines.append("The factory flagged:")
                 lines.extend(f"[yellow]?[/yellow] {escape(q)}" for q in run.questions)
+            if run.release_summary:
+                lines.append(f"\n[b]What ships[/b]\n{escape(run.release_summary)}")
+            if run.how_to_verify:
+                lines.append("\n[b]How to verify[/b]")
+                lines.extend(f"• {escape(step)}" for step in run.how_to_verify)
             if run.architecture:
                 lines.append(f"\n[b]Proposed design[/b]\n{escape(run.architecture)}")
             if run.modules:
