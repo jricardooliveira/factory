@@ -374,7 +374,8 @@ def resume_run(
         verdict_word = "REJECTED" if action == "reject" else "APPROVED"
         respond_to_gate(conn, pending["id"], f"{verdict_word}: {decision}")
         reopen_run(conn, run_id)
-        conn.commit()
+        # No conn.commit() here: it would end atomic()'s savepoint early. get_db
+        # commits on exit, after the savepoint is released.
 
     # Reconstruct context from the LATEST output of each stage — see
     # build_resume_context for why "latest" is load-bearing.
@@ -568,8 +569,6 @@ def _refuse_if_project_busy(conn: Any, project_id: str, *, except_run: int | Non
     tree, so two stories at once would commit each other's changes (review T10)."""
     if workflow_store.reserved_plans(conn, project_id):
         raise RunError("An isolated batch has reserved this project. Integrate or abandon it first.")
-    if workflow_store.legacy_workspace_busy(conn, project_id, except_run):
-        raise RunError("A running or parked story owns this checkout; resolve it first.")
     busy = [r for r in live_runs_in_project(conn, project_id) if r != except_run]
     if busy:
         raise RunError(
@@ -577,6 +576,10 @@ def _refuse_if_project_busy(conn: Any, project_id: str, *, except_run: int | Non
             "repository would commit each other's changes. Wait for it to stop, or run "
             "`factory reconcile` if its process died."
         )
+    # A PARKED run owns the checkout too: its candidate is what Checkpoint 3 will review.
+    if owner := workflow_store.legacy_workspace_owner(conn, project_id, except_run):
+        raise RunError(f"Run #{owner['id']} is parked in project {project_id} and owns its "
+                       "checkout; approve, reject or dismiss it first.")
 
 
 def _refuse_if_tree_dirty(repo: Path) -> None:

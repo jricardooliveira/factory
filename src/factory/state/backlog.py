@@ -34,8 +34,11 @@ def replace_unstarted(
         "(SELECT backlog_id FROM workflow_sessions WHERE backlog_id IS NOT NULL "
         "AND status != 'cancelled')", (project_id,)
     )
+    # Superseded rows stay for history but are not shown: number after the visible ones,
+    # or the operator's backlog reads 1, 4, 5.
     last = conn.execute(
-        "SELECT COALESCE(MAX(position), 0) FROM backlog_stories WHERE project_id = ?",
+        "SELECT COALESCE(MAX(position), 0) FROM backlog_stories WHERE project_id = ? "
+        "AND status != 'superseded'",
         (project_id,),
     ).fetchone()[0]
     now = datetime.now(timezone.utc).isoformat()

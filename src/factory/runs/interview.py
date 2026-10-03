@@ -430,6 +430,8 @@ def run_story_interview(project_ref: str, request: str, *, db_path: Path, ask: A
             break  # the operator is done: what is still open stays marked UNDECIDED
         answer, assumed = resolve_answer(questions[i], raw)
         if not answer or (not assumed and is_undecided(raw)):
-            continue  # uncertainty never grants delegated authority
+            # Unsure twice: the recommended option, recorded as an ASSUMPTION (said as one
+            # in the request), never as the operator's choice.
+            answer, assumed = resolve_answer(questions[i], "you decide")
         settled[i] = StoryClarification(c.question, answer, assumed)
     return with_clarifications(request, settled)

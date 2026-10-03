@@ -473,10 +473,16 @@ def integrated_stories(conn, project_id: str) -> frozenset[int]:
     return frozenset(ids)
 
 
+def legacy_workspace_owner(conn, project_id: str, except_run: int | None = None) -> dict | None:
+    """The running or parked single-checkout run that owns the product checkout, if any."""
+    row = conn.execute("SELECT id, status FROM pipeline_runs WHERE project_id=? AND replay_of IS NULL "
+                       "AND workspace_path IS NULL AND status IN ('running','waiting_human') "
+                       "AND id != ? ORDER BY id LIMIT 1", (project_id, except_run or -1)).fetchone()
+    return dict(row) if row else None
+
+
 def legacy_workspace_busy(conn, project_id: str, except_run: int | None = None) -> bool:
-    return conn.execute("SELECT 1 FROM pipeline_runs WHERE project_id=? AND replay_of IS NULL "
-                        "AND workspace_path IS NULL AND status IN ('running','waiting_human') "
-                        "AND id != ? LIMIT 1", (project_id, except_run or -1)).fetchone() is not None
+    return legacy_workspace_owner(conn, project_id, except_run) is not None
 
 
 def all_jobs(conn) -> list[dict]:
@@ -512,6 +518,21 @@ def abandon_proposal(conn, identity: str) -> None:
 
 def used_plans(conn) -> set[str]:
     return {r[0] for r in conn.execute('SELECT plan_id FROM pipeline_runs WHERE plan_id IS NOT NULL')}
+
+
+def retry_failed_job(conn, identity: str) -> dict:
+    """Queue a failed job's work again under a new key; the failed one is marked retried.
+
+    Only for work whose failure wrote nothing it could repeat (the caller decides which).
+    """
+    with atomic(conn):
+        job = get_job(conn, identity)
+        if job['status'] != 'failed':
+            raise ValueError('Only a failed job can be retried')
+        conn.execute("UPDATE workflow_jobs SET status='retried',updated_at=? WHERE id=?",
+                     (_now(), identity))
+        return enqueue_job(conn, job['project_id'], job['kind'],
+                           f"{job['key']}:retry:{_id()}", job['payload'])
 
 
 def recover_job(conn, identity: str) -> dict:

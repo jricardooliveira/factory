@@ -196,8 +196,15 @@ _FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+?\.py)(?:::|\s|$)", re.MULTILI
 
 def _failing_test_files(output: str, root: Path) -> tuple[str, ...]:
     """The test files pytest's summary names as failed, repo-relative, that exist."""
-    names = {m.group(1) for m in _FAILED_LINE.finditer(output)}
-    return tuple(sorted(n for n in names if (root / n).is_file() and is_py_test(root / n)))
+    # pytest names files relative to its RESOLVED cwd; on macOS /var is /private/var,
+    # so a repo under the temp dir came back as "../../…/var/…/tests/test_x.py".
+    base = root.resolve()
+    found = set()
+    for match in _FAILED_LINE.finditer(output):
+        path = (root / match.group(1)).resolve()
+        if path.is_file() and is_py_test(path) and path.is_relative_to(base):
+            found.add(path.relative_to(base).as_posix())
+    return tuple(sorted(found))
 
 
 def _failure_excerpt(output: str) -> str:
