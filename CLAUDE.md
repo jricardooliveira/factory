@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1069 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1069 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1072 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1072 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -290,6 +290,12 @@ input/output is stored, so any run replays offline for free. Evidence is version
   suite runs after EVERY attempt, whatever it wrote (`verify_changes` asks the repository —
   `python.has_tests`, `go.modules_with_tests` — not this attempt's file extensions); a lone
   `verify:skip` means the repo has no suite.
+- **A retry may also change the test files that just failed** (operator decision,
+  2026-10-03): `VerifyCheck.files` carries the test files pytest named as failed,
+  `state["retry_scope"]` adds exactly those to the task's allowed and shown files for the
+  retry (cleared when the task passes). A story that deliberately changes behaviour breaks
+  tests outside its task's scope; nothing else is opened up, and removed test lines are
+  still listed at Checkpoint 3.
 - **A failed task attempt's files stay uncommitted until the task passes**, so a retry's
   scope check subtracts `state["attempt_written"]` (what the factory materialized on the
   earlier attempts) from the unclaimed set; it is cleared when the task passes.

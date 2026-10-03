@@ -191,6 +191,15 @@ def _classify_collect_failure(output: str, root: Path) -> VerifyCheck:
 MAX_TEST_OUTPUT = 3000
 
 
+_FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+?\.py)(?:::|\s|$)", re.MULTILINE)
+
+
+def _failing_test_files(output: str, root: Path) -> tuple[str, ...]:
+    """The test files pytest's summary names as failed, repo-relative, that exist."""
+    names = {m.group(1) for m in _FAILED_LINE.finditer(output)}
+    return tuple(sorted(n for n in names if (root / n).is_file() and is_py_test(root / n)))
+
+
 def _failure_excerpt(output: str) -> str:
     """The first failures (the assertions) plus the end (the summary), within the budget."""
     text = output.strip()
@@ -227,7 +236,8 @@ def run_tests(root: Path) -> VerifyCheck:
             # The product's interpreter lacks a dependency (or pytest): an environment
             # problem, not the coder's bug — and the tests never ran, so never a pass.
             return VerifyCheck("pytest_run", "warn", f"tests did not run: {python} {verdict.detail}")
-        return VerifyCheck("pytest_run", "fail", f"with {python}: {tail}")
+        return VerifyCheck("pytest_run", "fail", f"with {python}: {tail}",
+                           files=_failing_test_files(output, root))
     return VerifyCheck("pytest_run", "pass", f"tests passed (with {python})")
 
 

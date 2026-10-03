@@ -312,7 +312,7 @@ def _design_feedback(
 def _route_after_build(
     conn: sqlite3.Connection, state: PipelineState, tasks: list[TaskDef], task: TaskDef,
     coder: CoderOutput, base: dict[str, Any], verify_passed: bool, gate_reason: str,
-    root: Path, written: list[Path] | None = None,
+    root: Path, written: list[Path] | None = None, failing_tests: list[str] | None = None,
 ) -> dict[str, Any]:
     """After a clean gate-build log: advance, retry the same task, or give up."""
     task_index = state.get("task_index", 0)
@@ -329,22 +329,35 @@ def _route_after_build(
         if task_index + 1 >= len(tasks):
             # Coding done — hand to the tester gate, which finalizes the run.
             return {**base, "next_action": "complete", "tasks_completed": completed,
-                    "attempt_written": []}
+                    "attempt_written": [], "retry_scope": []}
         return {**base, "next_action": "next_task", "task_index": task_index + 1,
                 "attempt_number": 1, "prior_findings": [], "tasks_completed": completed,
-                "attempt_written": []}
+                "attempt_written": [], "retry_scope": []}
 
     # Task failed: retry the SAME task within budget, else give up + queue.
     conn.commit()  # the spend below is read on its own connection
     budget_left = attempt < MAX_CODER_ATTEMPTS and budget_refusal_for(state) is None
     if not verify_passed and budget_left:
         conn.commit()  # keep run 'running'; same task_index -> retries this task
+        # Operator decision (2026-10-03): a story that deliberately changes behaviour
+        # breaks the tests that pinned the old one, and they are rarely in the task's
+        # scope. The retry may change exactly the test files that failed — nothing else.
+        retry_scope = sorted(set(state.get("retry_scope") or []) | set(failing_tests or []))
+        findings = [gate_reason]
+        if retry_scope:
+            findings.append(
+                "You may now ALSO change these test files, which failed: "
+                + ", ".join(retry_scope)
+                + ". Update a test only where this story deliberately changes the behaviour "
+                "it asserts; never weaken or delete a test to make it pass."
+            )
         return {
             **base,
             "next_action": "retry",
             "attempt_number": attempt + 1,
             "triggered_by": "gate-build",
-            "prior_findings": [gate_reason],
+            "prior_findings": findings,
+            "retry_scope": retry_scope,
             # Uncommitted until the task passes: the retry's scope check must
             # not read the factory's own earlier writes as the agent's.
             "attempt_written": sorted(
@@ -370,6 +383,10 @@ def _implement_task(
     """One coder call for the current task, then gate-build and routing."""
     task_index = state.get("task_index", 0)
     task = tasks[task_index]
+    if task.scope and state.get("retry_scope"):
+        # The failing test files join this attempt's allowed (and shown) files. An
+        # empty scope forbids nothing, so there is nothing to widen.
+        task = task.model_copy(update={"scope": [*task.scope, *state["retry_scope"]]})
     prompt = build_coder_task_prompt(
         state,
         task,
@@ -444,7 +461,8 @@ def _implement_task(
     }
     base = {"coder_raw": result.output, "coder": parsed, "gate_build": gate_build}
     return _route_after_build(
-        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root, written
+        conn, state, tasks, task, coder, base, verify_result.passed, gate_reason, root, written,
+        verify_result.failing_test_files,
     )
 
 

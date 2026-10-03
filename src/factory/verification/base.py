@@ -36,6 +36,8 @@ class VerifyCheck:
     name: str
     status: str  # "pass" | "fail" | "warn" | "skip"
     detail: str = ""
+    # Test files (repo-relative) this check saw fail: what a retry may also change.
+    files: tuple[str, ...] = ()
 
 
 @dataclass
@@ -60,6 +62,10 @@ class VerifyResult:
             return "no verifiable files"
         parts = [f"{c.name}:{c.status}" for c in self.checks]
         return ", ".join(parts)
+
+    @property
+    def failing_test_files(self) -> list[str]:
+        return sorted({f for c in self.checks if c.status == "fail" for f in c.files})
 
     @property
     def failures(self) -> list[str]:
