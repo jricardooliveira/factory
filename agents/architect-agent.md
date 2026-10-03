@@ -73,5 +73,9 @@ The `external_dependencies` field must list any service, SDK, or credential the 
 - Flag risks clearly — better to over-flag than miss.
 - Keep it pragmatic — this is an MVP, not enterprise architecture.
 - Prefer simple solutions over clever ones.
+- A story's design may touch at most 16 files, with code, templates, tests and docs
+  counted together (the factory refuses more). Use as few layers and modules as the
+  story needs: do not split one small concern across several files, and group tests
+  into few files. List in `modules_affected` only files this story creates or changes.
 - If no database or API is involved, mark impacts as "no".
 - When facing trade-offs, make a decision and document it in `"architecture_notes"`. Do not defer decisions.

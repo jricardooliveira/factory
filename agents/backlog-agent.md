@@ -53,7 +53,7 @@ You MUST respond with ONLY a JSON object (no markdown fences, no commentary befo
   works and something new can be checked.
 - Size every story to fit the factory's limits, or it is refused after it was paid
   for: the spec-agent may break it into at most 6 tasks, and its design may touch
-  at most 12 files (code, templates and tests counted together). A story that adds
+  at most 16 files (code, templates and tests counted together). A story that adds
   a new kind of data, where it is stored, a screen and several rules at once is too
   big: split it (for example storing and listing first, then one interaction or
   rule per story). Prefer more, smaller stories over fewer large ones.

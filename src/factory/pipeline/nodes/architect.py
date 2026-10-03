@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from factory.domain.contracts import ArchitectOutput, SpecOutput
+from factory.domain.gates import MAX_MODULES_PER_STORY
 from factory.evidence.adr import write_adr
-from factory.pipeline.agent_calls import db_conn, run_agent_json, usage_kwargs
+from factory.pipeline.agent_calls import ReplayGap, db_conn, run_agent_json, usage_kwargs
 from factory.pipeline.evidence_writers import commit_adr, write_chain_artifact
 from factory.pipeline.prompts.architect import build_architect_prompt
 from factory.pipeline.state import PipelineState
@@ -66,6 +67,33 @@ def node_architect_agent(state: PipelineState) -> dict[str, Any]:
             **usage_kwargs(result),
         )
         conn.commit()
+
+        # Over the file limit gate-2 would simply fail the run. The architect gets ONE
+        # chance to fit the design first; whatever comes back, gate-2 still decides.
+        if len(arch.modules_affected) > MAX_MODULES_PER_STORY:
+            resize_prompt = prompt + (
+                f"\n\n## Your design is too large\n\nIt touches {len(arch.modules_affected)} "
+                f"files; a story's design may touch at most {MAX_MODULES_PER_STORY} files "
+                "(code, templates, tests and docs counted together). Return the SAME design "
+                "as JSON, made to fit: fewer layers and modules (do not split one small "
+                "concern across several files), tests grouped into fewer files. Keep every "
+                "acceptance criterion covered; if it truly cannot fit, set `verdict` to "
+                "`fail` and say in `architecture_notes` how the story should be split."
+            )
+            try:
+                again, reparsed = run_agent_json(state, "architect-agent", resize_prompt,
+                                                 slot="resize")
+            except ReplayGap:
+                reparsed = {}  # a run recorded before this rule: replay what it had
+            if reparsed and reparsed.get("error") != "Agent did not return valid JSON":
+                resized = ArchitectOutput.model_validate(reparsed)
+                log_agent(
+                    conn, state["run_id"], "architect-agent", resize_prompt, again.output,
+                    verdict=resized.verdict, duration_secs=again.duration_secs,
+                    stage_type="resize", **usage_kwargs(again),
+                )
+                conn.commit()
+                result, parsed, arch = again, reparsed, resized
 
         # Persist the decision as an ADR (decision memory). Project runs only.
         adr_path = None

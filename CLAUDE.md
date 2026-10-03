@@ -17,8 +17,8 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 
 | Command | Expected output |
 |---|---|
-| `make check` | `1022 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
-| `.venv/bin/python -m pytest -q` | `1022 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
+| `make check` | `1027 passed, 1 skipped` + `12/12 scenarios behaving as expected` + `68/68 checks green`. **Run before claiming done.** |
+| `.venv/bin/python -m pytest -q` | `1027 passed, 1 skipped` (~60s; the skip is the tsc-dependent TS test when `tsc` is absent; offline, zero tokens) |
 | `.venv/bin/python -m pytest tests/verification/test_verify.py -q` | single file, for the TDD loop |
 | `.venv/bin/factory simulate` | 12/12 scenario matrix, offline, zero tokens |
 | `.venv/bin/factory evals` | 68/68 agent-configuration checks; exits non-zero below 100% |
@@ -307,6 +307,11 @@ input/output is stored, so any run replays offline for free. Evidence is version
   is flagged `[UNDECIDED]` (numbered) in the story prompt so the agent follows up with
   `follow_up_of`; what nobody followed up is asked once more by Python, and still unsure
   becomes an assumption. Story interview only; the product interview keeps the text.
+- **The size limits are told to the agents that must fit them** (a test pins each):
+  `MAX_TASKS_PER_STORY` (6) in `spec-agent.md`, `MAX_MODULES_PER_STORY` (16: every file a
+  design touches, tests and docs included) in `architect-agent.md`, both in `backlog-agent.md`.
+  Change a constant and the three .md files together. An oversized design, like an
+  oversized story, is sent back ONCE (`nodes/architect.py`, slot `resize`) before gate-2.
 - **A story over `MAX_TASKS_PER_STORY` is sent back to the spec-agent once** (`nodes/spec.py`,
   slot `resize`) before gate-1 judges it; a replay without that second output keeps the
   recorded story (`ReplayGap`). `agents/spec-agent.md` states the limit (a test pins it).

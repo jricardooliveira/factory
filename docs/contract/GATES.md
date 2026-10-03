@@ -34,7 +34,7 @@ Passes only if: verdict is `pass`; story has a title; ≥2 acceptance criteria; 
 
 **Runs:** after `architect-agent`, before coding. **Code:** `domain/gates.gate_after_architect()`, wired by `pipeline/nodes/gates.node_gate_2`.
 
-Passes only if: verdict is not `fail`; architecture notes present; ≥1 affected module; ≤ `MAX_MODULES_PER_STORY` (12) modules.
+Passes only if: verdict is not `fail`; architecture notes present; ≥1 affected module; ≤ `MAX_MODULES_PER_STORY` (16) modules.
 
 **Human-needs detection (already implemented):** even on pass, flags `needs_human` when the architect reports `breaking_changes`, `external_dependencies`, or `sensitivity` tags (legal/compliance/security/financial/pii).
 
