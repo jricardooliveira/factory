@@ -31,6 +31,7 @@ from factory.interfaces.cli.common import fail
 
 COMMANDS: dict[str, Callable[[list[str]], None]] = {
     "project": project.project_command,
+    "status": project.status_command,
     "spec": project.spec_command,
     "interview": interview.interview_command,
     "backlog": backlog.backlog_command,
@@ -62,6 +63,7 @@ COMMANDS: dict[str, Callable[[list[str]], None]] = {
 USAGE: tuple[tuple[str, str], ...] = (
     ('"Your request here"', "Run pipeline"),
     ('run --project <id> [--no-interview] "..."', "Run pipeline for project"),
+    ("status [project]", "Where each project stands, and the next command to type"),
     ("interview <project>", "Define the product with the operator: writes the approved brief"),
     ('interview <project> --amend "..."', "Reopen the approved brief for one change"),
     ("interview <project> --import <file>", "Record answers from the /factory-intake skill"),

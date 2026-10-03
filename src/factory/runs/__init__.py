@@ -32,6 +32,7 @@ from factory.runs.interview import (
     run_story_interview,
 )
 from factory.runs.lifecycle import dismiss_run, reconcile_stale
+from factory.runs.status import ProjectStatus, all_project_status, project_status
 from factory.runs.service import (
     replay_run,
     resume_run,
@@ -43,6 +44,9 @@ from factory.runs.service import (
 __all__ = [
     "BacklogOutcome",
     "InterviewOutcome",
+    "ProjectStatus",
+    "all_project_status",
+    "project_status",
     "NodeCompleted",
     "OnEvent",
     "ResumeEntered",

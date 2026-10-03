@@ -26,6 +26,7 @@ All commands run from the repo root (there is no `mvp/` wrapper any more). There
 | `.venv/bin/factory metrics` | SDLC indicators over the factory's own history, plus what is NOT measurable |
 | `.venv/bin/factory replay <run_id>` | re-drives a past run's orchestration on frozen agent outputs, zero tokens |
 | `.venv/bin/factory workspace` | resolved `$FACTORY_HOME` (default `~/.factory`), its `factory.db` and every project repo |
+| `.venv/bin/factory status [project]` | where each project stands (Define → Plan → Build → Release, backlog per story, intake + story spend) and the exact next command; board key `s` |
 | `.venv/bin/factory interview <project>` | interviews the operator about the product (live model calls), then writes + commits `docs/work/BRIEF.md` and `INTERVIEW.md` on approval; re-running resumes. `factory run --project` requires that brief (or `--no-interview`) |
 | `.venv/bin/factory interview <project> --amend "what changed"` | reopens an approved brief for that change only, rewrites + commits it, then offers `factory backlog` so unstarted stories are re-proposed |
 | `.venv/bin/factory interview <project> --import answers.json` | records answers from the `/factory-intake` skill (`[{topic, question, options?, answer, assumed?}]`); refuses, recording nothing, unless every required topic is answered |
@@ -58,6 +59,7 @@ src/factory/
     traceability.py     Deterministic AC ↔ tester-claim cross-check (catches silently dropped criteria).
     agent_output.py     parse_agent_json & friends.   project_spec.py  ProjectSpec model.
     backlog.py          BacklogStory/BacklogOutput (the backlog-agent's contract).
+    lifecycle.py        A project's phases + the one next command (`factory status`, board `s`).
     interview.py        Intake interview: REQUIRED_TOPICS, InterviewTurn, uncovered_topics (coverage
                         is decided from recorded answers, never the model's claim), resolve_answer.
   agent_config/         tiers.py (loads + validates agents/tiers.toml; FACTORY_TIER_* env wins),
@@ -105,7 +107,7 @@ src/factory/
   runs/                 Application service: run / replay / resume / retry (service.py), resume
                         context + decision recovery (context.py), the intake interview that runs
                         BEFORE the pipeline (interview.py), the
-                        story backlog + `factory next` (backlog.py). NEVER prints: reports progress through
+                        story backlog + `factory next` (backlog.py), `factory status` (status.py). NEVER prints: reports progress through
                         an `on_event` callback (events.py) — the interview through `ask`/`approve`
                         callbacks — and refuses with `RunError`.
   interfaces/           render.py (every rich print helper; takes data, never reads the DB),

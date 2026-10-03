@@ -30,6 +30,21 @@ def project_command(args: list[str]) -> None:
         fail(f"Unknown project command: {subcommand}")
 
 
+def status_command(args: list[str]) -> None:
+    """Where each project (or the one named) stands, and the next command to type."""
+    from factory import runs
+    from factory.interfaces.render.status import print_status
+
+    if len(args) > 1:
+        fail("Usage: factory status [project-id-or-slug]")
+    try:
+        statuses = ([runs.project_status(args[0], db_path=db_path())] if args
+                    else runs.all_project_status(db_path=db_path()))
+    except ValueError as exc:
+        fail(str(exc))
+    print_status(statuses)
+
+
 def create_project_command(args: list[str]) -> None:
     """Create and register a factory project."""
     if not args:

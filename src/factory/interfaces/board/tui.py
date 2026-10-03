@@ -47,13 +47,16 @@ from factory.evidence.backlog import BACKLOG_RELPATH
 from factory.evidence.brief import load_brief
 from factory.interfaces.board.interview_screen import PromptScreen, QuestionScreen, ReviewScreen
 from factory.interfaces.render.review import render_flow
+from factory.interfaces.render.status import status_lines
 from factory.preflight.doctor import run_doctor
 from factory.runs import (
     RunError,
+    all_project_status,
     dismiss_run,
     has_brief,
     mark_started,
     next_story,
+    project_status,
     propose_backlog,
     reconcile_stale,
     replay_run,
@@ -105,6 +108,7 @@ class FactoryBoard(App):
         ("d", "dismiss", "Dismiss"),
         ("i", "interview", "Interview"),
         ("B", "brief", "Brief/backlog"),
+        ("s", "status", "Status"),
         ("m", "command_palette", "Menu"),
     ]
 
@@ -481,6 +485,8 @@ class FactoryBoard(App):
     def get_system_commands(self, screen: Screen):
         yield from super().get_system_commands(screen)
         commands = [
+            ("Project status", "factory status: where each project stands + next command",
+             self.action_status),
             ("New project", "factory project create <slug>", self._menu_new_project),
             ("Interview: product brief", "factory interview <project>", self.action_interview),
             ("Interview: amend brief", "factory interview <project> --amend", self._menu_amend),
@@ -504,6 +510,17 @@ class FactoryBoard(App):
         ]
         for title, help_text, callback in commands:
             yield SystemCommand(title, help_text, callback)
+
+    def action_status(self) -> None:
+        ref = None if self._project_filter in (None, "—") else self._project_filter
+        self._job("Status", self._status_text, ref)
+
+    def _status_text(self, ref: str | None) -> str:
+        statuses = ([project_status(ref, db_path=self.db_path)] if ref
+                    else all_project_status(db_path=self.db_path))
+        if not statuses:
+            return "No projects yet: menu (m) → New project."
+        return "\n\n".join("\n".join(status_lines(s)) for s in statuses)
 
     @work(thread=True, group="menu")
     def _job(self, title: str, fn, *args) -> None:

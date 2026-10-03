@@ -41,7 +41,7 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
         app = FactoryBoard(self.db_path)
         async with app.run_test():
             titles = {c.title for c in app.get_system_commands(app.screen)}
-        for title in ("New project", "Interview: product brief", "Interview: amend brief",
+        for title in ("Project status", "New project", "Interview: product brief", "Interview: amend brief",
                       "Brief & backlog: show", "Backlog: propose", "Story: run next from backlog",
                       "Story: run a new request", "Run: retry selected", "Run: replay selected",
                       "Runs: reconcile stale", "Doctor (offline)", "Doctor (probe models)",
@@ -54,6 +54,17 @@ class BoardMenuTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("m")
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "CommandPalette")
+
+    async def test_s_shows_where_every_project_stands(self) -> None:
+        from factory.workspace.projects import create_project
+
+        create_project(self.db_path, home=Path(self._tmp.name), slug="habits")
+        app = FactoryBoard(self.db_path)
+        async with app.run_test() as pilot:
+            await pilot.press("s")
+            await self._settle(app, pilot)
+            self.assertIsInstance(app.screen, ReviewScreen)
+            self.assertIn("Next: factory interview habits", app.screen.text)
 
     async def test_new_project_asks_for_a_slug_and_creates_it(self) -> None:
         app = FactoryBoard(self.db_path)

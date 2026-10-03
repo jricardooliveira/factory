@@ -68,3 +68,13 @@ def log_turn(
         (project_id, prompt, output_text, model_name, tokens_in, tokens_out,
          cost_usd, duration_secs, _now()),
     )
+
+
+def turn_usage_rows(conn: sqlite3.Connection, project_id: str) -> list[dict[str, Any]]:
+    """Usage of every intake call (interview, stack, backlog) — priced like agent_logs rows."""
+    rows = conn.execute(
+        "SELECT tokens_in, tokens_out, cost_usd, model_name FROM interview_turns"
+        " WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
